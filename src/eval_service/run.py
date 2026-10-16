@@ -119,7 +119,11 @@ class _Evaluation:
         stop = threading.Event()
         try:
             threading.Thread(target=_report, args=(stop, len(samples)), daemon=True).start()
-            futures = [pool.submit(self._sample, i, sample) for i, sample in enumerate(samples)]
+            # longest prompts first, so they are not the ones still running at the end; each keeps
+            # its index (its seed, and whether the teacher rereads it), and results stay in order
+            by_size = sorted(range(len(samples)), key=lambda i: -_size(samples[i]))
+            started = {i: pool.submit(self._sample, i, samples[i]) for i in by_size}
+            futures = [started[i] for i in range(len(samples))]
             for sample, future in zip(samples, futures, strict=True):
                 try:
                     results.append(future.result())
@@ -279,6 +283,10 @@ def fits(tokenizer: Any) -> Callable[[Sample], bool]:
 def _eos(model_dir: Path) -> set[int]:
     eos = json.loads((model_dir / "generation_config.json").read_text())["eos_token_id"]
     return set(eos if isinstance(eos, list) else [eos])
+
+
+def _size(sample: Sample) -> int:
+    return sum(len(m["content"]) for m in sample.messages)
 
 
 def _report(stop: threading.Event, total: int) -> None:

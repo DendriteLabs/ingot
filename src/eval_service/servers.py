@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import contextlib
 import fcntl
+import heapq
+import itertools
 import json
 import math
 import os
@@ -100,6 +102,48 @@ class Server:
             os.killpg(self.process.pid, signal.SIGKILL)
 
 
+class Admission:
+    """Admits requests to a group's servers in line order: the first in line goes to the server
+    with the most free budget once it fits there, and the rest wait behind it. Letting whatever
+    fits go first starved the long prompts until the end of an eval; forced reads (`first`) go
+    ahead of new answers, so a sample whose answer is done is not held behind them."""
+
+    def __init__(self, n_servers: int) -> None:
+        self.used = [0] * n_servers
+        self.cv = threading.Condition()
+        self.line: list[tuple[int, int]] = []
+        self.tickets = itertools.count()
+
+    def enter(self, need: int, caps: Sequence[int], first: bool) -> int:
+        """Wait for this request's turn and room, then book `need` tokens; the server index."""
+        with self.cv:
+            ticket = (0 if first else 1, next(self.tickets))
+            heapq.heappush(self.line, ticket)
+            try:
+                self.cv.wait_for(
+                    lambda: (
+                        self.line[0] == ticket
+                        and any(u + need <= c for u, c in zip(self.used, caps, strict=True))
+                    )
+                )
+            except BaseException:
+                self.line.remove(ticket)
+                heapq.heapify(self.line)
+                self.cv.notify_all()
+                raise
+            heapq.heappop(self.line)
+            i = max(range(len(caps)), key=lambda k: caps[k] - self.used[k])
+            self.used[i] += need
+            # the next in line may fit as well
+            self.cv.notify_all()
+            return i
+
+    def leave(self, i: int, need: int) -> None:
+        with self.cv:
+            self.used[i] -= need
+            self.cv.notify_all()
+
+
 class Group:
     """One model on several GPUs. A request goes to the server with the most free budget and is
     admitted only while every admitted request fits that server's cache at full length: vLLM
@@ -111,8 +155,7 @@ class Group:
     ) -> None:
         self.model_dir, self.role = model_dir, role
         self.servers = [Server(model_dir, gpu, share) for gpu in gpus]
-        self.used = [0] * len(self.servers)
-        self.cv = threading.Condition()
+        self.admission = Admission(len(self.servers))
 
     def wait_ready(self, deadline: float) -> None:
         for server in self.servers:
@@ -147,7 +190,7 @@ class Group:
             body["vllm_xargs"] = {"force_token_ids": force}
             body["ignore_eos"] = True
         with (
-            self._hold(len(prompt) + max_tokens) as server,
+            self._hold(len(prompt) + max_tokens, first=force is not None) as server,
             timing.stages.timed(f"{self.role} request"),
         ):
             resp = httpx.post(f"{server.url}/v1/completions", json=body, timeout=None)
@@ -156,24 +199,18 @@ class Group:
         return out["choices"][0]["token_ids"], out["kv_transfer_params"]["hidden_states_path"]
 
     @contextlib.contextmanager
-    def _hold(self, n_tokens: int) -> Generator[Server]:
+    def _hold(self, n_tokens: int, *, first: bool) -> Generator[Server]:
         # whole 800-token attention blocks, plus one block for the request's GDN state
         need = (math.ceil(n_tokens / 800) + 1) * 800
         caps = [int(0.9 * server.cache_tokens) for server in self.servers]
         if need > max(caps):
             raise ValueError(f"a request of {n_tokens} tokens can never fit {max(caps)}")
-        with timing.stages.timed(f"{self.role} wait"), self.cv:
-            self.cv.wait_for(
-                lambda: any(u + need <= c for u, c in zip(self.used, caps, strict=True))
-            )
-            i = max(range(len(caps)), key=lambda k: caps[k] - self.used[k])
-            self.used[i] += need
+        with timing.stages.timed(f"{self.role} wait"):
+            i = self.admission.enter(need, caps, first)
         try:
             yield self.servers[i]
         finally:
-            with self.cv:
-                self.used[i] -= need
-                self.cv.notify_all()
+            self.admission.leave(i, need)
 
 
 class RemoteGroup:
