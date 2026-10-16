@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import struct
+from fnmatch import fnmatch
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -104,26 +105,24 @@ def hub_layout(repo: str, revision: str | None = None) -> dict[str, tuple[str, t
 
 def publish(model_dir: Path, repo_id: str, card: str) -> str:
     """Mirror a king to a public Hugging Face repo, completed with the genesis tokenizer and
-    configs it was not required to ship. Returns the repo url."""
-    from huggingface_hub import HfApi
+    configs it was not required to ship: one commit after the repo's initial one. Returns the
+    repo url."""
+    from huggingface_hub import CommitOperationAdd, HfApi
 
-    api = HfApi(token=_token())
-    api.create_repo(repo_id=repo_id, repo_type="model", private=False, exist_ok=True)
-    api.upload_folder(
-        folder_path=str(model_dir),
-        repo_id=repo_id,
-        commit_message="Mirror Ingot king",
-        ignore_patterns=_UPLOAD_IGNORE,
-    )
+    files: dict[str, str] = {}
+    for path in sorted(model_dir.rglob("*")):
+        name = path.relative_to(model_dir).as_posix()
+        if path.is_file() and not any(fnmatch(name, p) for p in _UPLOAD_IGNORE):
+            files[name] = str(path)
     spec = chain_spec()
     for name in spec.genesis_files:
-        api.upload_file(
-            path_or_fileobj=str(hub_file(spec.genesis_repo, name, spec.genesis_revision)),
-            path_in_repo=name,
-            repo_id=repo_id,
-        )
-    api.upload_file(path_or_fileobj=card.encode(), path_in_repo="README.md", repo_id=repo_id)
-    log.info("published {} to {}", model_dir, repo_id)
+        files[name] = str(hub_file(spec.genesis_repo, name, spec.genesis_revision))
+    operations = [CommitOperationAdd(path_in_repo=n, path_or_fileobj=f) for n, f in files.items()]
+    operations.append(CommitOperationAdd(path_in_repo="README.md", path_or_fileobj=card.encode()))
+    api = HfApi(token=_token())
+    api.create_repo(repo_id=repo_id, repo_type="model", private=False, exist_ok=True)
+    api.create_commit(repo_id=repo_id, operations=operations, commit_message="Mirror Ingot king")
+    log.info("published {} to {} ({} files)", model_dir, repo_id, len(operations))
     return f"https://huggingface.co/{repo_id}"
 
 
