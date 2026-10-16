@@ -188,7 +188,14 @@ class R2UploadController:
             }
             if marker is not None:
                 request["PartNumberMarker"] = marker
-            response = self.s3.list_parts(**request)
+            try:
+                response = self.s3.list_parts(**request)
+            except ClientError as exc:
+                # completed or aborted since it was listed: a completed upload's bytes are counted
+                # from the object listing instead, an aborted one's are gone
+                if exc.response.get("Error", {}).get("Code") != "NoSuchUpload":
+                    raise
+                return 0
             total += sum(int(part["Size"]) for part in response.get("Parts", ()))
             if not response.get("IsTruncated"):
                 return total

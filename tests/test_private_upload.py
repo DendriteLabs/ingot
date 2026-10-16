@@ -116,6 +116,8 @@ class FakeS3:
 
     def list_parts(self, Bucket: str, Key: str, UploadId: str, **_: Any):
         upload = next(u for u in self.multipart if u["UploadId"] == UploadId)
+        if upload.get("Gone"):
+            raise ClientError({"Error": {"Code": "NoSuchUpload"}}, "ListParts")
         return {"Parts": [{"Size": int(upload.get("PartBytes", 0))}], "IsTruncated": False}
 
     def abort_multipart_upload(self, Bucket: str, Key: str, UploadId: str):
@@ -317,6 +319,17 @@ def test_parked_multipart_bytes_over_the_limit_close_and_purge_the_upload(conn):
     assert reg["state"] == "FAILED" and "multipart" in reg["fault_message"]
     assert gateway.revoked == ["tok-1"]
     assert not s3.multipart and not any(k.startswith(prefix) for _, k in s3.objects)
+
+
+def test_an_upload_completing_while_its_parts_are_counted_is_not_an_error(conn):
+    s3, gateway = FakeS3(), FakeGateway()
+    deps = make_deps(s3, gateway)
+    assert signals.handle(conn, [activate(block=100)]) == 1
+    assert controller.tick(conn, deps)
+    # listed as in progress, completed before ListParts: R2 answers NoSuchUpload
+    s3.multipart.append({"Key": model_prefix(RID) + "a.safetensors", "UploadId": "u1", "Gone": "1"})
+    assert controller.sweep_credentialed(conn, deps) == 0
+    assert registration(conn)["state"] == "CREDENTIALED"
 
 
 def test_a_disallowed_file_closes_and_purges_the_upload(conn):

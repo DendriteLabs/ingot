@@ -18,6 +18,7 @@ from eval_service import config as eval_config
 from eval_service import main as eval_service
 from eval_service.dataset import Dataset, Sample
 from eval_service.run import Distance, Duel, Scorer
+from model_dedup import config as dedup_config
 from model_dedup import main as model_dedup
 from model_dedup.bank import AUDIT, BANK, GENESIS
 from model_dedup.main import Fingerprint
@@ -488,15 +489,15 @@ def test_a_copy_is_rejected_and_spends_the_hotkey(conn, s, spec):
     sid = submit(conn, hotkey="hk-copy", uid=9)
     validate(conn, s, spec)
 
-    def requantized_genesis(_model_dir: Path) -> dict:
-        return fingerprint(genesis_error + 0.5 * quantization_error(1))
+    def near_copy_of_genesis(_model_dir: Path) -> dict:
+        return fingerprint(genesis_error + 0.05 * quantization_error(1))
 
-    assert dedup(conn, s, bank, requantized_genesis)
+    assert dedup(conn, s, bank, near_copy_of_genesis)
     assert state(conn, sid) == states.DUPLICATE
     assert db.one(conn, "SELECT error FROM submissions")["error"].startswith("duplicate:")
     run = db.one(conn, "SELECT duplicate, reason, duplicate_of, corr FROM dedups")
     assert (run["duplicate"], run["reason"], run["duplicate_of"]) == (True, "NEAR-COPY", GENESIS)
-    assert run["corr"] > 0.8
+    assert run["corr"] >= dedup_config.COPY_CORR
     assert bank.puts == [(str(sid), AUDIT)], "kept for review, never compared against"
     assert guard.is_used(conn, "hk-copy"), "a copy costs the hotkey"
     assert not evaluate(conn, s, duel(0, 1)), "a duplicate never reaches the evaluator"

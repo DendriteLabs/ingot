@@ -23,7 +23,7 @@ import httpx
 from loguru import logger as log
 
 from common.config import settings
-from eval_service import config
+from eval_service import config, timing
 
 HIDDEN_STATES_DIR = settings().hidden_states_dir
 _CACHE_RE = re.compile(r"GPU KV cache size: ([\d,]+) tokens")
@@ -106,8 +106,10 @@ class Group:
     recomputes a preempted request in one prefill pass, silently turning decode rows into
     prefill rows."""
 
-    def __init__(self, model_dir: Path, gpus: Sequence[int], share: float) -> None:
-        self.model_dir = model_dir
+    def __init__(
+        self, model_dir: Path, gpus: Sequence[int], share: float, role: str = "model"
+    ) -> None:
+        self.model_dir, self.role = model_dir, role
         self.servers = [Server(model_dir, gpu, share) for gpu in gpus]
         self.used = [0] * len(self.servers)
         self.cv = threading.Condition()
@@ -144,7 +146,10 @@ class Group:
             # on the tokenizer the submission ships (none: an empty one whose EOS is id 0, "!")
             body["vllm_xargs"] = {"force_token_ids": force}
             body["ignore_eos"] = True
-        with self._hold(len(prompt) + max_tokens) as server:
+        with (
+            self._hold(len(prompt) + max_tokens) as server,
+            timing.stages.timed(f"{self.role} request"),
+        ):
             resp = httpx.post(f"{server.url}/v1/completions", json=body, timeout=None)
         resp.raise_for_status()
         out = resp.json()
@@ -157,7 +162,7 @@ class Group:
         caps = [int(0.9 * server.cache_tokens) for server in self.servers]
         if need > max(caps):
             raise ValueError(f"a request of {n_tokens} tokens can never fit {max(caps)}")
-        with self.cv:
+        with timing.stages.timed(f"{self.role} wait"), self.cv:
             self.cv.wait_for(
                 lambda: any(u + need <= c for u, c in zip(self.used, caps, strict=True))
             )
@@ -203,20 +208,27 @@ class RemoteGroup:
         self, prompt: list[int], max_tokens: int, seed: int, force: list[int] | None = None
     ) -> tuple[list[int], str]:
         body = {"prompt": prompt, "max_tokens": max_tokens, "seed": seed, "force": force}
-        resp = httpx.post(f"{self.url}/complete", json=body, timeout=None)
+        with timing.stages.timed("teacher request"):
+            resp = httpx.post(f"{self.url}/complete", json=body, timeout=None)
         resp.raise_for_status()
         out = resp.json()
         path = str(self.dir / f"{uuid.uuid4().hex}.safetensors")
         Path(path + ".lock").touch()
+        size = 0
         try:
-            with httpx.stream("GET", f"{self.url}/states/{out['states']}", timeout=None) as r:
+            with (
+                timing.stages.timed("teacher download"),
+                httpx.stream("GET", f"{self.url}/states/{out['states']}", timeout=None) as r,
+            ):
                 r.raise_for_status()
                 with open(path, "wb") as f:
                     for chunk in r.iter_bytes(1 << 20):
                         f.write(chunk)
+                        size += len(chunk)
         except BaseException:
             discard(path)
             raise
+        timing.stages.add("teacher states MB", size / 1e6)
         return out["token_ids"], path
 
 
@@ -256,9 +268,11 @@ def serve(models: dict[str, Path]) -> dict[str, Group | RemoteGroup]:
     server died is restarted; the others keep running. With INGOT_TEACHER_URL set the teacher is
     another box's and takes no GPU here."""
     remote_teacher = settings().teacher_url
+    started = time.monotonic()
     for role, model_dir in models.items():
         group = _groups.get(role)
         if group and group.model_dir == model_dir and group.alive():
+            log.info("the {} keeps its servers: {}", role, model_dir)
             continue
         if group:
             group.stop()
@@ -273,10 +287,12 @@ def serve(models: dict[str, Path]) -> dict[str, Group | RemoteGroup]:
                 + (" or INGOT_TEACHER_URL" if role == "teacher" else "")
             )
         log.info("starting the {} on GPUs {}: {}", role, gpus, model_dir)
-        _groups[role] = Group(model_dir, gpus, config.MEMORY_SHARE[role])
+        _groups[role] = Group(model_dir, gpus, config.MEMORY_SHARE[role], role)
     deadline = time.monotonic() + config.SERVER_START_S
+    # waited in turn: a role's time is when it was found ready, at most later than it became so
     for role in models:
         _groups[role].wait_ready(deadline)
+        log.info("the {} is ready, {:.0f}s into serve", role, time.monotonic() - started)
     return {role: _groups[role] for role in models}
 
 

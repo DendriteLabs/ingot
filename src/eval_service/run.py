@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger as log
 
 from common.config import settings
-from eval_service import config, servers
+from eval_service import config, servers, timing
 from eval_service.dataset import Sample
 
 if TYPE_CHECKING:
@@ -63,6 +63,13 @@ def duel(
     models = {"teacher": teacher_dir, "king": king_dir, "challenger": challenger_dir}
     evaluation = _Evaluation(models, len(samples))
     results = evaluation.run(samples)
+    log.info(
+        "eval timing, {} samples scored in {:.0f}s: {}",
+        len(results),
+        timing.stages.elapsed(),
+        timing.stages.line(),
+    )
+    log.info("eval slowest samples: {}", timing.stages.slowest(5))
     return Duel(
         challenger=evaluation.distance(results, "challenger"),
         king=evaluation.distance(results, "king"),
@@ -80,11 +87,18 @@ class _Evaluation:
     def __init__(self, models: dict[str, Path], total: int) -> None:
         from eval_service import metrics
 
+        started = time.monotonic()
         self.groups = servers.serve(models)
+        serving = time.monotonic()
         self.tokenizer = load_tokenizer(models["teacher"])
         self.eos = _eos(models["teacher"])
         devices = [f"cuda:{gpu}" for gpu in settings().gpus("challenger")]
         self.heads = metrics.heads(models, devices)
+        log.info(
+            "eval setup: servers ready in {:.0f}s, tokenizer and final heads loaded in {:.0f}s",
+            serving - started,
+            time.monotonic() - serving,
+        )
         self.free_devices: queue.Queue[str] = queue.Queue()
         for dev in devices:
             self.free_devices.put(dev)
@@ -98,10 +112,13 @@ class _Evaluation:
     def run(self, samples: Sequence[Sample]) -> list[Result]:
         """The results of the samples that went through. A sample that fails is logged and left
         out; more than MAX_FAILED_SAMPLES of them, or none scored at all, ends the eval."""
+        timing.stages.reset()
         pool = ThreadPoolExecutor(config.WORKERS)
         results: list[Result] = []
         failed = 0
+        stop = threading.Event()
         try:
+            threading.Thread(target=_report, args=(stop, len(samples)), daemon=True).start()
             futures = [pool.submit(self._sample, i, sample) for i, sample in enumerate(samples)]
             for sample, future in zip(samples, futures, strict=True):
                 try:
@@ -112,6 +129,7 @@ class _Evaluation:
                     if failed > config.MAX_FAILED_SAMPLES:
                         raise RuntimeError(f"{failed} samples failed, the last: {exc}") from exc
         finally:
+            stop.set()
             pool.shutdown(cancel_futures=True)
             for executor in self.compare_on.values():
                 executor.shutdown()
@@ -133,13 +151,19 @@ class _Evaluation:
 
     def _sample(self, i: int, sample: Sample) -> Result:
         paths: dict[str, str] = {}  # role -> the hidden-state file its server wrote
+        started = time.monotonic()
         try:
-            _wait_for_room()
+            with timing.stages.timed("shm wait"):
+                _wait_for_room()
             prompt = _render(self.tokenizer, sample.messages)
-            answer = self._answer(i, sample, prompt, paths)
-            self._read_along(i, sample, prompt, answer, paths)
-            sums = self._compare(prompt, answer, paths)
+            with timing.stages.timed("teacher"):
+                answer = self._answer(i, sample, prompt, paths)
+            with timing.stages.timed("read"):
+                self._read_along(i, sample, prompt, answer, paths)
+            with timing.stages.timed("compare"):
+                sums = self._compare(prompt, answer, paths)
             self._count()
+            timing.stages.sample(sample.id, time.monotonic() - started, len(prompt), len(answer))
             return sums, self._record(sample, prompt, answer, sums)
         finally:
             for path in paths.values():
@@ -187,17 +211,20 @@ class _Evaluation:
     ) -> dict[str, Sums]:
         from eval_service import metrics
 
-        dev = self.free_devices.get()
+        with timing.stages.timed("compare wait"):
+            dev = self.free_devices.get()
         try:
             # the last answer token is never fed back in, so no server wrote a row for it
-            states = {
-                role: metrics.load_states(p, prompt + answer[:-1]) for role, p in paths.items()
-            }
-            return (
-                self.compare_on[dev]
-                .submit(metrics.compare, states, self.heads[dev], answer, len(prompt), dev)
-                .result()
-            )
+            with timing.stages.timed("compare load"):
+                states = {
+                    role: metrics.load_states(p, prompt + answer[:-1]) for role, p in paths.items()
+                }
+            with timing.stages.timed("compare math"):
+                return (
+                    self.compare_on[dev]
+                    .submit(metrics.compare, states, self.heads[dev], answer, len(prompt), dev)
+                    .result()
+                )
         finally:
             self.free_devices.put(dev)
 
@@ -252,6 +279,20 @@ def fits(tokenizer: Any) -> Callable[[Sample], bool]:
 def _eos(model_dir: Path) -> set[int]:
     eos = json.loads((model_dir / "generation_config.json").read_text())["eos_token_id"]
     return set(eos if isinstance(eos, list) else [eos])
+
+
+def _report(stop: threading.Event, total: int) -> None:
+    """Every TIMING_REPORT_S until `stop`: the running eval's per-stage timings."""
+    while not stop.wait(config.TIMING_REPORT_S):
+        try:
+            log.info(
+                "eval timing, {} of {} samples done: {}",
+                timing.stages.done(),
+                total,
+                timing.stages.line(),
+            )
+        except Exception:
+            log.exception("eval timing report failed")
 
 
 def _wait_for_room() -> None:

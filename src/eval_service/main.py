@@ -4,6 +4,7 @@ being crowned, so every eval faces the newest king."""
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
@@ -57,7 +58,9 @@ def run_once(
         return False
     king = db.current_king(conn)
     seed = row["block_hash"] or str(row["id"])
+    started = time.monotonic()
     drawn = data.draw(seed, config.SAMPLES_PER_DOMAIN, fits)
+    drew_s = time.monotonic() - started
     eval_id = db.one(
         conn,
         "INSERT INTO evals (submission_id, king_id, teacher, dataset_hash, seed, sample_count,"
@@ -73,13 +76,23 @@ def run_once(
             config.DIST_MARGIN,
         ),
     )["id"]
+    log.info(
+        "eval {} of {}: {} samples drawn in {:.0f}s", eval_id, row["hotkey"], len(drawn), drew_s
+    )
     try:
-        duel = scorer(
-            teacher_dir,
-            fetch(row["model_uri"], s.model_cache_dir),
-            fetch(king["model_uri"], s.model_cache_dir),
-            drawn,
+        started = time.monotonic()
+        challenger_dir = fetch(row["model_uri"], s.model_cache_dir)
+        between = time.monotonic()
+        king_dir = fetch(king["model_uri"], s.model_cache_dir)
+        fetched = time.monotonic()
+        log.info(
+            "eval {}: challenger fetched in {:.0f}s, king in {:.0f}s",
+            eval_id,
+            between - started,
+            fetched - between,
         )
+        duel = scorer(teacher_dir, challenger_dir, king_dir, drawn)
+        log.info("eval {}: duel took {:.0f}s", eval_id, time.monotonic() - fetched)
     except Exception as exc:
         log.exception("eval {} crashed", eval_id)
         conn.execute(
@@ -94,6 +107,7 @@ def run_once(
             max_attempts=config.MAX_ATTEMPTS,
         )
         return True
+    scored = time.monotonic()
     results = s.eval_work_dir / "results" / f"{eval_id}.jsonl"
     results.parent.mkdir(parents=True, exist_ok=True)
     samples = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in duel.samples)
@@ -119,6 +133,7 @@ def run_once(
         guard.mark_used(conn, row["hotkey"], "eval", {"submission_id": str(row["id"])})
         db.finish(conn, row["id"], states.WON if duel.won else states.LOST)
     _upload_summary(conn, upload, row["hotkey"], eval_id)
+    log.info("eval {}: results stored and uploaded in {:.0f}s", eval_id, time.monotonic() - scored)
     log.info(
         "eval {} ({} of {} samples): KL challenger {:.5f} vs king {:.5f}, distance {:.4f} vs"
         " {:.4f} (noise floor {:.5f} / {:.4f}) → {}",

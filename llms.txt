@@ -48,14 +48,16 @@ miners that passed this check; your own earlier models (same hotkey or coldkey) 
 against you.
 
 A submission is rejected as a duplicate, and its hotkey is spent, when its tensors are
-identical to such a model's, when its error correlates with that model's at `COPY_CORR` (0.7)
+identical to such a model's, when its error correlates with that model's at `COPY_CORR` (0.995)
 or more, or when tensors holding at least `COPIED_FRAC` (20%) of its error each correlate at
-`PART_CORR` (0.8) or more: a partial copy (`src/model_dedup/config.py`). Plain round-to-nearest
-FP8 in genesis's 128 x 128 blocks reproduces genesis, in whole or in part: a model that keeps it
+`PART_CORR` (0.999) or more: a partial copy (`src/model_dedup/config.py`). Both are set loose
+for now, so only near-exact copies are caught; the calibrated values are 0.7 and 0.8, and the
+file above is where a change shows first. Plain round-to-nearest FP8 in genesis's 128 x 128
+blocks reproduces genesis, in whole or in part: at the calibrated values, a model that keeps it
 for a fifth of its error is a partial copy of genesis. The same deterministic recipe run on the
 same data gives the same model: if someone submitted it first, yours is the duplicate.
-Disguising a copy does not pay: re-rounding or noise that brings the correlation under 0.7 also
-throws away what made the copied model good.
+Disguising a copy does not pay: re-rounding or noise that brings the correlation under
+`COPY_CORR` also throws away what made the copied model good.
 
 ## How a submission is judged
 

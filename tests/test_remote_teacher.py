@@ -4,6 +4,7 @@ box's copy deleted; no GPU, a fake teacher behind the real endpoint."""
 from __future__ import annotations
 
 import threading
+import time
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
@@ -55,6 +56,10 @@ def test_an_answer_and_its_states_come_over_once(remote, tmp_path):
     assert tokens == [7, 7, 7, 7]
     assert Path(path).parent == local / "remote"
     assert Path(path).read_bytes() == bytes([1, 2, 3]) * 1000
+    # the serving box deletes its copy after sending the last byte, so a moment after the download
+    deadline = time.monotonic() + 5
+    while list(serving.rglob("*.safetensors*")) and time.monotonic() < deadline:
+        time.sleep(0.01)
     assert not list(serving.rglob("*.safetensors*")), "the serving box keeps no copy"
 
     forced, _ = group.complete([1, 2], 3, seed=1, force=[1, 2, 5, 6, 7])
