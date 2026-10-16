@@ -1,0 +1,14 @@
+HOST = "127.0.0.1"
+PORT = 8000
+CACHE_S = 3.0
+
+HISTORY_LIMIT = 200
+LOSERS_LIMIT = 5000
+FAILS_LIMIT = 100
+QUEUE_LIMIT = 50
+REGISTRATION_HOURS = 24  # the registration chart's window
+PUBLISH_S = 10.0
+EVALS_PER_ROUND = 20
+ARTIFACT_GRACE_S = 3600.0
+
+GITHUB_URL = "https://github.com/DendriteLabs/ingot"

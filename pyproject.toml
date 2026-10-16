@@ -1,0 +1,93 @@
+[project]
+name = "ingot"
+version = "0.2.0"
+description = "Ingot subnet: miners quantize a fixed teacher model; the validator crowns the closest small copy."
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+    "bittensor>=10.3,<11",
+    "boto3>=1.35",
+    "httpx>=0.27",
+    "huggingface-hub>=1.0",
+    "loguru>=0.7",
+    "numpy>=1.26",
+    "psycopg[binary]>=3.2",
+    "pydantic>=2.8",
+    "pydantic-settings>=2.4",
+    "pynacl>=1.5",
+]
+
+[project.optional-dependencies]
+eval = ["torch", "transformers", "accelerate", "safetensors", "pyarrow>=18"]
+dedup = ["torch", "safetensors", "opensearch-py>=2,<3"]
+
+[dependency-groups]
+dev = ["ruff", "ty", "pytest", "pre-commit"]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[project.scripts]
+ingot = "miner.cli:main"
+ingot-chain-reader = "chain_reader.main:main"
+ingot-model-validation = "model_validation.main:main"
+ingot-model-dedup = "model_dedup.main:main"
+ingot-eval-service = "eval_service.main:main"
+ingot-teacher-server = "eval_service.teacher_server:main"
+ingot-promoter = "promoter.main:main"
+ingot-weight-setter = "weight_setter.main:main"
+ingot-dashboard = "dashboard.main:main"
+ingot-dashboard-preview = "dashboard.main:preview"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "src/common",
+    "src/chain_reader",
+    "src/model_validation",
+    "src/model_dedup",
+    "src/eval_service",
+    "src/promoter",
+    "src/weight_setter",
+    "src/private_store",
+    "src/dashboard",
+    "miner",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "SIM"]
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[[tool.ty.overrides]]
+include = [
+    "src/eval_service/forcer.py",
+    "src/eval_service/metrics.py",
+    "src/eval_service/run.py",
+    "scripts/eval_smoke.py",
+    "scripts/build_eval_corpus.py",
+    "src/model_dedup/canon.py",
+    "src/model_dedup/checkpoint.py",
+    "src/model_dedup/fingerprint.py",
+    "src/model_dedup/bank.py",
+    "scripts/seed_dedup_bank.py",
+    "tests/test_dedup.py",
+    "src/eval_service/dataset.py",
+    "tests/test_dataset.py",
+]
+
+[tool.ty.overrides.rules]
+unresolved-import = "ignore"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not gpu and not network'"
+markers = ["gpu: needs a GPU and the eval extra", "network: talks to the chain, R2 or Hugging Face"]

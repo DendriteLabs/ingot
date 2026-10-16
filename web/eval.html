@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>INGOT · eval</title>
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@300;400;500;600;700&family=Barlow+Semi+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/ingot.css">
+<script>try { if (localStorage.getItem("ingot-theme") === "light") document.documentElement.dataset.theme = "light"; } catch {}</script>
+</head>
+<body>
+
+<header class="top" id="top"></header>
+
+<main>
+
+<section class="eval-head">
+  <a class="back" href="./">← all evals</a>
+  <div class="eyebrow" id="ev-eyebrow">eval</div>
+  <h1 id="ev-title">…</h1>
+  <div class="ev-sub" id="ev-sub"></div>
+</section>
+
+<section class="section">
+  <div class="head"><span class="label"><b>01</b>Duel</span><span class="meta" id="duel-meta"></span></div>
+  <div id="duel-wrap"><div class="empty">loading…</div></div>
+</section>
+
+<section class="section">
+  <div class="head"><span class="label"><b>02</b>Layers</span><span class="meta" id="layers-meta"></span></div>
+  <div class="chart" id="layers-chart"></div>
+</section>
+
+<section class="section">
+  <div class="head"><span class="label"><b>03</b>Samples</span><span class="meta" id="samples-meta"></span></div>
+  <div class="data-table-wrap scroll" id="samples-wrap"><div class="empty">loading…</div></div>
+</section>
+
+<section class="section">
+  <div class="head"><span class="label"><b>04</b>Artifacts</span><span class="meta" id="artifacts-meta"></span></div>
+  <div id="artifacts-wrap"></div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <div class="row"><span id="foot-netuid">Ingot</span><span>Refined. Assayed. Stamped.</span></div>
+</footer>
+
+<script type="module" src="eval.js"></script>
+</body>
+</html>
