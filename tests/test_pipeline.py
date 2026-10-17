@@ -16,6 +16,7 @@ from common.chain import PrivateSignal
 from common.config import chain_spec
 from eval_service import config as eval_config
 from eval_service import main as eval_service
+from eval_service import servers
 from eval_service.dataset import Dataset, Sample
 from eval_service.run import Distance, Duel, Scorer
 from model_dedup import config as dedup_config
@@ -617,6 +618,27 @@ def test_a_crashed_eval_uploads_its_summary(conn, s, spec):
         json.loads(artifacts[f"evals/hk-1/{eval_id}/summary.json"])["error"]
         == "GPU fell off the bus"
     )
+
+
+def test_a_challenger_that_does_not_load_is_invalid_not_retried(conn, s, spec):
+    crown_genesis(conn)
+    sid = submit(conn)
+    validate(conn, s, spec)
+    dedup(conn, s)
+    reason = "ValueError: There is no module or parameter named 'x.weight_scale_inv'"
+
+    def exits_on(gpu: int) -> Scorer:
+        def score(*_a, **_k) -> Duel:
+            raise servers.ServerExited(gpu, reason, Path("/vllm/gpu.log"))
+
+        return score
+
+    evaluate(conn, s, exits_on(s.gpus("king")[0]))
+    assert state(conn, sid) == states.UNIQUE, "the king not starting is a crash, retried"
+    evaluate(conn, s, exits_on(s.gpus("challenger")[0]))
+    assert state(conn, sid) == states.INVALID
+    error = db.one(conn, "SELECT error FROM submissions WHERE id = %s", (sid,))["error"]
+    assert error == f"the model does not load: {reason}"
 
 
 def test_a_hotkey_is_barred_after_max_invalid(conn, s, spec):

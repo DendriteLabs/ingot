@@ -27,6 +27,7 @@ def load(name: str) -> Family:
         genesis_layout={k: (d, tuple(s)) for k, (d, s) in layout.items()},
         frozen_dtype_prefixes=package.FROZEN_DTYPE_PREFIXES,
         genesis_weight_bytes=package.GENESIS_WEIGHT_BYTES,
+        fused=package.FUSED,
     )
 
 

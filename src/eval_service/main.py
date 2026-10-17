@@ -94,6 +94,9 @@ def run_once(
         duel = scorer(teacher_dir, challenger_dir, king_dir, drawn)
         log.info("eval {}: duel took {:.0f}s", eval_id, time.monotonic() - fetched)
     except Exception as exc:
+        if isinstance(exc, servers.ServerExited) and exc.gpu in s.gpus("challenger"):
+            _does_not_load(conn, upload, row, eval_id, f"the model does not load: {exc.reason}")
+            return True
         log.exception("eval {} crashed", eval_id)
         conn.execute(
             "UPDATE evals SET error = %s, finished_at = now() WHERE id = %s", (str(exc), eval_id)
@@ -149,6 +152,17 @@ def run_once(
         "WON" if duel.won else "LOST",
     )
     return True
+
+
+def _does_not_load(conn: db.Conn, upload: Upload, row: db.Row, eval_id: int, reason: str) -> None:
+    """The challenger's servers exit while loading it: the model's fault, so it is rejected like
+    an invalid one (its upload attempt goes back to the miner) instead of retried as a crash."""
+    log.warning("eval {}: {}", eval_id, reason)
+    conn.execute(
+        "UPDATE evals SET error = %s, finished_at = now() WHERE id = %s", (reason, eval_id)
+    )
+    _upload_summary(conn, upload, row["hotkey"], eval_id)
+    db.finish(conn, row["id"], states.INVALID, reason)
 
 
 def _upload_summary(conn: db.Conn, upload: Upload, hotkey: str, eval_id: int) -> None:

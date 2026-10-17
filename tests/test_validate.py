@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import tomllib
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -116,12 +117,37 @@ def test_text_weights_may_move_between_fp8_bf16_and_f32_if_the_config_agrees():
     assert check_layout(bf16_up, FAMILY, listed) is None
     f32_up = {**bf16_up, UP: ("F32", (256, 64))}
     assert check_layout(f32_up, FAMILY, listed) is None
+
+
+def test_only_weights_genesis_quantizes_may_be_fp8():
+    fp8_embed = changed(
+        model__embed_tokens__weight=("F8_E4M3", (1000, 64)),
+        model__embed_tokens__weight_scale_inv=("BF16", (8, 1)),
+    )
+    unlisted = with_quant(modules_to_not_convert=["lm_head", "model.visual", "model.norm"])
+    assert layout_reason(fp8_embed, unlisted) == (
+        "model.embed_tokens.weight: FP8, but genesis keeps it BF16; vLLM cannot load it quantized"
+    )
     fp8_head = changed(
         lm_head__weight=("F8_E4M3", (1000, 64)), lm_head__weight_scale_inv=("F32", (8, 1))
     )
-    assert "listed in modules_to_not_convert" in layout_reason(fp8_head)
-    unlisted = with_quant(modules_to_not_convert=["model.visual", "model.norm"])
-    assert check_layout(fp8_head, FAMILY, unlisted) is None
+    assert "genesis keeps it BF16" in layout_reason(fp8_head)
+
+
+def test_projections_vllm_fuses_share_one_precision():
+    gate = "model.layers.0.mlp.gate_proj.weight"
+    genesis = {**GENESIS, gate: ("F8_E4M3", (256, 64)), gate + "_scale_inv": ("BF16", (2, 1))}
+    family = replace(FAMILY, genesis_layout=genesis, fused=(("gate_proj", "up_proj"),))
+    assert check_layout(genesis, family, CONFIG) is None
+    split = {k: v for k, v in genesis.items() if k != gate + "_scale_inv"}
+    split[gate] = ("BF16", (256, 64))
+    listed = with_quant(
+        modules_to_not_convert=[*QUANT["modules_to_not_convert"], "model.layers.0.mlp.gate_proj"]
+    )
+    assert check_layout(split, family, listed) == (
+        "model.layers.0.mlp: gate_proj not, up_proj FP8; vLLM loads them as one layer,"
+        " so all FP8 or none"
+    )
 
 
 def test_frozen_parts_keep_the_genesis_dtype():

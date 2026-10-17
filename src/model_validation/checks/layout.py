@@ -1,8 +1,10 @@
 """The genesis tensors, re-quantized as the miner likes: every weight keeps its name and
-shape; a text-model weight may be FP8 (matrices only), BF16 or F32; tensors the eval never
-exercises keep the genesis dtype. An FP8 weight carries `<name>_scale_inv` shaped by the
-declared block (two ints >= 128), and config.modules_to_not_convert must agree with the file:
-vLLM builds each module from that list, so a mismatch does not load. Weight values are free."""
+shape; a text-model weight may be BF16 or F32, or FP8 where genesis has it in FP8 (vLLM serves
+nothing else quantized: an FP8 embedding does not load), with the projections vLLM fuses all in
+one precision; tensors the eval never exercises keep the genesis dtype. An FP8 weight carries
+`<name>_scale_inv` shaped by the declared block (two ints >= 128), and
+config.modules_to_not_convert must agree with the file: vLLM builds each module from that list,
+so a mismatch does not load. Weight values are free."""
 
 from __future__ import annotations
 
@@ -43,6 +45,8 @@ def check_layout(layout: Layout, family: Family, config: dict[str, Any]) -> str 
         side = sides.pop(name + SIDE_SUFFIX, None)
         module = name.removesuffix(".weight")
         if dtype == FP8:
+            if g_dtype != FP8:
+                return f"{name}: FP8, but genesis keeps it {g_dtype}; vLLM cannot load it quantized"
             if side is None:
                 return f"{name}: FP8 weight without {SIDE_SUFFIX}"
             if side[0] not in SCALE_DTYPES:
@@ -61,6 +65,23 @@ def check_layout(layout: Layout, family: Family, config: dict[str, Any]) -> str 
                 return f"{name}: not FP8 but missing from modules_to_not_convert"
     if sides:
         return f"scale tensors without a weight: {_some(sorted(sides))}"
+    return _split_fused(weights, family.fused)
+
+
+def _split_fused(weights: Layout, fused: tuple[tuple[str, ...], ...]) -> str | None:
+    """A group vLLM loads as one layer with only some members FP8 does not load."""
+    groups: dict[tuple[str, tuple[str, ...]], dict[str, bool]] = {}
+    for name, (dtype, _shape) in weights.items():
+        module, _, leaf = name.removesuffix(".weight").rpartition(".")
+        for group in fused:
+            if leaf in group:
+                groups.setdefault((module, group), {})[leaf] = dtype == FP8
+    for (module, group), fp8 in sorted(groups.items()):
+        if len(set(fp8.values())) > 1:
+            parts = ", ".join(
+                f"{leaf} {'FP8' if fp8[leaf] else 'not'}" for leaf in group if leaf in fp8
+            )
+            return f"{module}: {parts}; vLLM loads them as one layer, so all FP8 or none"
     return None
 
 

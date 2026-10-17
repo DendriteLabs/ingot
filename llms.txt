@@ -22,7 +22,10 @@ The model to beat is always the newest king. Before the first coronation it is g
   `transformers_version`, `use_cache`, `initializer_range`, `attention_dropout`), and holds no
   key genesis does not. `quant_method` is `fp8`.
 - The genesis tensors: every weight of `dendriteholdings/Ingot-genesis-27B-FP8` keeps its name and shape, nothing
-  is added; scale tensors are not compared to genesis, they follow your block size. In the text model a weight may be FP8 E4M3 (matrices only), BF16 or F32; tensors
+  is added; scale tensors are not compared to genesis, they follow your block size. In the text model a weight may be BF16 or F32, or FP8 E4M3 where genesis has it in FP8:
+  vLLM serves nothing else quantized (an FP8 `embed_tokens` does not load). The projections vLLM
+  fuses into one layer (`q/k/v_proj`, `gate/up_proj`, `in_proj_qkv/in_proj_z`,
+  `in_proj_b/in_proj_a`) are all FP8 or all unquantized. Tensors
   under `model.visual.`, `mtp.` and `lm_head.` keep the genesis dtype (`lm_head` stays BF16: the
   evaluator applies it itself to your last hidden state). An FP8 weight `x.weight` carries
   `x.weight_scale_inv` shaped by your `weight_block_size` (two ints, 128 or larger), and

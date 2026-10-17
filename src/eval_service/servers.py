@@ -29,6 +29,16 @@ from eval_service import config, timing
 
 HIDDEN_STATES_DIR = settings().hidden_states_dir
 _CACHE_RE = re.compile(r"GPU KV cache size: ([\d,]+) tokens")
+_ERROR_RE = re.compile(r"\b(\w+(?:Error|Exception): .+)")
+
+
+class ServerExited(RuntimeError):
+    """A vLLM server that exited three times while starting; `reason` is the first error line of
+    its last start, the root cause (vLLM ends on a generic "Engine core initialization failed")."""
+
+    def __init__(self, gpu: int, reason: str, log_path: Path) -> None:
+        self.gpu, self.reason = gpu, reason
+        super().__init__(f"vLLM on GPU {gpu} exited three times: {reason}; see {log_path}")
 
 
 class Server:
@@ -41,10 +51,15 @@ class Server:
         states_dir = HIDDEN_STATES_DIR / f"gpu{gpu}"
         states_dir.mkdir(parents=True, exist_ok=True)
         self.command, self.cache_tokens = _command(model_dir, gpu, share, states_dir), 0
+        # the last run's log stays beside the new one: a server that died is often looked at only
+        # after the next eval started its own
+        if self.log.exists():
+            self.log.replace(self.log.with_suffix(".prev.log"))
         self.log.write_text("")
         self._launch()
 
     def _launch(self) -> None:
+        self.launched_at = self.log.stat().st_size
         with open(self.log, "a") as out:
             self.process = subprocess.Popen(
                 self.command,
@@ -72,7 +87,14 @@ class Server:
                 log.warning("vLLM on GPU {} exited while starting; restarting it", self.gpu)
                 self.stop()
                 self._launch()
-        raise RuntimeError(f"vLLM on GPU {self.gpu} exited three times; see {self.log}")
+        raise ServerExited(self.gpu, self._first_error(), self.log)
+
+    def _first_error(self) -> str:
+        with open(self.log, "rb") as f:
+            f.seek(self.launched_at)
+            text = f.read().decode(errors="replace")
+        found = _ERROR_RE.search(text)
+        return found.group(1).strip()[:300] if found else "no error line in its log"
 
     def alive(self) -> bool:
         return self.process.poll() is None

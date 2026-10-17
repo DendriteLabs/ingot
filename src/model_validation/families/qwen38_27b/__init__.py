@@ -20,3 +20,11 @@ FREE_KEYS = (
 )
 
 FROZEN_DTYPE_PREFIXES = ("model.visual.", "mtp.", "lm_head.")
+
+# vLLM's packed_modules_mapping for Qwen3.5: each group is one layer there, so one precision
+FUSED = (
+    ("q_proj", "k_proj", "v_proj"),
+    ("gate_proj", "up_proj"),
+    ("in_proj_qkv", "in_proj_z"),
+    ("in_proj_b", "in_proj_a"),
+)

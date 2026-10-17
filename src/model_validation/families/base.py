@@ -18,6 +18,8 @@ class Family:
     genesis_layout: Layout
     frozen_dtype_prefixes: tuple[str, ...]
     genesis_weight_bytes: int
+    # projections vLLM loads as one layer (its packed_modules_mapping): one precision for all
+    fused: tuple[tuple[str, ...], ...] = ()
 
     def arch_value(self, key: str) -> Any:
         return lookup(self.genesis_config, key)
