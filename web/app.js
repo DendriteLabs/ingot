@@ -325,7 +325,12 @@ function renderHistory() {
     }, `${lead < 0 ? "−" : "+"}${fixed(Math.abs(lead))}`);
   };
   const needed = (v, d) => (v == null ? "" : ` ≥ ${Number(v).toFixed(d)}`);
-  // a whole row opens its eval; the uid and hotkey links inside it keep going to taomarketcap
+  const repos = new Map(state.kings.map((k) => [k.id, k.hf_repo]));
+  const kingCell = (e) => {
+    const repo = repos.get(e.king_id);
+    return el("span", { class: "model-cell" }, repo ? link(hubUrl(repo), e.king, { title: repo }) : e.king);
+  };
+  // a whole row opens its eval; the uid, hotkey and king links inside it go to their own pages
   const open = (ev, url) => {
     if (ev.target.closest("a")) return;
     if (ev.ctrlKey || ev.metaKey || ev.button === 1) window.open(url, "_blank", "noopener");
@@ -338,7 +343,7 @@ function renderHistory() {
       el("td", { class: "when", title: fmtDateTime(e.started_at) }, fmtRelative(e.started_at)),
       uidCell(e.uid, e.hotkey),
       hotkeyCell(e.hotkey),
-      el("td", { class: "model vs" }, el("span", { class: "model-cell" }, e.king)),
+      el("td", { class: "model vs" }, kingCell(e)),
       el("td", { class: "center" }, marginCell(e.score_challenger, e.score_king, e.margin, 5)),
       el("td", { class: "center" }, marginCell(e.dist_challenger, e.dist_king, e.dist_margin, 4)),
       el("td", { class: "r" }, el("span", { class: `verdict-badge ${v}` }, v)));

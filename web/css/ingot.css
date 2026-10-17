@@ -197,6 +197,7 @@ table.data-table td.when, table.data-table td.uid, table.data-table .rc-hotkey {
 table.data-table td.uid a:hover, table.data-table td.hotkey a:hover, table.data-table td.rc-hotkey a:hover { color: var(--accent-ink); }
 .model-cell { display: inline-block; max-width: 320px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 td.model.vs .model-cell { color: var(--text-2); }
+td.model.vs a:hover { color: var(--accent-ink); }
 .muted-dash { color: var(--line-strong); }
 
 /* weight holders: tighter cells, so the six columns fit in half the page */
