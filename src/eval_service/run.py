@@ -53,15 +53,21 @@ def won(challenger: Distance, king: Distance) -> bool:
     )
 
 
-Scorer = Callable[[Path, Path, Path, Sequence[Sample]], Duel]
+Scorer = Callable[..., Duel]  # (teacher, challenger, king, samples, *, on_progress=None)
+Progress = Callable[[int], None]
 Result = tuple[dict[str, "Sums"], dict[str, Any]]
 
 
 def duel(
-    teacher_dir: Path, challenger_dir: Path, king_dir: Path, samples: Sequence[Sample]
+    teacher_dir: Path,
+    challenger_dir: Path,
+    king_dir: Path,
+    samples: Sequence[Sample],
+    *,
+    on_progress: Progress | None = None,
 ) -> Duel:
     models = {"teacher": teacher_dir, "king": king_dir, "challenger": challenger_dir}
-    evaluation = _Evaluation(models, len(samples))
+    evaluation = _Evaluation(models, len(samples), on_progress)
     results = evaluation.run(samples)
     log.info(
         "eval timing, {} samples scored in {:.0f}s: {}",
@@ -84,7 +90,9 @@ class _Evaluation:
 
     # metrics needs torch, which only the GPU box installs, so it is imported where it is used
 
-    def __init__(self, models: dict[str, Path], total: int) -> None:
+    def __init__(
+        self, models: dict[str, Path], total: int, on_progress: Progress | None = None
+    ) -> None:
         from eval_service import metrics
 
         started = time.monotonic()
@@ -108,6 +116,7 @@ class _Evaluation:
         self.compare_on = {dev: ThreadPoolExecutor(1) for dev in devices}
         self.preemptions_at_start = self._preemptions()
         self.total, self.done, self.lock = total, 0, threading.Lock()
+        self.on_progress = on_progress
 
     def run(self, samples: Sequence[Sample]) -> list[Result]:
         """The results of the samples that went through. A sample that fails is logged and left
@@ -166,10 +175,10 @@ class _Evaluation:
                 self._read_along(i, sample, prompt, answer, paths)
             with timing.stages.timed("compare"):
                 sums = self._compare(prompt, answer, paths)
-            self._count()
             timing.stages.sample(sample.id, time.monotonic() - started, len(prompt), len(answer))
             return sums, self._record(sample, prompt, answer, sums)
         finally:
+            self._count()  # a failed sample counts too, so progress reaches the total
             for path in paths.values():
                 servers.discard(path)
 
@@ -246,8 +255,15 @@ class _Evaluation:
     def _count(self) -> None:
         with self.lock:
             self.done += 1
-            if self.done % 100 == 0:
-                log.info("eval progress: {} of {} samples", self.done, self.total)
+            done = self.done
+            if done % 100 == 0:
+                log.info("eval progress: {} of {} samples", done, self.total)
+        chunks = config.PROGRESS_CHUNKS
+        if self.on_progress and done * chunks // self.total > (done - 1) * chunks // self.total:
+            try:
+                self.on_progress(done)
+            except Exception:
+                log.exception("eval progress report failed")
 
     def _preemptions(self) -> float:
         return sum(group.preemptions() for group in self.groups.values())

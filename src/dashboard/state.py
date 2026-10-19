@@ -179,9 +179,16 @@ def _queue(conn: db.Conn) -> dict[str, Any]:
     ).fetchall()
     rows = conn.execute(
         """
-        SELECT id, hotkey, uid, state, created_at, updated_at FROM submissions
-        WHERE state = ANY(%s)
-        ORDER BY state = 'EVALUATING' DESC, created_at
+        SELECT s.id, s.hotkey, s.uid, s.state, s.created_at, s.updated_at,
+               e.id AS eval_id, e.samples_done, e.sample_count, e.started_at AS eval_started_at
+        FROM submissions s
+        LEFT JOIN LATERAL (
+            SELECT id, samples_done, sample_count, started_at FROM evals
+            WHERE submission_id = s.id AND finished_at IS NULL AND s.state = 'EVALUATING'
+            ORDER BY id DESC LIMIT 1
+        ) e ON true
+        WHERE s.state = ANY(%s)
+        ORDER BY s.state = 'EVALUATING' DESC, s.created_at
         LIMIT %s
         """,
         (ACTIVE, config.QUEUE_LIMIT),

@@ -4,6 +4,7 @@ being crowned, so every eval faces the newest king."""
 from __future__ import annotations
 
 import json
+import threading
 import time
 from collections.abc import Callable
 from datetime import timedelta
@@ -91,7 +92,9 @@ def run_once(
             between - started,
             fetched - between,
         )
-        duel = scorer(teacher_dir, challenger_dir, king_dir, drawn)
+        duel = scorer(
+            teacher_dir, challenger_dir, king_dir, drawn, on_progress=_progress(conn, eval_id)
+        )
         log.info("eval {}: duel took {:.0f}s", eval_id, time.monotonic() - fetched)
     except Exception as exc:
         if isinstance(exc, servers.ServerExited) and exc.gpu in s.gpus("challenger"):
@@ -152,6 +155,17 @@ def run_once(
         "WON" if duel.won else "LOST",
     )
     return True
+
+
+def _progress(conn: db.Conn, eval_id: int) -> run.Progress:
+    """Writes samples_done for the dashboard; the scorer calls it from its worker threads."""
+    lock = threading.Lock()
+
+    def report(done: int) -> None:
+        with lock:
+            conn.execute("UPDATE evals SET samples_done = %s WHERE id = %s", (done, eval_id))
+
+    return report
 
 
 def _does_not_load(conn: db.Conn, upload: Upload, row: db.Row, eval_id: int, reason: str) -> None:

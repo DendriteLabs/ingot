@@ -14,6 +14,7 @@ from chain_reader import signals
 from common import chain, db, guard, states
 from common.chain import PrivateSignal
 from common.config import chain_spec
+from dashboard import state as dashboard_state
 from eval_service import config as eval_config
 from eval_service import main as eval_service
 from eval_service import servers
@@ -77,7 +78,9 @@ def listing(_uri: str) -> list[str]:
 def duel(challenger: float, king: float) -> Scorer:
     """KL and distance both at the given value, so the two margins agree."""
 
-    def score(_teacher: Path, _challenger: Path, _king: Path, samples: Sequence[Sample]) -> Duel:
+    def score(
+        _teacher: Path, _challenger: Path, _king: Path, samples: Sequence[Sample], **_: object
+    ) -> Duel:
         return Duel(
             Distance(challenger, challenger),
             Distance(king, king),
@@ -348,7 +351,9 @@ def test_the_next_eval_faces_the_new_king(conn, s, spec):
     dedup(conn, s)
     dedup(conn, s)
 
-    def score(_teacher: Path, challenger: Path, king: Path, samples: Sequence[Sample]) -> Duel:
+    def score(
+        _teacher: Path, challenger: Path, king: Path, samples: Sequence[Sample], **_: object
+    ) -> Duel:
         def of(model: Path) -> Distance:
             value = 0.1 if "hk-1" in str(model) else 0.5
             return Distance(value, value)
@@ -727,3 +732,22 @@ def test_backfill_bars_hotkeys_that_committed_before_the_start(conn):
         "detail": {"block": 100},
     }
     assert guard.record_legacy(conn, commits, start_block=200) == 0, "a restart bars no one twice"
+
+
+def test_the_running_eval_shows_its_progress(conn, s, spec):
+    crown_genesis(conn)
+    sid = submit(conn, hotkey="hk-1", uid=7)
+    assert validate(conn, s, spec) and dedup(conn, s)
+    seen: list[dict] = []
+
+    def score(_t: Path, _c: Path, _k: Path, samples: Sequence[Sample], *, on_progress) -> Duel:
+        on_progress(3)
+        seen.extend(r for r in dashboard_state._queue(conn)["rows"] if r["id"] == sid)
+        return duel(0.5, 0.1)(_t, _c, _k, samples)
+
+    assert evaluate(conn, s, score)
+    (row,) = seen
+    assert row["state"] == states.EVALUATING
+    ev = db.one(conn, "SELECT samples_done, sample_count FROM evals")
+    assert (row["samples_done"], row["sample_count"]) == (3, ev["sample_count"])
+    assert ev["samples_done"] == 3

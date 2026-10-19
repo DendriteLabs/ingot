@@ -31,6 +31,7 @@ WORKERS = 384
 # A sample that fails is left out and the eval goes on. More than this many is a broken eval, or
 # a model failing on purpose to shed hard prompts, and ends the eval as every failure once did.
 MAX_FAILED_SAMPLES = 10
+PROGRESS_CHUNKS = 20  # how often a running eval writes samples_done for the dashboard
 # A state file no eval fetched in this long was abandoned (its eval died); the teacher server
 # sweeps such files, /dev/shm being RAM.
 STATES_TTL_S = 3600

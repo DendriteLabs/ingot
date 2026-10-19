@@ -23,6 +23,8 @@ const uidCell = (uid, hotkey) => el("td", { class: "uid" }, uid == null ? "—" 
 const hotkeyCell = (hotkey, cls = "hotkey") => el("td", { class: cls }, hotkey ? minerLink(state.netuid, hotkey, shortHotkey(hotkey)) : "—");
 
 let state = null;
+let benchmarksLoading = false;
+let benchmarkDocument = null;
 
 async function tick() {
   try {
@@ -175,6 +177,160 @@ function renderKingsChart() {
   mount(box, el("div", { class: "hero-chart-plot" }, svg, tip));
 }
 
+async function loadBenchmarks() {
+  if (benchmarksLoading) return;
+  benchmarksLoading = true;
+  const box = $("benchmarks-wrap");
+  try {
+    const res = await fetch("/api/benchmarks.json", { cache: "no-store" });
+    if (res.status === 404) {
+      if (benchmarkDocument !== null) throw new Error("benchmark feed unavailable");
+      mount($("benchmark-charts"));
+      $("benchmarks-meta").textContent = "awaiting results";
+      mount(box, el("div", { class: "empty" }, "No external benchmark results published yet."));
+      return;
+    }
+    if (!res.ok) throw new Error(`benchmark feed: ${res.status}`);
+    const doc = await res.json();
+    const { results, benchmarks } = doc;
+    if (!Array.isArray(results)) throw new Error("benchmark feed needs a results array");
+    const latestKing = Math.max(-1, ...results
+      .filter((r) => Number.isFinite(r.score) && Number.isInteger(r.reign) && r.reign >= 0)
+      .map((r) => r.reign));
+    const latestModel = results.find((r) => r.reign === latestKing && Number.isFinite(r.score));
+    const kingLabel = latestKing > 0 ? `latest benchmarked: ${latestModel.model}` : latestKing === 0 ? "latest benchmarked: genesis" : "awaiting benchmarked king";
+    $("benchmarks-meta").textContent = `${results.length} results · ${kingLabel}`;
+    const fingerprint = JSON.stringify(doc);
+    if (fingerprint === benchmarkDocument) {
+      return;
+    }
+    const names = benchmarks || [...new Set(results.map((r) => r.benchmark))];
+    renderBenchmarkCharts(results, names);
+    renderBenchmarkRows(results);
+    benchmarkDocument = fingerprint;
+  } catch (err) {
+    if (benchmarkDocument !== null) {
+      $("benchmarks-meta").textContent = "connection interrupted · retrying";
+      return;
+    }
+    $("benchmarks-meta").textContent = "unavailable";
+    mount($("benchmark-charts"));
+    mount(box, el("div", { class: "empty" }, "Benchmark results are unavailable. Retrying shortly."));
+    console.warn("benchmark fetch failed", err);
+  } finally {
+    benchmarksLoading = false;
+  }
+}
+
+function renderBenchmarkCharts(results, names) {
+  const hasScore = (r) => typeof r.score === "number" && Number.isFinite(r.score);
+  mount($("benchmark-charts"), ...names.map((name) => {
+    const rows = results.filter((r) => r.benchmark === name)
+      .sort((a, b) => (a.reign ?? Infinity) - (b.reign ?? Infinity) || a.model.localeCompare(b.model));
+    const scored = rows.filter(hasScore);
+    const latest = scored.at(-1);
+    const genesis = rows.find((r) => r.reign === 0);
+    const genesisScore = genesis && hasScore(genesis) ? `${genesis.score.toFixed(2)}%` : "—";
+    const card = el("article", { class: "benchmark-card" },
+      el("div", { class: "benchmark-chart-head" }, el("h3", {}, name),
+        el("div", { class: "benchmark-scores" },
+          el("span", { class: "benchmark-latest" }, latest ? `${latest.score.toFixed(2)}%${latest.status === "complete" ? "" : " · partial"}` : "awaiting score"),
+          el("span", { class: "benchmark-genesis", title: genesis && hasScore(genesis) ? `Genesis: ${genesisScore} · ${genesis.status}` : "No genesis score reported" }, `Genesis ${genesisScore}`))));
+    if (!scored.length) {
+      const last = rows.at(-1);
+      card.append(el("div", { class: "chart" }, el("div", { class: "empty" }, ...(last ? [
+        el("span", {}, last.model),
+        el("span", {}, `${last.completed ?? 0} / ${last.samples ?? "—"} tasks`),
+        el("span", {}, last.status),
+      ] : ["No runs published yet."]))));
+      return card;
+    }
+    const width = 240, height = 140;
+    const pad = { left: 36, right: 24, top: 14, bottom: 28 };
+    const x = (i) => pad.left + (rows.length === 1 ? 0.5 : i / (rows.length - 1)) * (width - pad.left - pad.right);
+    const y = (value) => pad.top + (1 - value / 100) * (height - pad.top - pad.bottom);
+    const label = (r) => r.reign === 0 ? "Genesis" : r.reign != null ? `King ${r.reign}` : r.model;
+    const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": `${name}: score by model generation, 0 to 100 percent` });
+    for (const value of [0, 50, 100]) {
+      svg.append(svgEl("line", { x1: pad.left, x2: width - pad.right, y1: y(value), y2: y(value), class: "grid" }),
+        svgEl("text", { x: pad.left - 8, y: y(value), class: "tick", "text-anchor": "end", "dominant-baseline": "middle" }, `${value}%`));
+    }
+    // Missing scores break the line; stopped runs must not look like completed evaluations.
+    rows.forEach((r, i) => {
+      if (i % Math.max(1, Math.ceil(rows.length / 5)) === 0 || i === rows.length - 1) {
+        svg.append(svgEl("text", { x: x(i), y: height - 12, class: "tick", "text-anchor": "middle" }, label(r)));
+      }
+      if (!hasScore(r)) return;
+      const previous = rows[i - 1];
+      if (previous && hasScore(previous)) {
+        svg.append(svgEl("path", { d: `M${Math.round(x(i - 1))},${Math.round(y(previous.score))}L${Math.round(x(i))},${Math.round(y(r.score))}`,
+          class: `king-line benchmark-line${r.status === "complete" && previous.status === "complete" ? "" : " partial"}` }));
+      }
+    });
+    const tip = el("div", { class: "hero-chart-tip", hidden: true });
+    const crosshair = svgEl("line", { y1: pad.top, y2: height - pad.bottom, class: "crosshair", visibility: "hidden" });
+    svg.append(crosshair);
+    const points = [];
+    const hide = () => {
+      tip.hidden = true;
+      crosshair.setAttribute("visibility", "hidden");
+      points.forEach((point) => point.classList.remove("active"));
+    };
+    const show = (r, i) => {
+      points.forEach((point) => point.classList.remove("active"));
+      points[i]?.classList.add("active");
+      crosshair.setAttribute("x1", Math.round(x(i)) + 0.5);
+      crosshair.setAttribute("x2", Math.round(x(i)) + 0.5);
+      crosshair.removeAttribute("visibility");
+      mount(tip, el("b", {}, r.model), el("div", { class: "hero-chart-tip-meta" }, `${hasScore(r) ? `${r.score.toFixed(2)}%` : "awaiting score"} · ${r.status}`),
+        el("div", { class: "hero-chart-tip-meta" }, `${r.completed ?? "—"} / ${r.samples ?? "—"} tasks`));
+      placeTip(tip, svg, width, x(i), pad.top);
+    };
+    rows.forEach((r, i) => {
+      if (!hasScore(r)) return;
+      const description = `${r.model}: ${r.score.toFixed(2)}% · ${r.status} · ${r.completed ?? "—"} / ${r.samples ?? "—"} tasks`;
+      const point = svgEl("rect", { x: Math.round(x(i)) - 3, y: Math.round(y(r.score)) - 3, width: 7, height: 7, tabindex: "0", class: `king-dot benchmark-point${r.status === "complete" ? (r === latest ? " current" : "") : " partial"}`, "aria-label": description });
+      point.append(svgEl("title", {}, description));
+      points[i] = point;
+      point.addEventListener("focus", () => show(r, i));
+      point.addEventListener("click", () => show(r, i));
+      point.addEventListener("blur", hide);
+      svg.append(point);
+    });
+    svg.addEventListener("pointermove", (ev) => {
+      const rect = svg.getBoundingClientRect();
+      const at = ((ev.clientX - rect.left) / rect.width) * width;
+      const i = rows.length === 1 ? 0 : Math.min(rows.length - 1, Math.max(0, Math.round((at - pad.left) / (width - pad.left - pad.right) * (rows.length - 1))));
+      show(rows[i], i);
+    });
+    svg.addEventListener("pointerleave", hide);
+    card.append(el("div", { class: "chart hero-chart-plot" }, svg, tip));
+    return card;
+  }));
+}
+
+function renderBenchmarkRows(results) {
+  const box = $("benchmarks-wrap");
+  if (!results.length) {
+    mount(box, el("div", { class: "empty" }, "No external benchmark results published yet."));
+    return;
+  }
+  mount(box, el("table", { class: "data-table" },
+    el("thead", {}, el("tr", {},
+      ...["benchmark", "model", "score", "metric", "tasks", "errors", "run", "evaluated"].map((name) =>
+        el("th", { class: name === "score" ? "r" : "" }, name)))),
+    el("tbody", {}, results.map((r) => {
+      return el("tr", {},
+        el("td", {}, r.benchmark || "—"), el("td", {}, r.model || "—"),
+        el("td", { class: "r" }, typeof r.score === "number" && Number.isFinite(r.score) ? r.score.toFixed(2) : "—"),
+        el("td", {}, r.metric || "—"),
+        el("td", { class: "r" }, r.completed == null ? r.samples ?? "—" : `${r.completed} / ${r.samples ?? "—"}`),
+        el("td", { class: "r" }, r.errors ?? "—"),
+        el("td", {}, r.status || "—"),
+        el("td", { class: "when" }, r.evaluated_at ? fmtDateTime(r.evaluated_at) : "—"));
+    }))));
+}
+
 function renderReign() {
   const { reign } = state;
   $("reign-meta").textContent = `${reign.slots} slots · ${Math.round(reign.share * 100)}% each · ${reign.reign_days} days`;
@@ -280,6 +436,16 @@ function renderRegistration() {
   mount(box, el("div", { class: "hero-chart-plot" }, svg, tip));
 }
 
+// a running eval's samples_done, written every 1/20th of its samples
+function evalProgress(r) {
+  if (r.eval_id == null || !r.sample_count) return null;
+  if (!r.samples_done) return el("div", { class: "q-progress-label" }, "loading models");
+  const pct = Math.min(100, (100 * r.samples_done) / r.sample_count);
+  return el("div", { class: "q-progress", title: `${pct.toFixed(0)}%` },
+    el("div", { class: "q-progress-bar" }, el("div", { class: "q-progress-fill", style: `width: ${pct}%` })),
+    el("span", { class: "q-progress-label" }, `${r.samples_done} / ${r.sample_count}`));
+}
+
 function renderPipeline() {
   const rows = state.queue.rows;
   const working = rows.filter((r) => STAGES[r.state]?.[1] === "working").length;
@@ -288,7 +454,7 @@ function renderPipeline() {
     const [stage, status] = STAGES[r.state] ?? [r.state.toLowerCase(), "queued"];
     return el("tr", { class: status === "working" ? "working" : "" },
       el("td", {}, el("span", { class: "q-stage-badge" }, stage)),
-      el("td", {}, el("span", { class: status === "working" ? "q-status working" : "q-status" }, status)),
+      el("td", {}, el("span", { class: status === "working" ? "q-status working" : "q-status" }, status), evalProgress(r)),
       uidCell(r.uid, r.hotkey),
       hotkeyCell(r.hotkey),
       el("td", { class: "r when", title: fmtDateTime(r.updated_at) }, fmtRelative(r.updated_at)));
@@ -392,4 +558,5 @@ new ResizeObserver(() => {
 }).observe($("registration-chart"));
 
 tick();
-setInterval(tick, POLL_MS);
+loadBenchmarks();
+setInterval(() => { tick(); loadBenchmarks(); }, POLL_MS);

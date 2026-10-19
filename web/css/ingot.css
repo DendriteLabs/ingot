@@ -181,6 +181,26 @@ main { display: flex; flex-direction: column; gap: 64px; padding-top: 56px; padd
 .data-table-wrap.scroll { overflow-y: auto; }
 /* sized to whole rows (header 37.5px, rows 44px and 39px) so the box never ends on half a row */
 #history-wrap { max-height: calc(37.5px + 11 * 44px + 2px); }
+#benchmarks-wrap { max-height: calc(37.5px + 8 * 39px + 2px); }
+#benchmarks-wrap a:hover { color: var(--accent-ink); }
+.benchmark-charts { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(180px, 1fr); gap: 12px; margin-bottom: 20px; overflow-x: auto; }
+.benchmark-card .hero-chart-plot .tick { font-size: 11px; letter-spacing: 0; }
+.benchmark-card .hero-chart-plot svg { height: 120px; }
+.benchmark-card { display: flex; flex-direction: column; min-width: 0; }
+.benchmark-card > .chart { flex: 1; }
+.benchmark-chart-head { display: grid; gap: 6px; padding: 0 0 12px; font-family: var(--mono); font-size: 11px; }
+.benchmark-chart-head h3 { margin: 0; font: inherit; color: var(--text-2); }
+.benchmark-scores { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; }
+.benchmark-latest { color: var(--accent-ink); }
+.benchmark-genesis { margin-left: auto; color: var(--muted); }
+.benchmark-card .empty { display: flex; flex: 1; min-height: 120px; flex-direction: column; justify-content: center; gap: 4px; padding: 12px; font-size: 10px; overflow-wrap: anywhere; }
+.benchmark-card .hero-chart-tip { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.hero-chart-plot .benchmark-line { shape-rendering: auto; }
+.benchmark-line.partial { stroke-dasharray: 5 4; }
+.benchmark-point { cursor: pointer; }
+.benchmark-point.partial { fill: var(--panel); stroke: var(--accent); stroke-width: 2; }
+.benchmark-point.partial.active { fill: var(--text); }
+.benchmark-point:focus { outline: none; stroke: var(--text); stroke-width: 3; }
 #fails-wrap { max-height: calc(37.5px + 12 * 39px + 2px); }
 table.data-table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; }
 table.data-table th {
@@ -223,6 +243,10 @@ table.reign-table th:last-child, table.reign-table td:last-child { padding-right
 }
 .q-status { font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
 .q-status.working { color: var(--accent-ink); font-weight: 600; }
+.q-progress { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.q-progress-bar { flex: 1; min-width: 60px; height: 4px; background: var(--line); }
+.q-progress-fill { height: 100%; background: var(--accent); transition: width 0.4s; }
+.q-progress-label { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .q-status.working::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 7px; background: var(--accent); vertical-align: 1px; }
 .q-table tr.working td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 

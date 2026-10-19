@@ -145,6 +145,7 @@ ALTER TABLE evals ADD COLUMN IF NOT EXISTS noise_kl DOUBLE PRECISION;
 ALTER TABLE evals ADD COLUMN IF NOT EXISTS noise_dist DOUBLE PRECISION;
 ALTER TABLE evals ADD COLUMN IF NOT EXISTS challenger_s REAL;
 ALTER TABLE evals ADD COLUMN IF NOT EXISTS king_s REAL;
+ALTER TABLE evals ADD COLUMN IF NOT EXISTS samples_done INT NOT NULL DEFAULT 0;  -- while it runs
 
 -- one row per dedup run; the fingerprint itself lives in the OpenSearch bank
 CREATE TABLE IF NOT EXISTS dedups (
