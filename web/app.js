@@ -17,7 +17,11 @@ const STAGES = {
 };
 const FAIL_CODE = { INVALID: "invalid", DUPLICATE: "duplicate", FAILED: "crashed", UPLOAD: "upload" };
 
-const score = (v) => (v == null ? "—" : Number(v).toFixed(4));
+// a loser's KL against the king it faced, as a share of the king's: "4.7% above" or "0.3% below"
+const vsKing = (e) => {
+  const lead = 100 * (1 - Number(e.score_challenger) / Number(e.score_king));
+  return `${Math.abs(lead).toFixed(1)}% ${lead < 0 ? "above" : "below"} ${e.king}`;
+};
 const hubUrl = (repo) => `https://huggingface.co/${repo}`;
 const uidCell = (uid, hotkey) => el("td", { class: "uid" }, uid == null ? "—" : hotkey ? minerLink(state.netuid, hotkey, String(uid)) : String(uid));
 const hotkeyCell = (hotkey, cls = "hotkey") => el("td", { class: cls }, hotkey ? minerLink(state.netuid, hotkey, shortHotkey(hotkey)) : "—");
@@ -32,6 +36,8 @@ async function tick() {
     if (!res.ok) return;
     state = await res.json();
     render();
+    // the benchmark cards draw the kings from the state: redraw them once it is here or changed
+    loadBenchmarks();
   } catch (err) {
     console.warn("state fetch failed", err);
   }
@@ -82,6 +88,8 @@ function renderKingsChart() {
     return;
   }
   const crowned = kingGains().map((k) => ({ ...k, crowned: true, evalId: k.eval_id, t: new Date(k.crowned_at).getTime(), v: k.gain }));
+  // a king's step: how much lower its KL was than the king it beat, in that duel
+  crowned.forEach((k, j) => Object.assign(k, { beat: crowned[j - 1]?.name, step: k.duel_king != null ? 100 * (1 - Number(k.duel_challenger) / Number(k.duel_king)) : null }));
   const byId = new Map(crowned.map((k) => [k.id, k]));
   const lost = state.losers.filter((e) => byId.has(e.king_id)).map((e) => ({
     ...e, crowned: false, evalId: e.id, t: new Date(e.finished_at).getTime(),
@@ -129,8 +137,11 @@ function renderKingsChart() {
     return svgEl("rect", { x: cx - half, y: cy - half, width: size, height: size, class: cls });
   };
   const dots = points.map((p) => (p === current ? mark(p, 11, "king-dot current") : p.crowned ? mark(p, 7, "king-dot") : mark(p, 3, "king-dot lost")));
-  for (const dot of dots.filter((_, i) => !points[i].crowned)) svg.append(dot);
   const steps = crowned.map((p, j) => (j ? `H${px(p)[0]}V${px(p)[1]}` : `M${px(p).join(",")}`));
+  // the gain over genesis, as a faint gold under the staircase down to the genesis line
+  svg.append(gradient("kings-fill"));
+  svg.append(svgEl("path", { d: `${steps.join("")}H${Math.round(x(last))}V${Math.round(y(0))}H${px(crowned[0])[0]}Z`, class: "area", fill: "url(#kings-fill)" }));
+  for (const dot of dots.filter((_, i) => !points[i].crowned)) svg.append(dot);
   svg.append(svgEl("path", { d: `${steps.join("")}H${Math.round(x(last))}`, class: "king-line" }));
   for (const dot of dots.filter((_, i) => points[i].crowned)) svg.append(dot);
 
@@ -155,8 +166,8 @@ function renderKingsChart() {
         el("b", {}, `${p.v.toFixed(1)}%`),
         el("span", { class: "lbl" }, p.crowned ? p.name : `lost to ${p.king}`)),
       el("div", { class: "hero-chart-tip-meta" }, p.crowned
-        ? `divergence ${score(p.score)} · crowned ${fmtRelative(p.crowned_at)}${p.uid != null ? ` · uid ${p.uid}` : ""}`
-        : `divergence ${score(p.score_challenger)} vs ${score(p.score_king)} · ${fmtRelative(p.finished_at)} · uid ${p.uid}`),
+        ? `${p.step != null ? `KL ${p.step.toFixed(1)}% below ${p.beat} · ` : ""}crowned ${fmtRelative(p.crowned_at)}${p.uid != null ? ` · uid ${p.uid}` : ""}`
+        : `KL ${vsKing(p)} · ${fmtRelative(p.finished_at)} · uid ${p.uid}`),
       p.evalId != null ? el("div", { class: "hero-chart-tip-meta" }, `click to open eval ${p.evalId}`) : null);
     svg.style.cursor = p.evalId != null ? "pointer" : "";
     placeTip(tip, svg, width, x(i), PAD.top);
@@ -180,12 +191,11 @@ function renderKingsChart() {
 async function loadBenchmarks() {
   if (benchmarksLoading) return;
   benchmarksLoading = true;
-  const box = $("benchmarks-wrap");
+  const box = $("benchmark-charts");
   try {
     const res = await fetch("/api/benchmarks.json", { cache: "no-store" });
     if (res.status === 404) {
       if (benchmarkDocument !== null) throw new Error("benchmark feed unavailable");
-      mount($("benchmark-charts"));
       $("benchmarks-meta").textContent = "awaiting results";
       mount(box, el("div", { class: "empty" }, "No external benchmark results published yet."));
       return;
@@ -194,19 +204,14 @@ async function loadBenchmarks() {
     const doc = await res.json();
     const { results, benchmarks } = doc;
     if (!Array.isArray(results)) throw new Error("benchmark feed needs a results array");
-    const latestKing = Math.max(-1, ...results
-      .filter((r) => Number.isFinite(r.score) && Number.isInteger(r.reign) && r.reign >= 0)
-      .map((r) => r.reign));
-    const latestModel = results.find((r) => r.reign === latestKing && Number.isFinite(r.score));
-    const kingLabel = latestKing > 0 ? `latest benchmarked: ${latestModel.model}` : latestKing === 0 ? "latest benchmarked: genesis" : "awaiting benchmarked king";
-    $("benchmarks-meta").textContent = `${results.length} results · ${kingLabel}`;
-    const fingerprint = JSON.stringify(doc);
+    $("benchmarks-meta").textContent = "";
+    // the x axis is every king, so a new king redraws the cards even when the feed did not change
+    const fingerprint = JSON.stringify([doc, (state?.kings ?? []).map((k) => k.name)]);
     if (fingerprint === benchmarkDocument) {
       return;
     }
     const names = benchmarks || [...new Set(results.map((r) => r.benchmark))];
     renderBenchmarkCharts(results, names);
-    renderBenchmarkRows(results);
     benchmarkDocument = fingerprint;
   } catch (err) {
     if (benchmarkDocument !== null) {
@@ -214,7 +219,6 @@ async function loadBenchmarks() {
       return;
     }
     $("benchmarks-meta").textContent = "unavailable";
-    mount($("benchmark-charts"));
     mount(box, el("div", { class: "empty" }, "Benchmark results are unavailable. Retrying shortly."));
     console.warn("benchmark fetch failed", err);
   } finally {
@@ -222,53 +226,100 @@ async function loadBenchmarks() {
   }
 }
 
+const ROMAN = { I: 1, V: 5, X: 10, L: 50, C: 100, D: 500, M: 1000 };
+// a benchmark result's model is a king's repo name, Ingot-<numeral>-<suffix>; genesis is generation 0
+function generation(model) {
+  const m = /^Ingot-([IVXLCDM]+)-/.exec(model || "");
+  if (m) {
+    const n = [...m[1]].reduce((sum, c, i, a) => sum + (ROMAN[c] < ROMAN[a[i + 1]] ? -ROMAN[c] : ROMAN[c]), 0);
+    return { numeral: m[1], ordinal: n };
+  }
+  if (/genesis/i.test(model || "")) return { numeral: "genesis", ordinal: 0 };
+  return { numeral: model || "?", ordinal: Infinity };
+}
+
+// <defs> with a vertical gradient named `id` fading to transparent, for the fill under a chart's
+// line: `tone` picks its colour (fill-gold, fill-grey in the stylesheet)
+function gradient(id, tone = "fill-gold") {
+  const fill = svgEl("linearGradient", { id, x1: 0, y1: 0, x2: 0, y2: 1 });
+  fill.append(svgEl("stop", { offset: "0", class: `${tone} top` }), svgEl("stop", { offset: "1", class: `${tone} bottom` }));
+  const defs = svgEl("defs");
+  defs.append(fill);
+  return defs;
+}
+
 function renderBenchmarkCharts(results, names) {
-  const hasScore = (r) => typeof r.score === "number" && Number.isFinite(r.score);
-  mount($("benchmark-charts"), ...names.map((name) => {
-    const rows = results.filter((r) => r.benchmark === name)
-      .sort((a, b) => (a.reign ?? Infinity) - (b.reign ?? Infinity) || a.model.localeCompare(b.model));
-    const scored = rows.filter(hasScore);
+  const complete = (r) => r.status === "complete" && typeof r.score === "number" && Number.isFinite(r.score);
+  // the x axis is every king so far, benchmarked or not: the kings the dashboard knows plus any a
+  // completed run names
+  const axis = [...new Map(
+    [...(state?.kings ?? []).map((k) => k.name), ...results.filter(complete).map((r) => r.model)]
+      .map(generation).filter((g) => g.ordinal > 0 && Number.isFinite(g.ordinal)).map((g) => [g.ordinal, g]),
+  ).values()].sort((a, b) => a.ordinal - b.ordinal);
+  mount($("benchmark-charts"), ...names.map((name, card_i) => {
+    // only completed runs are shown; a running or stopped one is a score over part of the tasks
+    const runs = results.filter((r) => r.benchmark === name && complete(r)).map((r) => ({ ...r, ...generation(r.model) }));
+    const genesis = runs.find((r) => r.ordinal === 0);
+    const byOrdinal = new Map(runs.map((r) => [r.ordinal, r]));
+    // a click on a king opens its Hugging Face repo, the one the dashboard knows it by
+    const repoOf = (model) => (state?.kings ?? []).find((k) => k.hf_repo?.split("/").pop() === model)?.hf_repo;
+    const rows = axis.map((g) => {
+      const r = byOrdinal.get(g.ordinal) ?? { ...g, model: `Ingot-${g.numeral}`, status: "no completed run" };
+      return { ...r, repo: repoOf(r.model) };
+    });
+    const scored = rows.filter(complete);
     const latest = scored.at(-1);
-    const genesis = rows.find((r) => r.reign === 0);
-    const genesisScore = genesis && hasScore(genesis) ? `${genesis.score.toFixed(2)}%` : "—";
-    const card = el("article", { class: "benchmark-card" },
-      el("div", { class: "benchmark-chart-head" }, el("h3", {}, name),
-        el("div", { class: "benchmark-scores" },
-          el("span", { class: "benchmark-latest" }, latest ? `${latest.score.toFixed(2)}%${latest.status === "complete" ? "" : " · partial"}` : "awaiting score"),
-          el("span", { class: "benchmark-genesis", title: genesis && hasScore(genesis) ? `Genesis: ${genesisScore} · ${genesis.status}` : "No genesis score reported" }, `Genesis ${genesisScore}`))));
-    if (!scored.length) {
-      const last = rows.at(-1);
-      card.append(el("div", { class: "chart" }, el("div", { class: "empty" }, ...(last ? [
-        el("span", {}, last.model),
-        el("span", {}, `${last.completed ?? 0} / ${last.samples ?? "—"} tasks`),
-        el("span", {}, last.status),
-      ] : ["No runs published yet."]))));
+    const card = el("article", { class: "benchmark-card" }, el("div", { class: "benchmark-chart-head" }, el("h3", {}, name)));
+    if (!scored.length && !genesis) {
+      card.append(el("div", { class: "chart" }, el("div", { class: "empty" }, "No completed runs yet.")));
       return card;
     }
-    const width = 240, height = 140;
-    const pad = { left: 36, right: 24, top: 14, bottom: 28 };
-    const x = (i) => pad.left + (rows.length === 1 ? 0.5 : i / (rows.length - 1)) * (width - pad.left - pad.right);
-    const y = (value) => pad.top + (1 - value / 100) * (height - pad.top - pad.bottom);
-    const label = (r) => r.reign === 0 ? "Genesis" : r.reign != null ? `King ${r.reign}` : r.model;
-    const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": `${name}: score by model generation, 0 to 100 percent` });
-    for (const value of [0, 50, 100]) {
+    const width = 400, height = 130;
+    const pad = { left: 44, right: 16, top: 14, bottom: 28 };
+    const base = height - pad.bottom;
+    // the y axis runs to the best score, genesis included, so the chart spends its height on the range
+    const hi = Math.max(...scored.map((r) => r.score), genesis ? genesis.score : 0) || 1;
+    const x = (i) => pad.left + (rows.length <= 1 ? 0.5 : i / (rows.length - 1)) * (width - pad.left - pad.right);
+    const y = (value) => pad.top + (1 - value / hi) * (base - pad.top);
+    const pct = (v) => `${Number.isInteger(v) ? v : v.toFixed(1)}%`;
+    const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": `${name}: score by king, 0 to ${pct(hi)}` });
+    const fill = `benchmark-fill-${card_i}`;
+    svg.append(gradient(fill));
+    // ticks: the baseline and the top; genesis gets its own unless it is the top or sits on it
+    for (const value of [0, hi]) {
       svg.append(svgEl("line", { x1: pad.left, x2: width - pad.right, y1: y(value), y2: y(value), class: "grid" }),
-        svgEl("text", { x: pad.left - 8, y: y(value), class: "tick", "text-anchor": "end", "dominant-baseline": "middle" }, `${value}%`));
+        svgEl("text", { x: pad.left - 8, y: y(value), class: "tick", "text-anchor": "end", "dominant-baseline": "middle" }, pct(value)));
     }
-    // Missing scores break the line; stopped runs must not look like completed evaluations.
-    rows.forEach((r, i) => {
-      if (i % Math.max(1, Math.ceil(rows.length / 5)) === 0 || i === rows.length - 1) {
-        svg.append(svgEl("text", { x: x(i), y: height - 12, class: "tick", "text-anchor": "middle" }, label(r)));
+    if (genesis) {
+      svg.append(svgEl("line", { x1: pad.left, x2: width - pad.right, y1: y(genesis.score), y2: y(genesis.score), class: "genesis-line" }),
+        svgEl("text", { x: width - pad.right, y: y(genesis.score) - 4, class: "tick genesis-label", "text-anchor": "end" }, "genesis"));
+      if (genesis.score < hi && y(genesis.score) - y(hi) >= 12 && base - y(genesis.score) >= 12) {
+        svg.append(svgEl("text", { x: pad.left - 8, y: y(genesis.score), class: "tick", "text-anchor": "end", "dominant-baseline": "middle" }, pct(genesis.score)));
       }
-      if (!hasScore(r)) return;
-      const previous = rows[i - 1];
-      if (previous && hasScore(previous)) {
-        svg.append(svgEl("path", { d: `M${Math.round(x(i - 1))},${Math.round(y(previous.score))}L${Math.round(x(i))},${Math.round(y(r.score))}`,
-          class: `king-line benchmark-line${r.status === "complete" && previous.status === "complete" ? "" : " partial"}` }));
+    }
+    // the gold under the line: one area per run of kings with a score, since a gap breaks the line
+    const segments = [];
+    rows.forEach((r, i) => {
+      if (!complete(r)) return;
+      if (segments.length && segments.at(-1).at(-1) === i - 1) segments.at(-1).push(i); else segments.push([i]);
+    });
+    for (const seg of segments) {
+      if (seg.length < 2) continue;
+      const top = seg.map((i) => `${Math.round(x(i))},${Math.round(y(rows[i].score))}`).join("L");
+      svg.append(svgEl("path", { d: `M${top}L${Math.round(x(seg.at(-1)))},${base}L${Math.round(x(seg[0]))},${base}Z`,
+        class: "area", fill: `url(#${fill})` }));
+      for (let k = 1; k < seg.length; k++) {
+        svg.append(svgEl("path", { d: `M${Math.round(x(seg[k - 1]))},${Math.round(y(rows[seg[k - 1]].score))}L${Math.round(x(seg[k]))},${Math.round(y(rows[seg[k]].score))}`, class: "king-line benchmark-line" }));
+      }
+    }
+    const every = Math.max(1, Math.ceil(rows.length / 8));
+    rows.forEach((r, i) => {
+      if (i % every === 0 || i === rows.length - 1) {
+        svg.append(svgEl("text", { x: x(i), y: height - 12, class: "tick", "text-anchor": "middle" }, r.numeral));
       }
     });
     const tip = el("div", { class: "hero-chart-tip", hidden: true });
-    const crosshair = svgEl("line", { y1: pad.top, y2: height - pad.bottom, class: "crosshair", visibility: "hidden" });
+    const crosshair = svgEl("line", { y1: pad.top, y2: base, class: "crosshair", visibility: "hidden" });
     svg.append(crosshair);
     const points = [];
     const hide = () => {
@@ -276,59 +327,41 @@ function renderBenchmarkCharts(results, names) {
       crosshair.setAttribute("visibility", "hidden");
       points.forEach((point) => point.classList.remove("active"));
     };
+    let hover = null;
     const show = (r, i) => {
+      hover = r;
       points.forEach((point) => point.classList.remove("active"));
       points[i]?.classList.add("active");
       crosshair.setAttribute("x1", Math.round(x(i)) + 0.5);
       crosshair.setAttribute("x2", Math.round(x(i)) + 0.5);
       crosshair.removeAttribute("visibility");
-      mount(tip, el("b", {}, r.model), el("div", { class: "hero-chart-tip-meta" }, `${hasScore(r) ? `${r.score.toFixed(2)}%` : "awaiting score"} · ${r.status}`),
-        el("div", { class: "hero-chart-tip-meta" }, `${r.completed ?? "—"} / ${r.samples ?? "—"} tasks`));
+      mount(tip, el("b", {}, r.model), el("div", { class: "hero-chart-tip-meta" }, complete(r) ? `${r.score.toFixed(2)}% · ${r.completed ?? "—"} / ${r.samples ?? "—"} tasks` : r.status),
+        r.repo ? el("div", { class: "hero-chart-tip-meta" }, "click to open on Hugging Face") : null);
+      svg.style.cursor = r.repo ? "pointer" : "";
       placeTip(tip, svg, width, x(i), pad.top);
     };
+    svg.addEventListener("click", () => hover?.repo && window.open(hubUrl(hover.repo), "_blank", "noopener"));
     rows.forEach((r, i) => {
-      if (!hasScore(r)) return;
-      const description = `${r.model}: ${r.score.toFixed(2)}% · ${r.status} · ${r.completed ?? "—"} / ${r.samples ?? "—"} tasks`;
-      const point = svgEl("rect", { x: Math.round(x(i)) - 3, y: Math.round(y(r.score)) - 3, width: 7, height: 7, tabindex: "0", class: `king-dot benchmark-point${r.status === "complete" ? (r === latest ? " current" : "") : " partial"}`, "aria-label": description });
+      if (!complete(r)) return;
+      const description = `${r.model}: ${r.score.toFixed(2)}% · ${r.completed ?? "—"} / ${r.samples ?? "—"} tasks`;
+      const point = svgEl("rect", { x: Math.round(x(i)) - 3, y: Math.round(y(r.score)) - 3, width: 7, height: 7, tabindex: "0", class: `king-dot benchmark-point${r === latest ? " current" : ""}`, "aria-label": description });
       point.append(svgEl("title", {}, description));
       points[i] = point;
       point.addEventListener("focus", () => show(r, i));
-      point.addEventListener("click", () => show(r, i));
+      point.addEventListener("keydown", (ev) => ev.key === "Enter" && r.repo && window.open(hubUrl(r.repo), "_blank", "noopener"));
       point.addEventListener("blur", hide);
       svg.append(point);
     });
     svg.addEventListener("pointermove", (ev) => {
       const rect = svg.getBoundingClientRect();
       const at = ((ev.clientX - rect.left) / rect.width) * width;
-      const i = rows.length === 1 ? 0 : Math.min(rows.length - 1, Math.max(0, Math.round((at - pad.left) / (width - pad.left - pad.right) * (rows.length - 1))));
-      show(rows[i], i);
+      const i = rows.length <= 1 ? 0 : Math.min(rows.length - 1, Math.max(0, Math.round((at - pad.left) / (width - pad.left - pad.right) * (rows.length - 1))));
+      if (rows[i]) show(rows[i], i);
     });
     svg.addEventListener("pointerleave", hide);
     card.append(el("div", { class: "chart hero-chart-plot" }, svg, tip));
     return card;
   }));
-}
-
-function renderBenchmarkRows(results) {
-  const box = $("benchmarks-wrap");
-  if (!results.length) {
-    mount(box, el("div", { class: "empty" }, "No external benchmark results published yet."));
-    return;
-  }
-  mount(box, el("table", { class: "data-table" },
-    el("thead", {}, el("tr", {},
-      ...["benchmark", "model", "score", "metric", "tasks", "errors", "run", "evaluated"].map((name) =>
-        el("th", { class: name === "score" ? "r" : "" }, name)))),
-    el("tbody", {}, results.map((r) => {
-      return el("tr", {},
-        el("td", {}, r.benchmark || "—"), el("td", {}, r.model || "—"),
-        el("td", { class: "r" }, typeof r.score === "number" && Number.isFinite(r.score) ? r.score.toFixed(2) : "—"),
-        el("td", {}, r.metric || "—"),
-        el("td", { class: "r" }, r.completed == null ? r.samples ?? "—" : `${r.completed} / ${r.samples ?? "—"}`),
-        el("td", { class: "r" }, r.errors ?? "—"),
-        el("td", {}, r.status || "—"),
-        el("td", { class: "when" }, r.evaluated_at ? fmtDateTime(r.evaluated_at) : "—"));
-    }))));
 }
 
 function renderReign() {
@@ -403,6 +436,8 @@ function renderRegistration() {
     svg.append(svgEl("text", { x: x(t), y: HEIGHT - 8, class: "tick", "text-anchor": anchor }, when(t)));
   }
   const d = points.map((p, i) => (i ? `H${x(p.t)}V${y(p.tao)}` : `M${x(p.t)},${y(p.tao)}`)).join("");
+  svg.append(gradient("registration-fill", "fill-grey"));
+  svg.append(svgEl("path", { d: `${d}V${HEIGHT - PAD.bottom}H${x(points[0].t)}Z`, class: "area", fill: "url(#registration-fill)" }));
   svg.append(svgEl("path", { d, class: "reg-line" }));
   const square = (p, cls) => svgEl("rect", { x: x(p.t) - 3, y: y(p.tao) - 3, width: 7, height: 7, class: cls });
   svg.append(square(latest, "reg-now"));

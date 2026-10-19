@@ -14,7 +14,7 @@
   --text: var(--fog);
   --text-2: #bdb9b0;
   --muted: #959188;          /* ticks and metas */
-  --loser: #5e5a52;          /* the cloud of losing models */
+  --loser: #7d7970;          /* the cloud of losing models */
   --accent: var(--brass);
   --accent-ink: var(--brass);  /* brass reads as small text here: 9.5:1 on the panels */
   --accent-wash: rgba(255, 191, 0, 0.10);
@@ -36,7 +36,7 @@
   --text: var(--graphite);
   --text-2: var(--slate);
   --muted: #77736a;
-  --loser: #b3afa5;
+  --loser: #9c988e;
   --accent-ink: #826100;       /* brass on fog is 1.5:1; this shade of it is 5.1:1 */
   --accent-wash: rgba(255, 191, 0, 0.07);
   --rust: #a2452d;
@@ -181,25 +181,23 @@ main { display: flex; flex-direction: column; gap: 64px; padding-top: 56px; padd
 .data-table-wrap.scroll { overflow-y: auto; }
 /* sized to whole rows (header 37.5px, rows 44px and 39px) so the box never ends on half a row */
 #history-wrap { max-height: calc(37.5px + 11 * 44px + 2px); }
-#benchmarks-wrap { max-height: calc(37.5px + 8 * 39px + 2px); }
-#benchmarks-wrap a:hover { color: var(--accent-ink); }
-.benchmark-charts { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(180px, 1fr); gap: 12px; margin-bottom: 20px; overflow-x: auto; }
+.benchmark-charts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .benchmark-card .hero-chart-plot .tick { font-size: 11px; letter-spacing: 0; }
-.benchmark-card .hero-chart-plot svg { height: 120px; }
+.benchmark-card .hero-chart-plot svg { height: auto; }
 .benchmark-card { display: flex; flex-direction: column; min-width: 0; }
 .benchmark-card > .chart { flex: 1; }
-.benchmark-chart-head { display: grid; gap: 6px; padding: 0 0 12px; font-family: var(--mono); font-size: 11px; }
+.benchmark-chart-head { padding: 0 0 10px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
 .benchmark-chart-head h3 { margin: 0; font: inherit; color: var(--text-2); }
-.benchmark-scores { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; }
-.benchmark-latest { color: var(--accent-ink); }
-.benchmark-genesis { margin-left: auto; color: var(--muted); }
 .benchmark-card .empty { display: flex; flex: 1; min-height: 120px; flex-direction: column; justify-content: center; gap: 4px; padding: 12px; font-size: 10px; overflow-wrap: anywhere; }
 .benchmark-card .hero-chart-tip { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .hero-chart-plot .benchmark-line { shape-rendering: auto; }
-.benchmark-line.partial { stroke-dasharray: 5 4; }
+.hero-chart-plot .area { stroke: none; }
+.hero-chart-plot .fill-gold { stop-color: var(--accent); stop-opacity: 0.22; }
+.hero-chart-plot .fill-grey { stop-color: var(--text-2); stop-opacity: 0.16; }
+.hero-chart-plot .bottom { stop-opacity: 0; }
+.hero-chart-plot .genesis-line { stroke: var(--text-2); stroke-dasharray: 4 4; shape-rendering: crispEdges; }
+.hero-chart-plot .genesis-label { fill: var(--text-2); }
 .benchmark-point { cursor: pointer; }
-.benchmark-point.partial { fill: var(--panel); stroke: var(--accent); stroke-width: 2; }
-.benchmark-point.partial.active { fill: var(--text); }
 .benchmark-point:focus { outline: none; stroke: var(--text); stroke-width: 3; }
 #fails-wrap { max-height: calc(37.5px + 12 * 39px + 2px); }
 table.data-table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -320,11 +318,13 @@ button.zip:disabled { opacity: 0.6; cursor: wait; }
 
 /* ---------- narrow ---------- */
 @media (max-width: 960px) {
+  .benchmark-charts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .hero { grid-template-columns: minmax(0, 1fr); gap: 28px; }
   .hero h1 { font-size: 52px; }
   .stamp { min-height: 240px; }
 }
 @media (max-width: 560px) {
+  .benchmark-charts { grid-template-columns: minmax(0, 1fr); }
   .row, main { padding-left: 16px; padding-right: 16px; }
   main { gap: 48px; padding-top: 36px; }
   .hero h1 { font-size: 42px; }
