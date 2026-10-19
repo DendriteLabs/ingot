@@ -11,6 +11,7 @@ from typing import Any
 from common import db, reign, states
 from common.config import ChainSpec, Settings
 from dashboard import config
+from eval_service import config as eval_config
 from model_validation import config as validation_config
 
 ACTIVE = [
@@ -43,6 +44,8 @@ def build(conn: db.Conn, *, s: Settings, spec: ChainSpec, now: datetime | None =
             if s.king_hf_namespace
             else None,
         },
+        # shares of the king's scores the next eval needs; each eval row keeps the leads it needed
+        "margins": {"kl": eval_config.KL_MARGIN, "dist": eval_config.DIST_MARGIN},
         "king": kings[-1] if kings else None,
         "kings": kings,
         "stats": _stats(conn),

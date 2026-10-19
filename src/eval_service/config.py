@@ -3,12 +3,11 @@ MAX_ATTEMPTS = 3
 IDLE_S = 5.0
 
 SAMPLES_PER_DOMAIN = 60
-# The challenger must beat the king on both, each by its own margin: about 3% of genesis's own
-# KL (0.0033) and distance (0.040). King and challenger read the same answers, so at ~1000
-# samples the paired difference has an SE of ~0.00002 KL and ~0.00006 distance: an equal model
-# clears a margin about once in 10,000 evals, a model 5.7% / 7.1% closer (fp8_dynamic) always.
-KL_MARGIN = 0.0001  # mean KL(teacher ‖ model) per answer token, nats
-DIST_MARGIN = 0.0012  # mean |h - h_teacher| / |h_teacher| over LAYERS
+# A win needs the challenger closer to the teacher than the king on both measures, each by this
+# share of the king's own score in that eval, so the bar shrinks as kings near the teacher. The two
+# move together (distance by ~0.56% per 1% of KL across the duels so far), hence their ratio.
+KL_MARGIN = 0.015  # of the king's mean KL(teacher ‖ model) per answer token
+DIST_MARGIN = 0.0084  # of the king's mean |h - h_teacher| / |h_teacher| over LAYERS
 
 # One vLLM server per GPU. The comparison math runs on the challenger's GPUs, whose servers
 # leave room for it (an lm_head copy and a few GiB of work space).

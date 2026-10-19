@@ -63,25 +63,27 @@ function renderDuel(doc) {
     mount($("duel-wrap"), el("p", { class: "note" }, el("span", { class: "fail-code" }, "crashed"), e.error));
     return;
   }
-  // lower is closer to the teacher, so the challenger's lead is king − challenger; the result says
-  // by how much it cleared the margin, or how much more it needed
+  // lower is closer to the teacher, so the challenger's lead is king − challenger, shown as a share
+  // of the king's score; `need` is the absolute lead this eval required, the result says by how many
+  // percentage points it cleared that, or fell short
   const rows = [
-    ["KL at the output", e.score_challenger, e.score_king, e.margin, 5],
-    ["hidden-state distance", e.dist_challenger, e.dist_king, e.dist_margin, 4],
-  ].map(([name, chal, king, need, d]) => {
+    ["KL at the output", e.score_challenger, e.score_king, e.margin],
+    ["hidden-state distance", e.dist_challenger, e.dist_king, e.dist_margin],
+  ].map(([name, chal, king, need]) => {
     const lead = chal == null || king == null ? null : king - chal;
+    const share = (v) => (100 * v) / king;
     const pass = lead != null && need != null && lead >= need;
-    const vsKing = lead == null ? "—" : lead === 0 ? "even" : `${num(Math.abs(lead), d)} ${lead > 0 ? "better" : "worse"}`;
+    const vsKing = lead == null ? "—" : lead === 0 ? "even" : `${Math.abs(share(lead)).toFixed(2)}% ${lead > 0 ? "better" : "worse"}`;
     const verdict = lead == null || need == null
       ? null
       : el("span", { class: `verdict-badge ${pass ? "crowned" : "lost"}` },
-          `${pass ? "passed by" : "short by"} ${num(Math.abs(lead - need), d)}`);
+          `${pass ? "passed by" : "short by"} ${Math.abs(share(lead) - share(need)).toFixed(2)} pp`);
     return el("tr", {},
       el("td", { class: "measure" }, name),
-      el("td", { class: "r" }, num(chal, d)),
-      el("td", { class: "r" }, num(king, d)),
+      el("td", { class: "r" }, num(chal, 6)),
+      el("td", { class: "r" }, num(king, 6)),
       el("td", { class: `r ${pass ? "gain" : "short"}` }, vsKing),
-      el("td", { class: "r" }, need == null ? "—" : `${num(need, d)} better`),
+      el("td", { class: "r" }, need == null ? "—" : `${share(need).toFixed(2)}% better`),
       el("td", { class: "r" }, verdict ?? "—"));
   });
   const secs = (s) => (s == null ? "—" : fmtDuration(s * 1000));
@@ -89,8 +91,8 @@ function renderDuel(doc) {
     el("div", { class: "data-table-wrap" }, el("table", { class: "data-table duel-table" },
       el("thead", {}, el("tr", {},
         el("th", {}, "measure"), el("th", { class: "r" }, "challenger"), el("th", { class: "r" }, "king"),
-        el("th", { class: "r", title: "the challenger against the king; lower is closer to the teacher, so lower is better" }, "vs king"),
-        el("th", { class: "r", title: "a win needs the challenger at least this much better than the king" }, "needed"),
+        el("th", { class: "r", title: "the challenger against the king, as a share of the king's score; lower is closer to the teacher, so lower is better" }, "vs king"),
+        el("th", { class: "r", title: "a win needs the challenger at least this share of the king's score better" }, "needed"),
         el("th", { class: "r" }, "result"))),
       el("tbody", {}, rows))),
     el("p", { class: "note" },

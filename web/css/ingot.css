@@ -253,6 +253,7 @@ table.reign-table th:last-child, table.reign-table td:last-child { padding-right
 /* history */
 .margin-pct.ok { color: var(--accent-ink); font-weight: 600; }
 .margin-pct.bad { color: var(--text-2); }
+.margin-pct.far { color: var(--muted); }
 .verdict-badge {
   display: inline-block; min-width: 76px; padding: 3px 8px; text-align: center;
   font-size: 10px; text-transform: uppercase; letter-spacing: 0.14em;

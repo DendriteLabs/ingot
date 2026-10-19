@@ -8,8 +8,8 @@ import pytest
 from eval_service import config
 from eval_service.run import Distance, won
 
-KL, DIST = config.KL_MARGIN, config.DIST_MARGIN
 KING = Distance(kl=0.1, dist=0.5)
+KL, DIST = config.KL_MARGIN * KING.kl, config.DIST_MARGIN * KING.dist
 
 
 @pytest.mark.parametrize(

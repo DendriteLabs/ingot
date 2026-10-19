@@ -65,18 +65,9 @@ def run_once(
     drew_s = time.monotonic() - started
     eval_id = db.one(
         conn,
-        "INSERT INTO evals (submission_id, king_id, teacher, dataset_hash, seed, sample_count,"
-        " margin, dist_margin) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
-        (
-            row["id"],
-            king["id"],
-            teacher,
-            data.sha256,
-            seed,
-            len(drawn),
-            config.KL_MARGIN,
-            config.DIST_MARGIN,
-        ),
+        "INSERT INTO evals (submission_id, king_id, teacher, dataset_hash, seed, sample_count)"
+        " VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+        (row["id"], king["id"], teacher, data.sha256, seed, len(drawn)),
     )["id"]
     log.info(
         "eval {} of {}: {} samples drawn in {:.0f}s", eval_id, row["hotkey"], len(drawn), drew_s
@@ -127,7 +118,7 @@ def run_once(
         conn.execute(
             "UPDATE evals SET score_challenger = %s, score_king = %s, dist_challenger = %s,"
             " dist_king = %s, noise_kl = %s, noise_dist = %s, won = %s, sample_count = %s,"
-            " finished_at = now() WHERE id = %s",
+            " margin = %s, dist_margin = %s, finished_at = now() WHERE id = %s",
             (
                 duel.challenger.kl,
                 duel.king.kl,
@@ -137,6 +128,9 @@ def run_once(
                 duel.noise.dist,
                 duel.won,
                 len(duel.samples),  # the ones scored: a failed sample is left out
+                # the leads this eval needed, a share of this king's scores
+                run.needed(duel.king).kl,
+                run.needed(duel.king).dist,
                 eval_id,
             ),
         )

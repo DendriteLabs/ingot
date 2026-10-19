@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS evals (
     sample_count INT NOT NULL,
     score_challenger DOUBLE PRECISION,   -- mean KL(teacher ‖ model) per answer token
     score_king DOUBLE PRECISION,
-    margin DOUBLE PRECISION NOT NULL,    -- KL margin
+    margin DOUBLE PRECISION,             -- the KL lead this eval needed (set once it is scored)
     dist_challenger DOUBLE PRECISION,    -- mean |h - h_teacher| / |h_teacher| per answer token
     dist_king DOUBLE PRECISION,
     dist_margin DOUBLE PRECISION,
@@ -141,6 +141,7 @@ CREATE TABLE IF NOT EXISTS evals (
 ALTER TABLE evals ADD COLUMN IF NOT EXISTS dist_challenger DOUBLE PRECISION;
 ALTER TABLE evals ADD COLUMN IF NOT EXISTS dist_king DOUBLE PRECISION;
 ALTER TABLE evals ADD COLUMN IF NOT EXISTS dist_margin DOUBLE PRECISION;
+ALTER TABLE evals ALTER COLUMN margin DROP NOT NULL;
 ALTER TABLE evals ADD COLUMN IF NOT EXISTS noise_kl DOUBLE PRECISION;
 ALTER TABLE evals ADD COLUMN IF NOT EXISTS noise_dist DOUBLE PRECISION;
 ALTER TABLE evals ADD COLUMN IF NOT EXISTS challenger_s REAL;

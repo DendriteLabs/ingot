@@ -80,10 +80,12 @@ For each model, per answer token:
 Lower is better. The teacher rereading its own answer gives the noise floor, recorded with
 every eval: batching alone makes two runs of the same model differ by about that much.
 
-You win if your KL is at least `KL_MARGIN` below the king's and your distance is at least
-`DIST_MARGIN` below the king's: both, so a large gain on one cannot make up for a loss on the
-other. The margins, the sample count and the layers are in `src/eval_service/config.py`. A win
-makes you the new king immediately; a loss is final for that hotkey.
+You win if your KL is lower than the king's by at least `KL_MARGIN` (1.5%) of the king's KL, and
+your distance lower than the king's by at least `DIST_MARGIN` (0.84%) of the king's distance, both
+measured in the same eval: both, so a large gain on one cannot make up for a loss on the other.
+The margins are shares of the king's score, so the absolute bar shrinks as kings near the teacher.
+The margins, the sample count and the layers are in `src/eval_service/config.py`. A win makes
+you the new king immediately; a loss is final for that hotkey.
 
 ## Who gets paid
 

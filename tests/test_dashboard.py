@@ -7,6 +7,8 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from common import db, states
 from dashboard import state
 from dashboard.main import Publisher, _json_default
@@ -80,7 +82,11 @@ def test_state_after_a_coronation(conn, s, spec):
         ("hk-lose", False, "Ingot-I-27B-FP8", 0.9),
         ("hk-win", True, "GENESIS", 0.1),
     ]
-    assert all(e["dist_margin"] == eval_config.DIST_MARGIN for e in doc["history"])
+    assert all(
+        e["dist_margin"] == pytest.approx(eval_config.DIST_MARGIN * e["dist_king"])
+        for e in doc["history"]
+    )
+    assert doc["margins"] == {"kl": eval_config.KL_MARGIN, "dist": eval_config.DIST_MARGIN}
     assert [(e["uid"], e["king"], e["score_challenger"]) for e in doc["losers"]] == [
         (8, "Ingot-I-27B-FP8", 0.9)
     ]

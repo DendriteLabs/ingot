@@ -45,12 +45,15 @@ class Duel:
         return won(self.challenger, self.king)
 
 
+def needed(king: Distance) -> Distance:
+    """How much closer to the teacher than this king a challenger must be on each measure."""
+    return Distance(kl=config.KL_MARGIN * king.kl, dist=config.DIST_MARGIN * king.dist)
+
+
 def won(challenger: Distance, king: Distance) -> bool:
-    """The challenger must be closer to the teacher on both measures, each by its own margin."""
-    return (
-        king.kl - challenger.kl >= config.KL_MARGIN
-        and king.dist - challenger.dist >= config.DIST_MARGIN
-    )
+    """The challenger must be closer to the teacher on both measures, each by its margin."""
+    bar = needed(king)
+    return king.kl - challenger.kl >= bar.kl and king.dist - challenger.dist >= bar.dist
 
 
 Scorer = Callable[..., Duel]  # (teacher, challenger, king, samples, *, on_progress=None)

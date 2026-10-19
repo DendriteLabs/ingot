@@ -268,8 +268,8 @@ def test_within_margin_is_not_a_win(conn, s, spec):
     sid = submit(conn)
     validate(conn, s, spec)
     dedup(conn, s)
-    evaluate(conn, s, duel(0.46, 0.5))
-    assert state(conn, sid) == states.LOST, "0.04 better than the king is inside the 0.05 margin"
+    evaluate(conn, s, duel(0.48, 0.5))
+    assert state(conn, sid) == states.LOST, "4% better than the king is inside the 5% margin"
 
 
 def test_invalid_model_is_terminal(conn, s, spec):

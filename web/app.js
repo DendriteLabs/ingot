@@ -478,19 +478,24 @@ function renderHistory() {
     mount($("history-wrap"), el("div", { class: "empty" }, "no completed duels yet."));
     return;
   }
-  // each cell is the challenger's margin over the king, king − challenger (lower is closer to the
-  // teacher), to the digits the eval page shows: KL to 5, distance to 4. A win needs both at least
-  // the margin the column title carries, the newest eval's.
-  const marginCell = (chal, king, need, d) => {
+  // each cell is the challenger's lead over the king, king − challenger (lower is closer to the
+  // teacher), as a share of the king's score. A win needs both at least the lead that eval was
+  // judged by (`need`, absolute); the column title carries the share the next eval needs.
+  // a lead below FAR is a broken or far-off model: one muted bucket, the exact share in the tooltip
+  const FAR = -50;
+  const marginCell = (chal, king, need) => {
     if (chal == null || king == null) return el("span", { class: "muted-dash" }, "—");
     const lead = king - chal;
-    const fixed = (v) => Number(v).toFixed(d);
+    const pct = (v) => `${((100 * v) / king).toFixed(2)}%`;
+    const far = (100 * lead) / king < FAR;
     return el("span", {
-      class: `margin-pct ${need != null && lead >= need ? "ok" : "bad"}`,
-      title: `challenger ${fixed(chal)} / king ${fixed(king)}${need == null ? "" : ` · needed ≥ ${fixed(need)}`}`,
-    }, `${lead < 0 ? "−" : "+"}${fixed(Math.abs(lead))}`);
+      class: `margin-pct ${need != null && lead >= need ? "ok" : "bad"}${far ? " far" : ""}`,
+      title: `${lead < 0 ? "−" : "+"}${pct(Math.abs(lead))} · challenger ${Number(chal).toFixed(6)} / king ${Number(king).toFixed(6)}${need == null ? "" : ` · needed ≥ ${pct(need)}`}`,
+    }, far ? `< −${-FAR}%` : `${lead < 0 ? "−" : "+"}${pct(Math.abs(lead))}`);
   };
-  const needed = (v, d) => (v == null ? "" : ` ≥ ${Number(v).toFixed(d)}`);
+  const share = (current, row, king) =>
+    current != null ? current : row != null && king ? row / king : null;
+  const needed = (m) => (m == null ? "" : ` ≥ ${+(100 * m).toFixed(2)}%`);
   const repos = new Map(state.kings.map((k) => [k.id, k.hf_repo]));
   const kingCell = (e) => {
     const repo = repos.get(e.king_id);
@@ -510,8 +515,8 @@ function renderHistory() {
       uidCell(e.uid, e.hotkey),
       hotkeyCell(e.hotkey),
       el("td", { class: "model vs" }, kingCell(e)),
-      el("td", { class: "center" }, marginCell(e.score_challenger, e.score_king, e.margin, 5)),
-      el("td", { class: "center" }, marginCell(e.dist_challenger, e.dist_king, e.dist_margin, 4)),
+      el("td", { class: "center" }, marginCell(e.score_challenger, e.score_king, e.margin)),
+      el("td", { class: "center" }, marginCell(e.dist_challenger, e.dist_king, e.dist_margin)),
       el("td", { class: "r" }, el("span", { class: `verdict-badge ${v}` }, v)));
     tr.addEventListener("click", (ev) => open(ev, url));
     tr.addEventListener("auxclick", (ev) => ev.button === 1 && open(ev, url));
@@ -521,8 +526,8 @@ function renderHistory() {
   mount($("history-wrap"), el("table", { class: "data-table" },
     el("thead", {}, el("tr", {},
       el("th", {}, "when"), el("th", {}, "uid"), el("th", {}, "hotkey"), el("th", {}, "vs king"),
-      el("th", { class: "center", title: "king KL − challenger KL; a win needs at least this" }, `KL margin${needed(rows[0].margin, 5)}`),
-      el("th", { class: "center", title: "king distance − challenger distance; a win needs at least this" }, `distance margin${needed(rows[0].dist_margin, 4)}`),
+      el("th", { class: "center", title: "(king KL − challenger KL) / king KL; a win needs at least this" }, `KL margin${needed(share(state.margins?.kl, rows[0].margin, rows[0].score_king))}`),
+      el("th", { class: "center", title: "(king distance − challenger distance) / king distance; a win needs at least this" }, `distance margin${needed(share(state.margins?.dist, rows[0].dist_margin, rows[0].dist_king))}`),
       el("th", { class: "r" }, "result"))),
     el("tbody", {}, body)));
 }
