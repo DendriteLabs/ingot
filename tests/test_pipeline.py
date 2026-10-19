@@ -496,10 +496,10 @@ def test_a_copy_is_rejected_and_spends_the_hotkey(conn, s, spec):
     sid = submit(conn, hotkey="hk-copy", uid=9)
     validate(conn, s, spec)
 
-    def near_copy_of_genesis(_model_dir: Path) -> dict:
-        return fingerprint(genesis_error + 0.05 * quantization_error(1))
+    def near_identical_genesis(_model_dir: Path) -> dict:
+        return fingerprint(genesis_error + 0.005 * quantization_error(1))
 
-    assert dedup(conn, s, bank, near_copy_of_genesis)
+    assert dedup(conn, s, bank, near_identical_genesis)
     assert state(conn, sid) == states.DUPLICATE
     assert db.one(conn, "SELECT error FROM submissions")["error"].startswith("duplicate:")
     run = db.one(conn, "SELECT duplicate, reason, duplicate_of, corr FROM dedups")
@@ -508,6 +508,24 @@ def test_a_copy_is_rejected_and_spends_the_hotkey(conn, s, spec):
     assert bank.puts == [(str(sid), AUDIT)], "kept for review, never compared against"
     assert guard.is_used(conn, "hk-copy"), "a copy costs the hotkey"
     assert not evaluate(conn, s, duel(0, 1)), "a duplicate never reaches the evaluator"
+
+
+def test_a_model_trained_on_from_a_king_is_not_a_duplicate(conn, s, spec):
+    crown_genesis(conn)
+    genesis_error = quantization_error(0)
+    bank = FakeBank({GENESIS: fingerprint(genesis_error)})
+    sid = submit(conn, hotkey="hk-tune", uid=9)
+    validate(conn, s, spec)
+
+    def fine_tuned_genesis(_model_dir: Path) -> dict:
+        # a few percent of its own error moved: correlation ~0.999, which is the eval's to judge
+        return fingerprint(genesis_error + 0.05 * quantization_error(1))
+
+    assert dedup(conn, s, bank, fine_tuned_genesis)
+    assert state(conn, sid) == states.UNIQUE
+    run = db.one(conn, "SELECT duplicate, corr FROM dedups")
+    assert not run["duplicate"] and 0.99 < run["corr"] < dedup_config.COPY_CORR
+    assert not guard.is_used(conn, "hk-tune")
 
 
 def test_a_copy_of_an_earlier_submission_is_caught(conn, s, spec):

@@ -50,17 +50,15 @@ errors. The fingerprint is compared with genesis and with every earlier submissi
 miners that passed this check; your own earlier models (same hotkey or coldkey) are never held
 against you.
 
-A submission is rejected as a duplicate, and its hotkey is spent, when its tensors are
-identical to such a model's, when its error correlates with that model's at `COPY_CORR` (0.995)
-or more, or when tensors holding at least `COPIED_FRAC` (20%) of its error each correlate at
-`PART_CORR` (0.999) or more: a partial copy (`src/model_dedup/config.py`). Both are set loose
-for now, so only near-exact copies are caught; the calibrated values are 0.7 and 0.8, and the
-file above is where a change shows first. Plain round-to-nearest FP8 in genesis's 128 x 128
-blocks reproduces genesis, in whole or in part: at the calibrated values, a model that keeps it
-for a fifth of its error is a partial copy of genesis. The same deterministic recipe run on the
-same data gives the same model: if someone submitted it first, yours is the duplicate.
-Disguising a copy does not pay: re-rounding or noise that brings the correlation under
-`COPY_CORR` also throws away what made the copied model good.
+A submission is rejected as a duplicate, and its hotkey is spent, only when it is the same
+model as such a one: identical tensors, an error correlating with that model's at `COPY_CORR`
+(0.9999) or more over the whole model, or tensors holding `COPIED_FRAC` (99%) of its error each
+correlating at `PART_CORR` (0.9999) or more (`src/model_dedup/config.py`). A model you trained
+on from a king is yours: its error is still mostly the king's (a fine-tune moves it by a few
+percent, a correlation of about 0.999) and it passes; the eval then holds it to the same bar as
+any model, the margin over the current king. The same deterministic recipe run on the same data
+gives the same model: if someone submitted it first, yours is the duplicate. Re-uploading a king
+with a little noise does not pay: it passes this check and loses its duel.
 
 ## How a submission is judged
 

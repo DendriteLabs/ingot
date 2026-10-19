@@ -162,6 +162,7 @@ def fps(tmp_path_factory) -> dict[str, dict]:
         "a": save(root / "a", a),
         "b": save(root / "b", quantize(t, 2)),
         "a_disguised": save(root / "a_disguised", disguise(a, 3), torch.float32),
+        "a_noise_0.01": save(root / "a_noise_0.01", noised(a, t, 0.01, 8)),
         "a_noise_0.3": save(root / "a_noise_0.3", noised(a, t, 0.3, 4)),
         "a_noise_3": save(root / "a_noise_3", noised(a, t, 3.0, 5)),
         "a_partial": save(root / "a_partial", partial),
@@ -180,8 +181,9 @@ def fps(tmp_path_factory) -> dict[str, dict]:
     [
         ("a_resharded", "COPY"),  # same tensors, new shard names: the file digest differs
         ("a_disguised", "NEAR-COPY"),
-        ("a_noise_0.3", "NEAR-COPY"),
-        ("a_partial", "NEAR-COPY"),  # only the mixers copied: caught tensor by tensor
+        ("a_noise_0.01", "NEAR-COPY"),  # the same model with a little noise: corr 0.99995
+        ("a_noise_0.3", None),  # moved by a fine-tune's worth: the eval's to judge
+        ("a_partial", None),  # a's attention kept, the rest retrained: the eval's to judge
         ("b", None),
         ("fp8", None),
     ],
