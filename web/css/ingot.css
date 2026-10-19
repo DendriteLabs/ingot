@@ -135,10 +135,10 @@ main { display: flex; flex-direction: column; gap: 64px; padding-top: 56px; padd
 
 /* ---------- kings: the staircase beside the lineage ---------- */
 .kings { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 16px; align-items: start; }
-/* as tall as the chart (its 280px plus the border) at most; more kings scroll inside */
-.lineage { display: flex; flex-direction: column; max-height: 282px; border: 1px solid var(--line); background: var(--panel); }
-.lineage ol { list-style: none; margin: 0; padding: 0; flex: 1; min-height: 0; overflow-y: auto; }
-.lineage li { display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); }
+/* as tall as the chart (its 280px plus the border): a few kings share the height, more scroll inside */
+.lineage { display: flex; flex-direction: column; height: 282px; border: 1px solid var(--line); background: var(--panel); }
+.lineage ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; }
+.lineage li { flex: 1 0 auto; display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); }
 .lineage li:last-child { border-bottom: 0; }
 .lineage li.current { background: var(--accent-wash); box-shadow: inset 3px 0 0 var(--accent); }
 .lineage li.genesis .name, .lineage .gain.baseline { color: var(--muted); font-weight: 400; }
@@ -148,7 +148,7 @@ main { display: flex; flex-direction: column; gap: 64px; padding-top: 56px; padd
 .lineage .name a:hover { color: var(--accent-ink); }
 .lineage .meta-line { font-family: var(--mono); font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lineage .gain { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--accent-ink); }
-@media (max-width: 960px) { .kings { grid-template-columns: minmax(0, 1fr); } .lineage { max-height: none; } }
+@media (max-width: 960px) { .kings { grid-template-columns: minmax(0, 1fr); } .lineage { height: auto; } }
 @media (max-width: 560px) { .lineage .meta-line { white-space: normal; } }
 
 /* ---------- kings chart ---------- */
