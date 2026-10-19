@@ -51,6 +51,7 @@ function render() {
   $("foot-netuid").textContent = `Ingot · subnet ${state.netuid}`;
   renderHero();
   renderKingsChart();
+  renderLineage();
   renderReign();
   renderRegistration();
   renderPipeline();
@@ -77,19 +78,47 @@ function renderHero() {
   mount($("hero-teacher"), link(hubUrl(state.teacher), state.teacher));
 }
 
+// the kings in order with their chart value (`v`, the gain over genesis) and the step each took:
+// how much lower its KL was than the king it beat, in that duel
+function kingSteps() {
+  const crowned = kingGains().map((k) => ({ ...k, crowned: true, evalId: k.eval_id, t: new Date(k.crowned_at).getTime(), v: k.gain }));
+  crowned.forEach((k, j) => Object.assign(k, { beat: crowned[j - 1], step: k.duel_king != null ? 100 * (1 - Number(k.duel_challenger) / Number(k.duel_king)) : null }));
+  return crowned;
+}
+
+const numeralOf = (k) => (k.name === "GENESIS" ? "genesis" : k.name.split("-")[1]);
+
+function renderLineage() {
+  // the kings as a stack of stamps, newest on top; at the bottom genesis, the stock quant every
+  // king is measured against
+  const kings = kingSteps();
+  const current = kings.at(-1);
+  const rows = kings.slice().reverse().map((k) => {
+    const url = k.hf_repo ? hubUrl(k.hf_repo) : null;
+    const genesis = k.step == null;
+    return el("li", { class: k === current ? "current" : genesis ? "genesis" : "" },
+      el("span", { class: "numeral" }, genesis ? "" : numeralOf(k)),
+      el("span", { class: "who" },
+        el("span", { class: "name" }, url ? link(url, genesis ? "Genesis" : k.name, { title: k.hf_repo }) : k.name),
+        el("span", { class: "meta-line" }, genesis ? "Qwen's stock FP8 quant" : `crowned ${fmtRelative(k.crowned_at)}`)),
+      genesis
+        ? el("span", { class: "gain baseline" }, "baseline")
+        : el("span", { class: "gain", title: `${k.gain.toFixed(2)}% closer to the original ${state.teacher} than its stock FP8 quant` }, `${k.gain.toFixed(1)}%`));
+  });
+  mount($("lineage"), el("ol", { "aria-label": "The kings, newest first" }, ...rows));
+}
+
 function renderKingsChart() {
   const box = $("kings-chart");
   // every judged model is a dot in the order it was judged, kings brass and losers grey. The y
   // axis is how much closer to the teacher a model is than genesis. The brass staircase is the bar
   // to beat: flat while a king holds, one step up at each coronation.
-  mount($("kings-meta"), "closer to ", link(hubUrl(state.teacher), state.teacher), " than genesis");
+  mount($("kings-meta"), "closer to the original ", link(hubUrl(state.teacher), state.teacher.split("/").pop()), " than Qwen's stock quantization");
   if (state.kings.length < 2) {
     mount(box, el("div", { class: "empty" }, "the staircase starts with the first coronation."));
     return;
   }
-  const crowned = kingGains().map((k) => ({ ...k, crowned: true, evalId: k.eval_id, t: new Date(k.crowned_at).getTime(), v: k.gain }));
-  // a king's step: how much lower its KL was than the king it beat, in that duel
-  crowned.forEach((k, j) => Object.assign(k, { beat: crowned[j - 1]?.name, step: k.duel_king != null ? 100 * (1 - Number(k.duel_challenger) / Number(k.duel_king)) : null }));
+  const crowned = kingSteps();
   const byId = new Map(crowned.map((k) => [k.id, k]));
   const lost = state.losers.filter((e) => byId.has(e.king_id)).map((e) => ({
     ...e, crowned: false, evalId: e.id, t: new Date(e.finished_at).getTime(),
@@ -166,7 +195,7 @@ function renderKingsChart() {
         el("b", {}, `${p.v.toFixed(1)}%`),
         el("span", { class: "lbl" }, p.crowned ? p.name : `lost to ${p.king}`)),
       el("div", { class: "hero-chart-tip-meta" }, p.crowned
-        ? `${p.step != null ? `KL ${p.step.toFixed(1)}% below ${p.beat} · ` : ""}crowned ${fmtRelative(p.crowned_at)}${p.uid != null ? ` · uid ${p.uid}` : ""}`
+        ? `${p.step != null ? `KL ${p.step.toFixed(1)}% below ${p.beat.name} · ` : ""}crowned ${fmtRelative(p.crowned_at)}${p.uid != null ? ` · uid ${p.uid}` : ""}`
         : `KL ${vsKing(p)} · ${fmtRelative(p.finished_at)} · uid ${p.uid}`),
       p.evalId != null ? el("div", { class: "hero-chart-tip-meta" }, `click to open eval ${p.evalId}`) : null);
     svg.style.cursor = p.evalId != null ? "pointer" : "";
@@ -202,7 +231,7 @@ async function loadBenchmarks() {
     }
     if (!res.ok) throw new Error(`benchmark feed: ${res.status}`);
     const doc = await res.json();
-    const { results, benchmarks } = doc;
+    const { results } = doc;
     if (!Array.isArray(results)) throw new Error("benchmark feed needs a results array");
     $("benchmarks-meta").textContent = "";
     // the x axis is every king, so a new king redraws the cards even when the feed did not change
@@ -210,8 +239,7 @@ async function loadBenchmarks() {
     if (fingerprint === benchmarkDocument) {
       return;
     }
-    const names = benchmarks || [...new Set(results.map((r) => r.benchmark))];
-    renderBenchmarkCharts(results, names);
+    renderBenchmarkCharts(results, BENCHMARKS);
     benchmarkDocument = fingerprint;
   } catch (err) {
     if (benchmarkDocument !== null) {
@@ -247,6 +275,9 @@ function gradient(id, tone = "fill-gold") {
   defs.append(fill);
   return defs;
 }
+
+// the benchmarks shown, in this order; the feed carries more, run on fewer kings or not settled
+const BENCHMARKS = ["SWE-rebench", "SWE-bench Verified", "SWE-bench Multilingual"];
 
 function renderBenchmarkCharts(results, names) {
   const complete = (r) => r.status === "complete" && typeof r.score === "number" && Number.isFinite(r.score);
@@ -422,8 +453,8 @@ function renderRegistration() {
   const lo = Math.min(...points.map((p) => p.tao));
   const hi = Math.max(...points.map((p) => p.tao));
   const pad = Math.max((hi - lo) * 0.1, hi * 0.02);
-  const x = (t) => Math.round(PAD.left + ((t - t0) / Math.max(t1 - t0, 1)) * w);
-  const y = (v) => Math.round(PAD.top + (1 - (v - (lo - pad)) / (hi - lo + 2 * pad)) * h);
+  const x = (t) => PAD.left + ((t - t0) / Math.max(t1 - t0, 1)) * w;
+  const y = (v) => PAD.top + (1 - (v - (lo - pad)) / (hi - lo + 2 * pad)) * h;
   const when = (t) => new Date(t).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 
   const svg = svgEl("svg", { width, height: HEIGHT, viewBox: `0 0 ${width} ${HEIGHT}`, role: "img" });
@@ -435,11 +466,12 @@ function renderRegistration() {
   for (const [t, anchor] of [[t0, "start"], [(t0 + t1) / 2, "middle"], [t1, "end"]]) {
     svg.append(svgEl("text", { x: x(t), y: HEIGHT - 8, class: "tick", "text-anchor": anchor }, when(t)));
   }
-  const d = points.map((p, i) => (i ? `H${x(p.t)}V${y(p.tao)}` : `M${x(p.t)},${y(p.tao)}`)).join("");
+  // a sample every 25 blocks: joined straight, a price step is steep enough to read as one
+  const d = points.map((p, i) => `${i ? "L" : "M"}${x(p.t).toFixed(1)},${y(p.tao).toFixed(1)}`).join("");
   svg.append(gradient("registration-fill", "fill-grey"));
   svg.append(svgEl("path", { d: `${d}V${HEIGHT - PAD.bottom}H${x(points[0].t)}Z`, class: "area", fill: "url(#registration-fill)" }));
   svg.append(svgEl("path", { d, class: "reg-line" }));
-  const square = (p, cls) => svgEl("rect", { x: x(p.t) - 3, y: y(p.tao) - 3, width: 7, height: 7, class: cls });
+  const square = (p, cls) => svgEl("rect", { x: Math.round(x(p.t)) - 3, y: Math.round(y(p.tao)) - 3, width: 7, height: 7, class: cls });
   svg.append(square(latest, "reg-now"));
   const active = square(latest, "reg-active");
   active.setAttribute("visibility", "hidden");
@@ -452,8 +484,8 @@ function renderRegistration() {
     const t = t0 + (((ev.clientX - rect.left) / Math.max(rect.width, 1)) * width - PAD.left) / w * (t1 - t0);
     let p = points[0];
     for (const q of points) if (q.t <= t) p = q;
-    crosshair.setAttribute("x1", x(p.t) + 0.5);
-    crosshair.setAttribute("x2", x(p.t) + 0.5);
+    crosshair.setAttribute("x1", Math.round(x(p.t)) + 0.5);
+    crosshair.setAttribute("x2", Math.round(x(p.t)) + 0.5);
     crosshair.removeAttribute("visibility");
     active.setAttribute("x", x(p.t) - 3);
     active.setAttribute("y", y(p.tao) - 3);
