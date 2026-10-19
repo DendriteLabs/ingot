@@ -20,6 +20,7 @@ from model_validation.checks import (
     check_json,
     check_layout,
     check_quant,
+    check_values,
     check_weight_bytes,
     layout_from_dir,
     weight_bytes,
@@ -44,6 +45,7 @@ def validate(model_dir: Path, *, spec: ChainSpec, family: Family, quant: str) ->
         or check_quant(config, quant)
         or check_layout(layout_from_dir(model_dir), family, config)
         or check_weight_bytes(model_dir, family)
+        or check_values(model_dir)
     ):
         return reason
     log.info("{} safetensors bytes: {}", model_dir.name, weight_bytes(model_dir))

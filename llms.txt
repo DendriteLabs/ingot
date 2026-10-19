@@ -29,7 +29,8 @@ The model to beat is always the newest king. Before the first coronation it is g
   under `model.visual.`, `mtp.` and `lm_head.` keep the genesis dtype (`lm_head` stays BF16: the
   evaluator applies it itself to your last hidden state). An FP8 weight `x.weight` carries
   `x.weight_scale_inv` shaped by your `weight_block_size` (two ints, 128 or larger), and
-  `modules_to_not_convert` lists exactly the text linears you left unquantized. Weight values
+  `modules_to_not_convert` lists exactly the text linears you left unquantized. Every value is
+  finite: a NaN or an infinity anywhere rejects the model. Weight values
   are yours: quantize, fine-tune, distill, as you like.
 - No larger than genesis: all `*.safetensors` together at most 30,866,866,928 bytes.
 - Exactly these files, all at the top level: `config.json`, `model.safetensors.index.json`

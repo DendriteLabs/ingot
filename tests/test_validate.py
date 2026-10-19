@@ -5,6 +5,7 @@ allowlisted. Table-driven on a toy family plus the real pinned one."""
 from __future__ import annotations
 
 import json
+import struct
 import tomllib
 from dataclasses import replace
 from pathlib import Path
@@ -21,6 +22,7 @@ from model_validation.checks import (
     check_json,
     check_layout,
     check_quant,
+    check_values,
     check_weight_bytes,
 )
 from model_validation.families.base import Family, Layout
@@ -233,6 +235,31 @@ def test_bucket_names_allowed_during_upload():
         assert spec.allows_file(ok)
     for bad in ("modeling.py", "tokenizer.json", "x/a.safetensors", "README.md", "manifest.json"):
         assert not spec.allows_file(bad)
+
+
+def shard(path: Path, tensors: dict[str, tuple[str, list[int], bytes]]) -> None:
+    """A safetensors file from (dtype, shape, raw bytes) per tensor."""
+    header, data, at = {}, b"", 0
+    for name, (dtype, shape, raw) in tensors.items():
+        header[name] = {"dtype": dtype, "shape": shape, "data_offsets": [at, at + len(raw)]}
+        data, at = data + raw, at + len(raw)
+    head = json.dumps(header).encode()
+    path.write_bytes(len(head).to_bytes(8, "little") + head + data)
+
+
+def test_every_weight_must_be_finite(tmp_path: Path):
+    one_bf16, nan_bf16 = (0x3F80).to_bytes(2, "little"), (0x7FC0).to_bytes(2, "little")
+    shard(
+        tmp_path / "a.safetensors",
+        {"w": ("BF16", [2, 2], one_bf16 * 4), "s": ("F8_E4M3", [1, 2], b"\x38\x40")},
+    )
+    assert check_values(tmp_path) is None
+    shard(tmp_path / "b.safetensors", {"x": ("BF16", [1, 4], one_bf16 * 2 + nan_bf16 * 2)})
+    assert check_values(tmp_path) == "x: 2 of its values are NaN or infinite"
+    shard(tmp_path / "b.safetensors", {"y": ("F8_E4M3", [1, 3], b"\x38\x7f\xff")})
+    assert check_values(tmp_path) == "y: 2 of its values are NaN or infinite"
+    shard(tmp_path / "b.safetensors", {"z": ("F32", [1, 2], struct.pack("<ff", 1.0, float("inf")))})
+    assert check_values(tmp_path) == "z: 1 of its values are NaN or infinite"
 
 
 def test_safetensors_may_not_outweigh_genesis(tmp_path: Path):
