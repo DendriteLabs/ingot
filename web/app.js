@@ -511,7 +511,7 @@ function renderHistory() {
     const v = e.won ? "crowned" : "lost";
     const url = `eval.html?id=${e.id}`;
     const tr = el("tr", { class: e.won && e.king_id === state.kings.at(-2)?.id ? "open crowned-now" : "open", tabindex: "0", title: "open this eval" },
-      el("td", { class: "when", title: fmtDateTime(e.started_at) }, fmtRelative(e.started_at)),
+      el("td", { class: "when", title: fmtDateTime(e.finished_at) }, fmtRelative(e.finished_at)),
       uidCell(e.uid, e.hotkey),
       hotkeyCell(e.hotkey),
       el("td", { class: "model vs" }, kingCell(e)),
