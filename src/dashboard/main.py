@@ -35,14 +35,12 @@ class StateCache:
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
-        self.conn: db.Conn | None = None
+        self.link = db.Link()
         self.body, self.built = b"", 0.0
 
     def query(self, fn: Any) -> Any:
         with self.lock:
-            if self.conn is None or self.conn.closed:
-                self.conn = db.connect()
-            return fn(self.conn)
+            return fn(self.link.conn())
 
     def get(self) -> bytes:
         if time.monotonic() - self.built > config.CACHE_S:
@@ -66,7 +64,7 @@ class Handler(SimpleHTTPRequestHandler):
                 self._send(self.cache.get(), "application/json")
             except Exception:
                 log.exception("building state failed")
-                self.cache.conn = None
+                self.cache.link.close()
                 self.send_error(503, "state unavailable")
             return
         if path == "/llms.txt":
@@ -124,9 +122,10 @@ class Publisher:
     eval waits for it, up to ARTIFACT_GRACE_S. Evals already in the bucket are not sent again."""
 
     def __init__(
-        self, conn: db.Conn, s3: Any, *, s: Settings, spec: ChainSpec, site: str, artifacts: str
+        self, link: db.Link, s3: Any, *, s: Settings, spec: ChainSpec, site: str, artifacts: str
     ) -> None:
-        self.conn, self.s3, self.s, self.spec = conn, s3, s, spec
+        self.link, self.s3, self.s, self.spec = link, s3, s, spec
+        self.conn = link.conn()
         self.site, self.artifacts = site, artifacts
         self.state_digest: str | None = None
         self.published = {
@@ -134,6 +133,7 @@ class Publisher:
         }
 
     def run_once(self) -> bool:
+        self.conn = self.link.conn()
         busy = self._state()
         for row in self.conn.execute(
             """
@@ -207,7 +207,7 @@ def main() -> None:
     if not r2.site_bucket_name:
         raise SystemExit("R2_SITE_BUCKET_NAME is not set")
     publisher = Publisher(
-        db.connect(),
+        db.Link(),
         r2_client(),
         s=settings(),
         spec=chain_spec(),

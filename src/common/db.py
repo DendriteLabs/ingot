@@ -10,6 +10,7 @@ import socket
 from typing import Any, LiteralString
 
 import psycopg
+from loguru import logger as log
 from psycopg.abc import Params
 from psycopg.rows import dict_row
 
@@ -24,6 +25,40 @@ def connect(url: str | None = None) -> Conn:
     conn = psycopg.Connection[Row].connect(url or settings().database_url, autocommit=True)
     conn.row_factory = dict_row
     return conn
+
+
+class Link:
+    """A service's connection, replaced with a fresh one once Postgres has dropped it: a step
+    that hits the drop fails, and the next one starts on a new connection."""
+
+    def __init__(self, conn: Conn | None = None, url: str | None = None) -> None:
+        self.url, self._conn = url, conn
+
+    def conn(self, *, check: bool = False) -> Conn:
+        """`check` pings the connection first, for a write after hours of work: a drop is only
+        noticed on the next query, so an idle connection can look open when it is not."""
+        if self._conn is not None and not self._conn.closed and check:
+            try:
+                self._conn.execute("SELECT 1")
+            except psycopg.OperationalError:
+                self._conn.close()
+        if self._conn is None or self._conn.closed:
+            if self._conn is not None:
+                log.warning("database connection lost; reconnecting")
+            self._conn = connect(self.url)
+        return self._conn
+
+    def close(self) -> None:
+        if self._conn is not None:
+            self._conn.close()
+
+
+def offline_quietly(link: Link, worker: str) -> None:
+    """Mark the worker OFFLINE on the way out; the database being down must not stop the exit."""
+    try:
+        offline(link.conn(), worker)
+    except psycopg.Error as exc:
+        log.warning("could not mark {} offline: {}", worker, exc)
 
 
 def one(conn: Conn, query: LiteralString, params: Params | None = None) -> Row:

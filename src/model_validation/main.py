@@ -96,13 +96,13 @@ def _upload_fails(upload: Upload, row: db.Row, state: str, reason: str, barred: 
 
 def main() -> None:
     s, spec = settings(), chain_spec()
-    conn = db.connect()
+    link = db.Link()
     for family, _quant in spec.upload_limits:
         pipeline.load(family)
-    worker = db.register_worker(conn, "model_validation")
+    worker = db.register_worker(link.conn(), "model_validation")
     log.info("model validation started — pairs {}", sorted(spec.upload_limits))
     forever(
-        lambda: run_once(conn, worker=worker, s=s, spec=spec),
+        lambda: run_once(link.conn(), worker=worker, s=s, spec=spec),
         idle_s=config.IDLE_S,
-        on_stop=lambda: db.offline(conn, worker),
+        on_stop=lambda: db.offline_quietly(link, worker),
     )

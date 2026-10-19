@@ -186,11 +186,11 @@ def main() -> None:
     fingerprint = partial(
         fingerprint_dir, teacher_dir=teacher_dir, secret=secret, device=s.dedup_device
     )
-    conn = db.connect()
-    worker = db.register_worker(conn, "model_dedup")
+    link = db.Link()
+    worker = db.register_worker(link.conn(), "model_dedup")
     log.info("model dedup started — bank {} on {}", s.opensearch_index, s.dedup_device)
     forever(
-        lambda: run_once(conn, worker=worker, s=s, bank=bank, fingerprint=fingerprint),
+        lambda: run_once(link.conn(), worker=worker, s=s, bank=bank, fingerprint=fingerprint),
         idle_s=config.IDLE_S,
-        on_stop=lambda: db.offline(conn, worker),
+        on_stop=lambda: db.offline_quietly(link, worker),
     )

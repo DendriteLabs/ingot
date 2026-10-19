@@ -33,7 +33,7 @@ POLICY = cache.Policy(
 
 
 def run_once(
-    conn: db.Conn,
+    link: db.Link,
     *,
     worker: str,
     teacher: str,
@@ -45,6 +45,7 @@ def run_once(
     upload: Upload = models.upload_artifact,
     fits: dataset.Fits | None = None,
 ) -> bool:
+    conn = link.conn()
     db.heartbeat(conn, worker, queued=states.UNIQUE)
     cache.sweep(conn, s.model_cache_dir, POLICY, keep_kings=config.KEEP_KINGS)
     row = db.claim(
@@ -93,10 +94,12 @@ def run_once(
             fetched - between,
         )
         duel = scorer(
-            teacher_dir, challenger_dir, king_dir, drawn, on_progress=_progress(conn, eval_id)
+            teacher_dir, challenger_dir, king_dir, drawn, on_progress=_progress(link, eval_id)
         )
         log.info("eval {}: duel took {:.0f}s", eval_id, time.monotonic() - fetched)
     except Exception as exc:
+        # the duel ran for hours: the connection it started with may be gone by now
+        conn = link.conn(check=True)
         if isinstance(exc, servers.ServerExited) and exc.gpu in s.gpus("challenger"):
             _does_not_load(conn, upload, row, eval_id, f"the model does not load: {exc.reason}")
             return True
@@ -114,6 +117,7 @@ def run_once(
         )
         return True
     scored = time.monotonic()
+    conn = link.conn(check=True)
     results = s.eval_work_dir / "results" / f"{eval_id}.jsonl"
     results.parent.mkdir(parents=True, exist_ok=True)
     samples = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in duel.samples)
@@ -157,13 +161,13 @@ def run_once(
     return True
 
 
-def _progress(conn: db.Conn, eval_id: int) -> run.Progress:
+def _progress(link: db.Link, eval_id: int) -> run.Progress:
     """Writes samples_done for the dashboard; the scorer calls it from its worker threads."""
     lock = threading.Lock()
 
     def report(done: int) -> None:
         with lock:
-            conn.execute("UPDATE evals SET samples_done = %s WHERE id = %s", (done, eval_id))
+            link.conn().execute("UPDATE evals SET samples_done = %s WHERE id = %s", (done, eval_id))
 
     return report
 
@@ -187,12 +191,12 @@ def _upload_summary(conn: db.Conn, upload: Upload, hotkey: str, eval_id: int) ->
 
 def main() -> None:
     s, spec = settings(), chain_spec()
-    conn = db.connect()
+    link = db.Link(db.connect())  # first, so a database that is down fails before the slow setup
     teacher = f"{spec.teacher_repo}@{spec.teacher_revision}"
     teacher_dir = models.snapshot(spec.teacher_repo, spec.teacher_revision)
     data = dataset.fetch(spec, s.dataset_path)
     fits = run.fits(run.load_tokenizer(teacher_dir))  # the draw sizes prompts with it
-    worker = db.register_worker(conn, "eval_service")
+    worker = db.register_worker(link.conn(), "eval_service")
     log.info(
         "eval service started — teacher {} dataset {} ({} samples); {} orphaned state files swept",
         teacher,
@@ -202,7 +206,7 @@ def main() -> None:
     )
     forever(
         lambda: run_once(
-            conn,
+            link,
             worker=worker,
             teacher=teacher,
             teacher_dir=teacher_dir,
@@ -211,11 +215,11 @@ def main() -> None:
             fits=fits,
         ),
         idle_s=config.IDLE_S,
-        on_stop=lambda: stop(conn, worker),
+        on_stop=lambda: stop(link, worker),
     )
 
 
-def stop(conn: db.Conn, worker: str) -> None:
+def stop(link: db.Link, worker: str) -> None:
     # the vLLM servers run in their own sessions, so pm2 stopping this process does not stop them
     servers.stop_all()
-    db.offline(conn, worker)
+    db.offline_quietly(link, worker)

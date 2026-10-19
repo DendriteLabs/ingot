@@ -17,14 +17,16 @@ from common.loop import forever
 
 class ChainReader:
     def __init__(
-        self, conn: db.Conn, subtensor: Any, deps: controller.Deps, s: Settings, worker: str
+        self, link: db.Link, subtensor: Any, deps: controller.Deps, s: Settings, worker: str
     ) -> None:
-        self.conn, self.subtensor, self.deps, self.s, self.worker = conn, subtensor, deps, s, worker
+        self.link, self.subtensor, self.deps, self.s, self.worker = link, subtensor, deps, s, worker
+        self.conn = link.conn()
         self.last_block: int | None = None
         self.next_sweep = 0.0
         self.next_quota = 0.0
 
     def step(self) -> bool:
+        self.conn = self.link.conn()
         db.heartbeat(self.conn, self.worker)
         block = chain.current_block(self.subtensor)
         if block != self.last_block:
@@ -66,7 +68,7 @@ class ChainReader:
 
 def main() -> None:
     s, spec = settings(), chain_spec()
-    conn = db.connect()
+    link = db.Link()
     subtensor = chain.connect(s.network)
     deps = controller.build_deps(r2_settings(), spec)
     if s.start_block:
@@ -74,11 +76,11 @@ def main() -> None:
             *chain.iter_revealed(subtensor, s.netuid),
             *chain.iter_committed(subtensor, s.netuid),
         ]
-        guard.record_legacy(conn, commits, s.start_block)
-    worker = db.register_worker(conn, "chain_reader")
+        guard.record_legacy(link.conn(), commits, s.start_block)
+    worker = db.register_worker(link.conn(), "chain_reader")
     log.info("chain reader started — netuid={} network={}", s.netuid, s.network)
     forever(
-        ChainReader(conn, subtensor, deps, s, worker).step,
+        ChainReader(link, subtensor, deps, s, worker).step,
         idle_s=config.POLL_INTERVAL_S,
-        on_stop=lambda: db.offline(conn, worker),
+        on_stop=lambda: db.offline_quietly(link, worker),
     )

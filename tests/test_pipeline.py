@@ -31,6 +31,7 @@ from model_validation.families.base import Family
 from private_store.contracts import activation_signal_payload
 from promoter import main as promoter
 from tests.conftest import crown_genesis, fingerprint, quantization_error, state, submit
+from tests.test_db_reconnect import drop_others
 from weight_setter import main as weight_setter
 
 DATA = Dataset(
@@ -164,7 +165,7 @@ def dedup(
 
 def evaluate(conn, s, scorer: Scorer, upload=no_upload) -> bool:
     return eval_service.run_once(
-        conn,
+        db.Link(conn),
         worker=WORKER,
         teacher="org/teacher@main",
         teacher_dir=TEACHER,
@@ -751,3 +752,28 @@ def test_the_running_eval_shows_its_progress(conn, s, spec):
     ev = db.one(conn, "SELECT samples_done, sample_count FROM evals")
     assert (row["samples_done"], row["sample_count"]) == (3, ev["sample_count"])
     assert ev["samples_done"] == 3
+
+
+def test_an_eval_is_stored_after_its_connection_drops_mid_duel(conn, s, spec):
+    crown_genesis(conn)
+    sid = submit(conn, hotkey="hk-1", uid=7)
+    assert validate(conn, s, spec) and dedup(conn, s)
+
+    def score(_t: Path, _c: Path, _k: Path, samples: Sequence[Sample], **_: object) -> Duel:
+        drop_others(conn)  # the hours of a real duel, during which Postgres restarts
+        return duel(0.1, 0.5)(_t, _c, _k, samples)
+
+    assert eval_service.run_once(
+        db.Link(url=s.database_url),
+        worker=WORKER,
+        teacher="org/teacher@main",
+        teacher_dir=TEACHER,
+        data=DATA,
+        s=s,
+        fetch=fetch,
+        scorer=score,
+        upload=no_upload,
+    )
+    assert state(conn, sid) == states.WON
+    ev = db.one(conn, "SELECT won, finished_at FROM evals")
+    assert ev["won"] and ev["finished_at"]

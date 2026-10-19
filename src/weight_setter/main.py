@@ -55,18 +55,18 @@ def run_once(
 
 def main() -> None:
     s = settings()
-    conn = db.connect()
+    link = db.Link()
     client = chain.WeightClient(
         coldkey=s.wallet_coldkey,
         hotkey=s.wallet_hotkey,
         wallet_path=s.wallet_path,
         network=s.network,
     )
-    worker = db.register_worker(conn, "weight_setter")
+    worker = db.register_worker(link.conn(), "weight_setter")
     log.info("weight setter started — netuid={} every {} blocks", s.netuid, config.SET_RATE_BLOCKS)
     # always sleep: a set_weights call is followed by SET_RATE_BLOCKS of nothing to do
     forever(
-        lambda: run_once(conn, client, worker=worker, s=s) and False,
+        lambda: run_once(link.conn(), client, worker=worker, s=s) and False,
         idle_s=config.POLL_S,
-        on_stop=lambda: db.offline(conn, worker),
+        on_stop=lambda: db.offline_quietly(link, worker),
     )

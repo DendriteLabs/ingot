@@ -82,11 +82,11 @@ def card(row: db.Row, title: str) -> str:
 
 def main() -> None:
     s = settings()
-    conn = db.connect()
-    worker = db.register_worker(conn, "promoter")
+    link = db.Link()
+    worker = db.register_worker(link.conn(), "promoter")
     log.info("promoter started — mirroring kings to {}", s.king_hf_namespace or "(nowhere)")
     forever(
-        lambda: run_once(conn, worker=worker, s=s, spec=chain_spec()),
+        lambda: run_once(link.conn(), worker=worker, s=s, spec=chain_spec()),
         idle_s=config.IDLE_S,
-        on_stop=lambda: db.offline(conn, worker),
+        on_stop=lambda: db.offline_quietly(link, worker),
     )

@@ -176,7 +176,7 @@ def test_publisher_keeps_the_site_current(conn, s, spec, tmp_path):
     ):
         s3.put("artifacts", f"evals/hk-a/{with_artifacts}/{name}", body)
     s3.put("artifacts", f"evals/hk-d/{winner}/summary.json", b"{}")
-    publisher = Publisher(conn, s3, s=s, spec=spec, site="site", artifacts="artifacts")
+    publisher = Publisher(db.Link(conn), s3, s=s, spec=spec, site="site", artifacts="artifacts")
 
     def site() -> set[str]:
         return {key for bucket, key in s3.objects if bucket == "site"}
@@ -203,7 +203,9 @@ def test_publisher_keeps_the_site_current(conn, s, spec, tmp_path):
     assert json.loads(s3.body("site", "api/state.json"))["king"]["uid"] == 4, "the new king"
     assert (
         still_uploading
-        not in Publisher(conn, s3, s=s, spec=spec, site="site", artifacts="artifacts").published
+        not in Publisher(
+            db.Link(conn), s3, s=s, spec=spec, site="site", artifacts="artifacts"
+        ).published
     ), "a restart re-reads what the bucket holds"
 
 
@@ -215,7 +217,7 @@ def test_a_committed_model_is_queued_and_published(conn, s, spec):
     queued = [(r["hotkey"], r["state"]) for r in state.build(conn, s=s, spec=spec)["queue"]["rows"]]
     assert queued == [(HOTKEY, states.SUBMITTED)]
 
-    assert Publisher(conn, s3, s=s, spec=spec, site="site", artifacts="").run_once()
+    assert Publisher(db.Link(conn), s3, s=s, spec=spec, site="site", artifacts="").run_once()
     published = json.loads(s3.body("site", "api/state.json"))
     assert [(r["hotkey"], r["state"]) for r in published["queue"]["rows"]] == queued
 
