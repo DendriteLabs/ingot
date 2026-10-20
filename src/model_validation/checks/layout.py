@@ -3,12 +3,14 @@ shape; a text-model weight may be BF16 or F32, or FP8 where genesis has it in FP
 nothing else quantized: an FP8 embedding does not load), with the projections vLLM fuses all in
 one precision; tensors the eval never exercises keep the genesis dtype. An FP8 weight carries
 `<name>_scale_inv` shaped by the declared block (two ints >= 128), and
-config.modules_to_not_convert must agree with the file: vLLM builds each module from that list,
-so a mismatch does not load. Weight values are free."""
+config.modules_to_not_convert must agree with the file for every 2-D weight but the embeddings:
+vLLM builds those as linear layers in the precision the list says, so a mismatch does not load.
+Weight values are free."""
 
 from __future__ import annotations
 
 import math
+import re
 from typing import Any
 
 from model_validation.families import Family, Layout
@@ -33,7 +35,7 @@ def check_layout(layout: Layout, family: Family, config: dict[str, Any]) -> str 
     if extra := sorted(weights.keys() - genesis.keys()):
         return f"unexpected tensors: {_some(extra)}"
     skip = _not_converted(config)
-    genesis_skip = _not_converted(family.genesis_config)
+    unlisted: set[str] = set()
     for name, (dtype, shape) in weights.items():
         g_dtype, g_shape = genesis[name]
         if shape != g_shape:
@@ -62,9 +64,11 @@ def check_layout(layout: Layout, family: Family, config: dict[str, Any]) -> str 
         else:
             if side is not None:
                 return f"{name}{SIDE_SUFFIX}: scale on a non-FP8 weight"
-            listed_in_genesis = g_dtype == FP8 or _covered(module, genesis_skip)
-            if listed_in_genesis and not _covered(module, skip):
-                return f"{name}: not FP8 but missing from modules_to_not_convert"
+            if len(shape) == 2 and module not in family.embeddings and not _covered(module, skip):
+                unlisted.add(_pattern(module))
+    # all at once, so one fix covers them: three attempts went one module at a time (2026-10-20)
+    if unlisted:
+        return f"not FP8 but missing from modules_to_not_convert: {', '.join(sorted(unlisted))}"
     if sides:
         return f"scale tensors without a weight: {_some(sorted(sides))}"
     return _split_fused(weights, family.fused)
@@ -107,6 +111,11 @@ def _not_converted(config: dict[str, Any]) -> tuple[str, ...]:
 
 def _covered(module: str, skip: tuple[str, ...]) -> bool:
     return any(module == s or module.startswith(s + ".") for s in skip)
+
+
+def _pattern(module: str) -> str:
+    """One name per layer stack: `model.visual.blocks.3.attn.qkv` -> `...blocks.N.attn.qkv`."""
+    return re.sub(r"\.\d+\.", ".N.", module)
 
 
 def _some(names: list[str], limit: int = 3) -> str:

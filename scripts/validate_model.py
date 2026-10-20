@@ -17,8 +17,8 @@ from model_validation.checks import (
     check_quant,
     check_weight_bytes,
     layout_from_dir,
-    weight_bytes,
 )
+from model_validation.families import weight_bytes
 
 
 def main() -> int:
@@ -33,7 +33,7 @@ def main() -> int:
     print(f"upload limit {spec.upload_limit(args.family, args.quant)} bytes")
     family = pipeline.load(args.family)
     print(f"model   {model_dir}")
-    print(f"family  {family.name} (genesis safetensors {family.genesis_weight_bytes} bytes)")
+    print(f"family  {family.name} (genesis tensors {family.genesis_weight_bytes} bytes)")
     print()
 
     files = [
@@ -42,6 +42,7 @@ def main() -> int:
         if p.is_file() and not (rel := p.relative_to(model_dir).as_posix()).startswith(".cache/")
     ]
     config = json.loads((model_dir / "config.json").read_text())
+    layout = layout_from_dir(model_dir)
     results = [
         ("files", check_files(files, spec)),
         ("json", check_json(model_dir)),
@@ -49,18 +50,19 @@ def main() -> int:
         ("config keys", check_config_keys(config, family.genesis_config)),
         ("architecture", check_architecture(config, family)),
         ("quant", check_quant(config, args.quant)),
-        ("layout", check_layout(layout_from_dir(model_dir), family, config)),
-        ("weight bytes", check_weight_bytes(model_dir, family)),
+        ("layout", check_layout(layout, family, config)),
+        ("weight bytes", check_weight_bytes(layout, family)),
     ]
     for name, reason in results:
         shown = reason if not reason or len(reason) <= 400 else reason[:400] + " ..."
         print(f"{'FAIL' if reason else 'PASS'}  {name:<13} {shown or ''}")
 
     print()
-    layout = layout_from_dir(model_dir)
     print(f"tensors         {len(layout)}")
-    size = weight_bytes(model_dir)
-    print(f"safetensors     {size} bytes ({size / family.genesis_weight_bytes:.2%} of genesis)")
+    size = weight_bytes(layout, family.uncounted_prefixes)
+    print(
+        f"counted weights {size} bytes ({size / family.genesis_weight_bytes:.2%} of all of genesis)"
+    )
     failed = any(reason for _, reason in results)
     print(f"verdict         {'INVALID' if failed else 'VALID'}")
     return 1 if failed else 0

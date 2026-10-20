@@ -29,10 +29,14 @@ The model to beat is always the newest king. Before the first coronation it is g
   under `model.visual.`, `mtp.` and `lm_head.` keep the genesis dtype (`lm_head` stays BF16: the
   evaluator applies it itself to your last hidden state). An FP8 weight `x.weight` carries
   `x.weight_scale_inv` shaped by your `weight_block_size` (two ints, 128 or larger), and
-  `modules_to_not_convert` lists exactly the text linears you left unquantized. Every value is
-  finite: a NaN or an infinity anywhere rejects the model. Weight values
+  `modules_to_not_convert` lists every 2-D weight you left unquantized, in the text model and
+  the vision tower alike; the embeddings and `lm_head` aside, which vLLM never quantizes, and
+  norms and biases, which need no entry. vLLM builds an unlisted one as FP8 and does not load.
+  Every value is finite: a NaN or an infinity anywhere rejects the model. Weight values
   are yours: quantize, fine-tune, distill, as you like.
-- No larger than genesis: all `*.safetensors` together at most 30,866,866,928 bytes.
+- No larger than genesis: the tensors outside `model.visual.` and `mtp.` together hold at most
+  29,468,003,328 bytes, genesis's text model. Those two parts are shipped as genesis and
+  counted on neither side.
 - Exactly these files, all at the top level: `config.json`, `model.safetensors.index.json`
   and the `*.safetensors` shards the index names (names are free). Any other file, including
   the tokenizer, README or LICENSE, rejects the submission; the validator uses the genesis
@@ -78,6 +82,16 @@ For each model, per answer token:
 
 Lower is better. The teacher rereading its own answer gives the noise floor, recorded with
 every eval: batching alone makes two runs of the same model differ by about that much.
+
+The evaluator runs vLLM 0.31.0 on RTX PRO 6000 Blackwell GPUs (sm_120), one server per GPU:
+`--language-model-only --max-model-len 32768
+--max-num-batched-tokens 32768 --no-enable-chunked-prefill --no-enable-prefix-caching
+--mamba-ssm-cache-dtype float32 --gdn-prefill-backend triton`, plus a logits processor that
+forces the teacher's tokens and hidden-state extraction at `LAYERS` (`src/eval_service/servers.py`).
+FP8 GEMMs run on vLLM's CUTLASS block-scaled kernel, attention on FlashAttention. The evaluator
+applies the final norm (float32) and `lm_head` (BF16) itself from your own tensors and takes the
+log-softmax in float32 (`src/eval_service/metrics.py`), so the next-token distribution scored is
+your model's.
 
 You win if your KL is lower than the king's by at least `KL_MARGIN` (1.5%) of the king's KL, and
 your distance lower than the king's by at least `DIST_MARGIN` (0.84%) of the king's distance, both

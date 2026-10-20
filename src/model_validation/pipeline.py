@@ -23,9 +23,8 @@ from model_validation.checks import (
     check_values,
     check_weight_bytes,
     layout_from_dir,
-    weight_bytes,
 )
-from model_validation.families import Family
+from model_validation.families import Family, weight_bytes
 
 
 @lru_cache
@@ -39,14 +38,19 @@ def validate(model_dir: Path, *, spec: ChainSpec, family: Family, quant: str) ->
     if reason := check_files(files, spec) or check_json(model_dir) or check_index(model_dir):
         return reason
     config = json.loads((model_dir / "config.json").read_text())
+    layout = layout_from_dir(model_dir)
     if reason := (
         check_config_keys(config, family.genesis_config)
         or check_architecture(config, family)
         or check_quant(config, quant)
-        or check_layout(layout_from_dir(model_dir), family, config)
-        or check_weight_bytes(model_dir, family)
+        or check_layout(layout, family, config)
+        or check_weight_bytes(layout, family)
         or check_values(model_dir)
     ):
         return reason
-    log.info("{} safetensors bytes: {}", model_dir.name, weight_bytes(model_dir))
+    log.info(
+        "{} counted weight bytes: {}",
+        model_dir.name,
+        weight_bytes(layout, family.uncounted_prefixes),
+    )
     return None

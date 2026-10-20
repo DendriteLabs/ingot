@@ -60,7 +60,9 @@ FAMILY = Family(
     ),
     genesis_layout=GENESIS,
     frozen_dtype_prefixes=("model.visual.",),
-    genesis_weight_bytes=100,
+    genesis_weight_bytes=families.weight_bytes(GENESIS, ("model.visual.",)),
+    embeddings=("model.embed_tokens", "lm_head"),
+    uncounted_prefixes=("model.visual.",),
 )
 CONFIG = FAMILY.genesis_config
 
@@ -262,13 +264,14 @@ def test_every_weight_must_be_finite(tmp_path: Path):
     assert check_values(tmp_path) == "z: 1 of its values are NaN or infinite"
 
 
-def test_safetensors_may_not_outweigh_genesis(tmp_path: Path):
-    (tmp_path / "a.safetensors").write_bytes(bytes(60))
-    (tmp_path / "b.safetensors").write_bytes(bytes(40))
-    (tmp_path / "config.json").write_bytes(bytes(500))
-    assert check_weight_bytes(tmp_path, FAMILY) is None
-    (tmp_path / "b.safetensors").write_bytes(bytes(41))
-    assert check_weight_bytes(tmp_path, FAMILY) == "safetensors total 101 bytes, genesis has 100"
+def test_text_weights_may_not_outweigh_genesis_text_weights():
+    assert check_weight_bytes(GENESIS, FAMILY) is None
+    assert check_weight_bytes(changed(lm_head__weight=("BF16", (1001, 64))), FAMILY) == (
+        "counted weights total 272644 bytes, genesis has 272516"
+    )
+    # the vision tower is shipped as genesis and counted on neither side
+    bigger_tower = changed(model__visual__blocks__0__attn__qkv__weight=("BF16", (640, 64)))
+    assert check_weight_bytes(bigger_tower, FAMILY) is None
 
 
 INDEX = "model.safetensors.index.json"
@@ -316,7 +319,7 @@ def test_pinned_qwen38_family_accepts_its_own_genesis():
     assert check_architecture(family.genesis_config, family) is None
     assert len(family.genesis_layout) == 1606
     assert check_layout(family.genesis_layout, family, family.genesis_config) is None
-    assert family.genesis_weight_bytes == 30_866_866_928
+    assert family.genesis_weight_bytes == 29_468_003_328
     for frozen in (
         "language_model_only",
         "text_config.rms_norm_eps",
@@ -361,8 +364,21 @@ def test_activation_payload_carries_the_pair_and_fits_a_commitment():
         activation_signal_payload(bytes(32), family="Qwen:3.8", quant="fp8")
 
 
-def test_unquantized_weights_genesis_lists_must_stay_listed():
+def test_every_unquantized_linear_must_be_listed_embeddings_and_norms_need_not():
+    # vLLM reads the list for linear layers only: an unlisted norm, embedding or lm_head loads
+    assert (
+        check_layout(GENESIS, FAMILY, with_quant(modules_to_not_convert=["model.visual"])) is None
+    )
+    # the vision tower is a linear layer too (served whole on the benchmark pod and from HF)
     dropped = with_quant(modules_to_not_convert=["lm_head", "model.norm"])
     assert layout_reason(GENESIS, dropped) == (
-        "model.visual.blocks.0.attn.qkv.weight: not FP8 but missing from modules_to_not_convert"
+        "not FP8 but missing from modules_to_not_convert: model.visual.blocks.N.attn.qkv"
+    )
+    # every missing module at once, one name per layer stack, so one fix covers them
+    bf16_up = changed(
+        **{UP.replace(".", "__"): ("BF16", (256, 64))}, **{SCALE.replace(".", "__"): None}
+    )
+    assert layout_reason(bf16_up, dropped) == (
+        "not FP8 but missing from modules_to_not_convert: "
+        "model.layers.N.mlp.up_proj, model.visual.blocks.N.attn.qkv"
     )
