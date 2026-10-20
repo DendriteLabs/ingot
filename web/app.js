@@ -551,7 +551,8 @@ function renderHistory() {
   // a lead below FAR is a broken or far-off model: one muted bucket, the exact share in the tooltip
   const FAR = -50;
   const marginCell = (chal, king, need) => {
-    if (chal == null || king == null) return el("span", { class: "muted-dash" }, "—");
+    if (king == null) return el("span", { class: "muted-dash" }, "—");
+    if (chal == null) return el("span", { class: "margin-pct bad far", title: "challenger diverged · no finite score" }, `< −${-FAR}%`);
     const lead = king - chal;
     const pct = (v) => `${((100 * v) / king).toFixed(2)}%`;
     const far = (100 * lead) / king < FAR;

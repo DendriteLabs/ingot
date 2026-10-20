@@ -132,6 +132,19 @@ class Publisher:
         self.published = {
             int(m[1]) for k in bucket_keys(site, "api/evals/", s3) if (m := EVAL_ID.fullmatch(k))
         }
+        # docs written before _dumps nulled non-finite values hold a bare Infinity/NaN: send again
+        self.published -= {
+            r["id"]
+            for r in self.conn.execute(
+                """
+                SELECT id FROM evals WHERE 'Infinity'::float8 IN (
+                    abs(score_challenger), abs(score_king), abs(dist_challenger), abs(dist_king),
+                    abs(noise_kl), abs(noise_dist), abs(margin), abs(dist_margin))
+                  OR 'NaN'::float8 IN (score_challenger, score_king, dist_challenger, dist_king,
+                    noise_kl, noise_dist, margin, dist_margin)
+                """
+            ).fetchall()
+        }
 
     def run_once(self) -> bool:
         self.conn = self.link.conn()
