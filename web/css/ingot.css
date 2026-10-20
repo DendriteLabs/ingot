@@ -200,24 +200,50 @@ main { display: flex; flex-direction: column; gap: 64px; padding-top: 56px; padd
 .data-table-wrap.scroll { overflow-y: auto; }
 /* sized to whole rows (header 37.5px, rows 44px and 39px) so the box never ends on half a row */
 #history-wrap { max-height: calc(37.5px + 11 * 44px + 2px); }
-.benchmark-charts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-.benchmark-card .hero-chart-plot .tick { font-size: 11px; letter-spacing: 0; }
-.benchmark-card .hero-chart-plot svg { height: auto; }
-.benchmark-card { display: flex; flex-direction: column; min-width: 0; }
-.benchmark-card > .chart { flex: 1; }
-.benchmark-chart-head { padding: 0 0 10px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
-.benchmark-chart-head h3 { margin: 0; font: inherit; color: var(--text-2); }
-.benchmark-card .empty { display: flex; flex: 1; min-height: 120px; flex-direction: column; justify-content: center; gap: 4px; padding: 12px; font-size: 10px; overflow-wrap: anywhere; }
-.benchmark-card .hero-chart-tip { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
-.hero-chart-plot .benchmark-line { shape-rendering: auto; }
 .hero-chart-plot .area { stroke: none; }
 .hero-chart-plot .fill-gold { stop-color: var(--accent); stop-opacity: 0.22; }
 .hero-chart-plot .fill-grey { stop-color: var(--text-2); stop-opacity: 0.16; }
 .hero-chart-plot .bottom { stop-opacity: 0; }
-.hero-chart-plot .genesis-line { stroke: var(--text-2); stroke-dasharray: 4 4; shape-rendering: crispEdges; }
-.hero-chart-plot .genesis-label { fill: var(--text-2); }
-.benchmark-point { cursor: pointer; }
-.benchmark-point:focus { outline: none; stroke: var(--text); stroke-width: 3; }
+
+/* ---------- benchmark cards: bars from the teacher's zero line ---------- */
+.benchmark-charts { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 16px; }
+.benchmark-card { min-width: 0; grid-column: span 4; }
+.benchmark-card:nth-child(n + 4) { grid-column: span 3; }
+.benchmark-chart-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 0 0 8px;
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+}
+.benchmark-chart-head h3 { margin: 0; overflow: hidden; font: inherit; color: var(--text-2); text-overflow: ellipsis; white-space: nowrap; }
+.benchmark-kind { flex-shrink: 0; color: var(--muted); }
+.bench-rows { --cols: 76px minmax(0, 1fr) 86px; display: grid; gap: 6px; padding: 10px 14px; border: 1px solid var(--line); background: var(--panel); }
+.bench-row {
+  display: grid; grid-template-columns: var(--cols); align-items: center; gap: 12px;
+  font-family: var(--mono); font-size: 11px; color: var(--text-2); text-decoration: none;
+}
+.bench-label { white-space: nowrap; text-transform: uppercase; letter-spacing: 0.08em; }
+.bench-track { position: relative; height: 10px; }
+.bench-ref { position: absolute; top: -4px; bottom: -4px; width: 1px; background: var(--text-2); }
+.bench-bar {
+  --line: var(--loser); --ink: var(--text-2); --from: 0%; --to: 18%;
+  position: absolute; top: 0; bottom: 0; left: 0;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--ink) var(--from), transparent),
+    color-mix(in srgb, var(--ink) var(--to), transparent));
+  border: 1px solid var(--line); border-left: 0; border-right-width: 2px;
+}
+.bench-row.king .bench-bar { --line: var(--accent-ink); --ink: var(--brass); --from: 6%; --to: 30%; }
+.bench-row.king.latest .bench-bar { --from: 12%; --to: 48%; }
+.bench-row.teacher .bench-bar { --to: 0%; border-style: dashed; border-right-width: 1px; }
+.bench-value { display: flex; justify-content: flex-end; gap: 6px; font-variant-numeric: tabular-nums; }
+.bench-delta { color: var(--muted); }
+.bench-delta.up { color: var(--text); }
+.bench-row.king .bench-delta.up { color: var(--accent-ink); }
+.bench-row.king.latest:not(.missing) .bench-value { color: var(--text); }
+.bench-row.missing { color: var(--muted); }
+/* the track is zoomed, so its ends are labelled: a long bar is not a high score */
+.bench-axis { display: grid; grid-template-columns: var(--cols); gap: 12px; font-family: var(--mono); font-size: 10px; color: var(--muted); }
+.bench-axis span:nth-child(2) { display: flex; justify-content: space-between; padding-top: 3px; border-top: 1px solid var(--line); }
+.bench-axis b { font-weight: normal; }
+a.bench-row:hover .bench-label, a.bench-row:hover .bench-value { color: var(--text); }
 #fails-wrap { max-height: calc(37.5px + 12 * 39px + 2px); }
 table.data-table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; }
 table.data-table th {
@@ -337,13 +363,13 @@ button.zip:disabled { opacity: 0.6; cursor: wait; }
 
 /* ---------- narrow ---------- */
 @media (max-width: 960px) {
-  .benchmark-charts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .benchmark-card, .benchmark-card:nth-child(n + 4) { grid-column: span 6; }
   .hero { grid-template-columns: minmax(0, 1fr); gap: 28px; }
   .hero h1 { font-size: 52px; }
   .stamp { min-height: 240px; }
 }
 @media (max-width: 560px) {
-  .benchmark-charts { grid-template-columns: minmax(0, 1fr); }
+  .benchmark-card, .benchmark-card:nth-child(n + 4) { grid-column: span 12; }
   .row, main { padding-left: 16px; padding-right: 16px; }
   main { gap: 48px; padding-top: 36px; }
   .hero h1 { font-size: 42px; }

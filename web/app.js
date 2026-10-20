@@ -233,8 +233,7 @@ async function loadBenchmarks() {
     const doc = await res.json();
     const { results } = doc;
     if (!Array.isArray(results)) throw new Error("benchmark feed needs a results array");
-    $("benchmarks-meta").textContent = "";
-    // the x axis is every king, so a new king redraws the cards even when the feed did not change
+    $("benchmarks-meta").textContent = BENCHMARKS_LEGEND;
     const fingerprint = JSON.stringify([doc, (state?.kings ?? []).map((k) => k.name)]);
     if (fingerprint === benchmarkDocument) {
       return;
@@ -276,122 +275,61 @@ function gradient(id, tone = "fill-gold") {
   return defs;
 }
 
-// the benchmarks shown, in this order; the feed carries more, run on fewer kings or not settled
-const BENCHMARKS = ["SWE-rebench", "SWE-bench Verified", "SWE-bench Multilingual"];
+const BENCHMARKS = [
+  ["SWE-bench Multilingual", "coding"], ["Terminal-Bench 2.1", "terminal"], ["AutomationBench", "automation"],
+  ["GPQA Diamond", "science"], ["MATH-500", "math"], ["τ³-bench Banking", "tool use"], ["MMMU", "vision"],
+];
+const BENCHMARKS_LEGEND = "Qwen BF16: the unquantized teacher · Qwen FP8: Qwen's own quantization";
+const PROTOCOL = "sampled-16k-150-v1";
+const TEACHER_RUN = "Qwen3.8-27B-BF16";
 
-function renderBenchmarkCharts(results, names) {
+function renderBenchmarkCharts(results, benchmarks) {
   const complete = (r) => r.status === "complete" && typeof r.score === "number" && Number.isFinite(r.score);
-  // the x axis is every king so far, benchmarked or not: the kings the dashboard knows plus any a
-  // completed run names
-  const axis = [...new Map(
-    [...(state?.kings ?? []).map((k) => k.name), ...results.filter(complete).map((r) => r.model)]
-      .map(generation).filter((g) => g.ordinal > 0 && Number.isFinite(g.ordinal)).map((g) => [g.ordinal, g]),
-  ).values()].sort((a, b) => a.ordinal - b.ordinal);
-  mount($("benchmark-charts"), ...names.map((name, card_i) => {
-    // only completed runs are shown; a running or stopped one is a score over part of the tasks
-    const runs = results.filter((r) => r.benchmark === name && complete(r)).map((r) => ({ ...r, ...generation(r.model) }));
-    const genesis = runs.find((r) => r.ordinal === 0);
-    const byOrdinal = new Map(runs.map((r) => [r.ordinal, r]));
-    // a click on a king opens its Hugging Face repo, the one the dashboard knows it by
-    const repoOf = (model) => (state?.kings ?? []).find((k) => k.hf_repo?.split("/").pop() === model)?.hf_repo;
-    const rows = axis.map((g) => {
-      const r = byOrdinal.get(g.ordinal) ?? { ...g, model: `Ingot-${g.numeral}`, status: "no completed run" };
-      return { ...r, repo: repoOf(r.model) };
-    });
-    const scored = rows.filter(complete);
-    const latest = scored.at(-1);
-    const card = el("article", { class: "benchmark-card" }, el("div", { class: "benchmark-chart-head" }, el("h3", {}, name)));
-    if (!scored.length && !genesis) {
-      card.append(el("div", { class: "chart" }, el("div", { class: "empty" }, "No completed runs yet.")));
-      return card;
-    }
-    const width = 400, height = 130;
-    const pad = { left: 44, right: 16, top: 14, bottom: 28 };
-    const base = height - pad.bottom;
-    // the y axis runs to the best score, genesis included, so the chart spends its height on the range
-    const hi = Math.max(...scored.map((r) => r.score), genesis ? genesis.score : 0) || 1;
-    const x = (i) => pad.left + (rows.length <= 1 ? 0.5 : i / (rows.length - 1)) * (width - pad.left - pad.right);
-    const y = (value) => pad.top + (1 - value / hi) * (base - pad.top);
-    const pct = (v) => `${Number.isInteger(v) ? v : v.toFixed(1)}%`;
-    const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": `${name}: score by king, 0 to ${pct(hi)}` });
-    const fill = `benchmark-fill-${card_i}`;
-    svg.append(gradient(fill));
-    // ticks: the baseline and the top; genesis gets its own unless it is the top or sits on it
-    for (const value of [0, hi]) {
-      svg.append(svgEl("line", { x1: pad.left, x2: width - pad.right, y1: y(value), y2: y(value), class: "grid" }),
-        svgEl("text", { x: pad.left - 8, y: y(value), class: "tick", "text-anchor": "end", "dominant-baseline": "middle" }, pct(value)));
-    }
-    if (genesis) {
-      svg.append(svgEl("line", { x1: pad.left, x2: width - pad.right, y1: y(genesis.score), y2: y(genesis.score), class: "genesis-line" }),
-        svgEl("text", { x: width - pad.right, y: y(genesis.score) - 4, class: "tick genesis-label", "text-anchor": "end" }, "genesis"));
-      if (genesis.score < hi && y(genesis.score) - y(hi) >= 12 && base - y(genesis.score) >= 12) {
-        svg.append(svgEl("text", { x: pad.left - 8, y: y(genesis.score), class: "tick", "text-anchor": "end", "dominant-baseline": "middle" }, pct(genesis.score)));
-      }
-    }
-    // the gold under the line: one area per run of kings with a score, since a gap breaks the line
-    const segments = [];
-    rows.forEach((r, i) => {
-      if (!complete(r)) return;
-      if (segments.length && segments.at(-1).at(-1) === i - 1) segments.at(-1).push(i); else segments.push([i]);
-    });
-    for (const seg of segments) {
-      if (seg.length < 2) continue;
-      const top = seg.map((i) => `${Math.round(x(i))},${Math.round(y(rows[i].score))}`).join("L");
-      svg.append(svgEl("path", { d: `M${top}L${Math.round(x(seg.at(-1)))},${base}L${Math.round(x(seg[0]))},${base}Z`,
-        class: "area", fill: `url(#${fill})` }));
-      for (let k = 1; k < seg.length; k++) {
-        svg.append(svgEl("path", { d: `M${Math.round(x(seg[k - 1]))},${Math.round(y(rows[seg[k - 1]].score))}L${Math.round(x(seg[k]))},${Math.round(y(rows[seg[k]].score))}`, class: "king-line benchmark-line" }));
-      }
-    }
-    const every = Math.max(1, Math.ceil(rows.length / 8));
-    rows.forEach((r, i) => {
-      if (i % every === 0 || i === rows.length - 1) {
-        svg.append(svgEl("text", { x: x(i), y: height - 12, class: "tick", "text-anchor": "middle" }, r.numeral));
-      }
-    });
-    const tip = el("div", { class: "hero-chart-tip", hidden: true });
-    const crosshair = svgEl("line", { y1: pad.top, y2: base, class: "crosshair", visibility: "hidden" });
-    svg.append(crosshair);
-    const points = [];
-    const hide = () => {
-      tip.hidden = true;
-      crosshair.setAttribute("visibility", "hidden");
-      points.forEach((point) => point.classList.remove("active"));
+  const runs = results.filter((r) => r.protocol?.id === PROTOCOL);
+  const known = (state?.kings ?? []).map((k) => ({ ...k, ...generation(k.name) }));
+  const kings = known.filter((k) => k.ordinal > 0 && Number.isFinite(k.ordinal)).sort((a, b) => a.ordinal - b.ordinal).slice(-2);
+  const models = [
+    { tone: "teacher", label: "Qwen BF16", repo: state?.teacher, is: (r) => r.model === TEACHER_RUN },
+    { tone: "genesis", label: "Qwen FP8", repo: known.find((k) => k.ordinal === 0)?.hf_repo, is: (r) => generation(r.model).ordinal === 0 },
+    ...kings.map((k, i) => ({ tone: i === kings.length - 1 ? "king latest" : "king", label: `King ${k.numeral}`, repo: k.hf_repo,
+      is: (r) => generation(r.model).ordinal === k.ordinal })),
+  ];
+  const pct = (v) => `${v.toFixed(1)}%`;
+  const signed = (v) => `${v < 0 ? "−" : "+"}${Math.abs(v).toFixed(1)}`;
+  mount($("benchmark-charts"), ...benchmarks.map(([name, kind]) => {
+    const mine = runs.filter((r) => r.benchmark === name);
+    const rows = models.map((m) => ({ ...m, run: mine.find(m.is) }));
+    const scored = (row) => row.run && complete(row.run);
+    const scores = rows.filter(scored).map((row) => row.run.score);
+    const hi = Math.max(...scores);
+    const lo = Math.min(...scores);
+    const floor = Math.floor(lo - Math.max(2, hi - lo));
+    const x = (score) => (100 * (score - floor)) / (hi - floor);
+    const genesis = rows.find((row) => row.tone === "genesis" && scored(row))?.run.score;
+    const delta = (row) => (scored(row) && genesis != null && row.tone !== "genesis" ? row.run.score - genesis : null);
+    const bar = (row) => {
+      const { tone, label, repo, run } = row;
+      const pending = run?.status === "running" ? "running" : "queued";
+      const d = delta(row);
+      const tasksOf = (r) => `${r.completed ?? "—"} / ${r.samples ?? "—"} tasks`;
+      return el(repo ? "a" : "div", {
+        class: `bench-row ${tone}${scored(row) ? "" : " missing"}`,
+        href: repo ? hubUrl(repo) : null, target: repo ? "_blank" : null, rel: repo ? "noopener" : null,
+        title: scored(row) ? `${run.model}: ${pct(run.score)}${d == null ? "" : ` · ${signed(d)} points from Qwen FP8`} · ${tasksOf(run)}`
+          : pending === "running" && run.completed != null ? `running · ${tasksOf(run)}` : pending,
+      },
+      el("span", { class: "bench-label" }, label),
+      el("span", { class: "bench-track" },
+        genesis == null ? null : el("i", { class: "bench-ref", style: `left: ${x(genesis)}%` }),
+        scored(row) ? el("i", { class: "bench-bar", style: `width: ${Math.max(0.5, x(run.score))}%` }) : null),
+      el("span", { class: "bench-value" },
+        d == null ? null : el("span", { class: `bench-delta${d > 0 ? " up" : ""}` }, signed(d)),
+        scored(row) ? pct(run.score) : pending));
     };
-    let hover = null;
-    const show = (r, i) => {
-      hover = r;
-      points.forEach((point) => point.classList.remove("active"));
-      points[i]?.classList.add("active");
-      crosshair.setAttribute("x1", Math.round(x(i)) + 0.5);
-      crosshair.setAttribute("x2", Math.round(x(i)) + 0.5);
-      crosshair.removeAttribute("visibility");
-      mount(tip, el("b", {}, r.model), el("div", { class: "hero-chart-tip-meta" }, complete(r) ? `${r.score.toFixed(2)}% · ${r.completed ?? "—"} / ${r.samples ?? "—"} tasks` : r.status),
-        r.repo ? el("div", { class: "hero-chart-tip-meta" }, "click to open on Hugging Face") : null);
-      svg.style.cursor = r.repo ? "pointer" : "";
-      placeTip(tip, svg, width, x(i), pad.top);
-    };
-    svg.addEventListener("click", () => hover?.repo && window.open(hubUrl(hover.repo), "_blank", "noopener"));
-    rows.forEach((r, i) => {
-      if (!complete(r)) return;
-      const description = `${r.model}: ${r.score.toFixed(2)}% · ${r.completed ?? "—"} / ${r.samples ?? "—"} tasks`;
-      const point = svgEl("rect", { x: Math.round(x(i)) - 3, y: Math.round(y(r.score)) - 3, width: 7, height: 7, tabindex: "0", class: `king-dot benchmark-point${r === latest ? " current" : ""}`, "aria-label": description });
-      point.append(svgEl("title", {}, description));
-      points[i] = point;
-      point.addEventListener("focus", () => show(r, i));
-      point.addEventListener("keydown", (ev) => ev.key === "Enter" && r.repo && window.open(hubUrl(r.repo), "_blank", "noopener"));
-      point.addEventListener("blur", hide);
-      svg.append(point);
-    });
-    svg.addEventListener("pointermove", (ev) => {
-      const rect = svg.getBoundingClientRect();
-      const at = ((ev.clientX - rect.left) / rect.width) * width;
-      const i = rows.length <= 1 ? 0 : Math.min(rows.length - 1, Math.max(0, Math.round((at - pad.left) / (width - pad.left - pad.right) * (rows.length - 1))));
-      if (rows[i]) show(rows[i], i);
-    });
-    svg.addEventListener("pointerleave", hide);
-    card.append(el("div", { class: "chart hero-chart-plot" }, svg, tip));
-    return card;
+    const axis = scores.length ? el("div", { class: "bench-axis" }, el("span"), el("span", {}, el("b", {}, `${floor}%`), el("b", {}, pct(hi))), el("span")) : null;
+    return el("article", { class: "benchmark-card" },
+      el("div", { class: "benchmark-chart-head" }, el("h3", {}, name), el("span", { class: "benchmark-kind" }, kind)),
+      el("div", { class: "bench-rows" }, ...rows.map(bar), axis));
   }));
 }
 
