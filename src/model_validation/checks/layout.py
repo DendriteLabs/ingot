@@ -33,6 +33,7 @@ def check_layout(layout: Layout, family: Family, config: dict[str, Any]) -> str 
     if extra := sorted(weights.keys() - genesis.keys()):
         return f"unexpected tensors: {_some(extra)}"
     skip = _not_converted(config)
+    genesis_skip = _not_converted(family.genesis_config)
     for name, (dtype, shape) in weights.items():
         g_dtype, g_shape = genesis[name]
         if shape != g_shape:
@@ -61,7 +62,8 @@ def check_layout(layout: Layout, family: Family, config: dict[str, Any]) -> str 
         else:
             if side is not None:
                 return f"{name}{SIDE_SUFFIX}: scale on a non-FP8 weight"
-            if g_dtype == FP8 and not _covered(module, skip):
+            listed_in_genesis = g_dtype == FP8 or _covered(module, genesis_skip)
+            if listed_in_genesis and not _covered(module, skip):
                 return f"{name}: not FP8 but missing from modules_to_not_convert"
     if sides:
         return f"scale tensors without a weight: {_some(sorted(sides))}"

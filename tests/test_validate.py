@@ -359,3 +359,10 @@ def test_activation_payload_carries_the_pair_and_fits_a_commitment():
     assert (parsed.family, parsed.quant, parsed.pubkey) == ("qwen38_27b", "fp8", bytes(range(32)))
     with pytest.raises(ValueError):
         activation_signal_payload(bytes(32), family="Qwen:3.8", quant="fp8")
+
+
+def test_unquantized_weights_genesis_lists_must_stay_listed():
+    dropped = with_quant(modules_to_not_convert=["lm_head", "model.norm"])
+    assert layout_reason(GENESIS, dropped) == (
+        "model.visual.blocks.0.attn.qkv.weight: not FP8 but missing from modules_to_not_convert"
+    )
