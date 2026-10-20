@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import threading
 import time
@@ -45,7 +46,7 @@ class StateCache:
     def get(self) -> bytes:
         if time.monotonic() - self.built > config.CACHE_S:
             doc = self.query(lambda conn: state.build(conn, s=settings(), spec=chain_spec()))
-            self.body = json.dumps(doc, default=_json_default).encode()
+            self.body = _dumps(doc)
             self.built = time.monotonic()
         return self.body
 
@@ -78,7 +79,7 @@ class Handler(SimpleHTTPRequestHandler):
             if doc is None:
                 self.send_error(404, "no such eval")
             else:
-                self._send(json.dumps(doc, default=_json_default).encode(), "application/json")
+                self._send(_dumps(doc), "application/json")
             return
         if match := EVAL_FILE.fullmatch(path):
             self._send_artifact(int(match[1]), match[2])
@@ -189,8 +190,18 @@ class Publisher:
 EVAL_ID = re.compile(r"(\d+)\.json")
 
 
+def _finite(value: Any) -> Any:
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _finite(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_finite(v) for v in value]
+    return value
+
+
 def _dumps(doc: Any) -> bytes:
-    return json.dumps(doc, default=_json_default).encode()
+    return json.dumps(_finite(doc), default=_json_default, allow_nan=False).encode()
 
 
 def preview() -> None:
