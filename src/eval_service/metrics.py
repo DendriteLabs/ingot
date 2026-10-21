@@ -46,7 +46,8 @@ class FinalHead:
     def logprobs(self, h: torch.Tensor) -> torch.Tensor:
         h = h.float()
         h = h * torch.rsqrt(h.pow(2).mean(-1, keepdim=True) + self.eps) * (1.0 + self.norm)
-        return torch.log_softmax((h.to(torch.bfloat16) @ self.head.T).float(), -1)
+        logits = torch.mm(h.to(torch.bfloat16), self.head.T, out_dtype=torch.float32)
+        return torch.log_softmax(logits, -1)
 
 
 def heads(models: dict[str, Path], devices: list[str]) -> dict[str, dict[str, FinalHead]]:
