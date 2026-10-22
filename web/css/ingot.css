@@ -167,7 +167,6 @@ main { display: flex; flex-direction: column; gap: 64px; padding-top: 56px; padd
 .lineage .gain { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--accent-ink); }
 .kings .empty { display: grid; place-items: center; }
 .kings .chart > .empty { height: 280px; }
-.lineage > .empty { flex: 1; }
 @media (max-width: 960px) { .kings { grid-template-columns: minmax(0, 1fr); } .lineage { height: auto; } }
 @media (max-width: 560px) { .lineage .meta-line { white-space: normal; } }
 

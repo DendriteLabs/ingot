@@ -118,26 +118,24 @@ function kingSteps() {
 const numeralOf = (k) => (k.name === "GENESIS" ? "genesis" : k.name.split("-")[1]);
 
 function renderLineage() {
-  // the kings as a stack of stamps, newest on top; at the bottom genesis, the stock quant every
-  // king is measured against
-  const kings = kingSteps();
-  if (!kings.length) {
-    mount($("lineage"), el("div", { class: "empty" }, "no kings yet."));
-    return;
-  }
+  const { genesis } = ROUNDS[selectedRound];
+  const kings = kingSteps().filter((k) => k.submission_id);
   const current = kings.at(-1);
   const rows = kings.slice().reverse().map((k) => {
     const url = k.hf_repo ? hubUrl(k.hf_repo) : null;
-    const genesis = k.step == null;
-    return el("li", { class: k === current ? "current" : genesis ? "genesis" : "" },
-      el("span", { class: "numeral" }, genesis ? "" : numeralOf(k)),
+    return el("li", { class: k === current ? "current" : "" },
+      el("span", { class: "numeral" }, numeralOf(k)),
       el("span", { class: "who" },
-        el("span", { class: "name" }, url ? link(url, genesis ? "Genesis" : k.name, { title: k.hf_repo }) : k.name),
-        el("span", { class: "meta-line" }, genesis ? "the genesis quantization" : `crowned ${fmtRelative(k.crowned_at)}`)),
-      genesis
-        ? el("span", { class: "gain baseline" }, "baseline")
-        : el("span", { class: "gain", title: `${k.gain.toFixed(2)}% closer to the original ${state.teacher} than the genesis quantization` }, `${k.gain.toFixed(1)}%`));
+        el("span", { class: "name" }, url ? link(url, k.name, { title: k.hf_repo }) : k.name),
+        el("span", { class: "meta-line" }, `crowned ${fmtRelative(k.crowned_at)}`)),
+      el("span", { class: "gain", title: `${k.gain.toFixed(2)}% closer to the original ${state.teacher} than ${genesis.versus}` }, `${k.gain.toFixed(1)}%`));
   });
+  rows.push(el("li", { class: current ? "genesis" : "current" },
+    el("span", { class: "numeral" }),
+    el("span", { class: "who" },
+      el("span", { class: "name" }, link(hubUrl(genesis.repo), genesis.name, { title: genesis.repo })),
+      el("span", { class: "meta-line" }, `genesis · ${genesis.about}`)),
+    el("span", { class: "gain baseline" }, "baseline")));
   mount($("lineage"), el("ol", { "aria-label": "The kings, newest first" }, ...rows));
 }
 
