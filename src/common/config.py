@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     # seeds the fingerprint projections: a new secret needs a freshly seeded bank
     dedup_secret: str = ""
     dedup_device: str = "cuda:0"
-    # eval box: the teacher served by another box (ingot-teacher-server); empty = its own GPUs
+    # Comma-separated: several tunnels to it, used in turn (pm2 INGOT_TEACHER_TUNNELS)
     teacher_url: str = ""
     teacher_port: int = 9300
     # one vLLM server per listed GPU; the teacher's are the teacher server's on its own box, or the

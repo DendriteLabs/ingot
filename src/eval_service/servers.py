@@ -384,10 +384,14 @@ class LlamaGroup:
 class RemoteGroup:
     """The teacher served by another box (ingot-teacher-server, through a tunnel): its answers come
     over HTTP and each request's hidden states are downloaded into the local states dir, where the
-    comparison reads them as it reads a local server's."""
+    comparison reads them as it reads a local server's. `url` may list several comma-separated
+    tunnels to the same server; each request and its download take the next one in turn."""
 
     def __init__(self, url: str, model_dir: Path) -> None:
-        self.url, self.model_dir = url.rstrip("/"), model_dir
+        self.urls = [u.strip().rstrip("/") for u in url.split(",") if u.strip()]
+        self.url, self.model_dir = self.urls[0], model_dir
+        self._turn = itertools.cycle(self.urls)
+        self._lock = threading.Lock()
         self.dir = HIDDEN_STATES_DIR / "remote"
         self.dir.mkdir(parents=True, exist_ok=True)
 
@@ -399,8 +403,9 @@ class RemoteGroup:
         raise TimeoutError(f"the remote teacher at {self.url} is not healthy")
 
     def alive(self) -> bool:
+        """Every tunnel answers: a dead one would fail every request sent its way."""
         with contextlib.suppress(httpx.HTTPError):
-            return httpx.get(f"{self.url}/health", timeout=5).status_code == 200
+            return all(httpx.get(f"{u}/health", timeout=5).status_code == 200 for u in self.urls)
         return False
 
     def preemptions(self) -> float:
@@ -413,8 +418,10 @@ class RemoteGroup:
         self, prompt: list[int], max_tokens: int, seed: int, force: list[int] | None = None
     ) -> tuple[list[int], str]:
         body = {"prompt": prompt, "max_tokens": max_tokens, "seed": seed, "force": force}
+        with self._lock:
+            url = next(self._turn)
         with timing.stages.timed("teacher request"):
-            resp = httpx.post(f"{self.url}/complete", json=body, timeout=None)
+            resp = httpx.post(f"{url}/complete", json=body, timeout=None)
         resp.raise_for_status()
         out = resp.json()
         path = str(self.dir / f"{uuid.uuid4().hex}.safetensors")
@@ -423,7 +430,7 @@ class RemoteGroup:
         try:
             with (
                 timing.stages.timed("teacher download"),
-                httpx.stream("GET", f"{self.url}/states/{out['states']}", timeout=None) as r,
+                httpx.stream("GET", f"{url}/states/{out['states']}", timeout=None) as r,
             ):
                 r.raise_for_status()
                 with open(path, "wb") as f:

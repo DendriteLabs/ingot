@@ -120,3 +120,29 @@ def test_a_local_teacher_needs_gpus(tmp_path, monkeypatch):
     finally:
         servers._groups.clear()
         settings.cache_clear()
+
+
+def test_requests_take_the_tunnels_in_turn(remote, tmp_path):
+    url, serving, _ = remote
+    # a second "tunnel": another endpoint whose server writes into the same states dir
+    other = FakeTeacher(serving)
+    other.n = 100  # its state files must not collide with the first one's
+    handler = type("H2", (teacher_server.Handler,), {"teacher": other, "states_dir": serving})
+    second = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=second.serve_forever, daemon=True).start()
+    try:
+        url2 = f"http://127.0.0.1:{second.server_port}"
+        group = servers.RemoteGroup(f"{url}, {url2}/", tmp_path)
+        assert group.urls == [url, url2] and group.alive()
+        for n in range(4):
+            tokens, path = group.complete([n + 1], 2, seed=n)
+            assert tokens == [7, 7] and Path(path).read_bytes() == bytes([n + 1]) * 1000
+            servers.discard(path)
+        assert other.n == 102, "every other request went to the second tunnel"
+    finally:
+        second.shutdown()
+
+
+def test_a_dead_tunnel_makes_the_teacher_unhealthy(remote, tmp_path):
+    url, _, _ = remote
+    assert not servers.RemoteGroup(f"{url},http://127.0.0.1:9", tmp_path).alive()

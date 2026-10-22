@@ -18,12 +18,13 @@ function loadEnv() {
 }
 
 // direction "-R" (run on the central box, pushes its port to the target) or "-L" (pulls the
-// target's port here); hostKey and portKey name the .env entries
-function tunnel(name, direction, hostKey, portKey) {
+// target's port here); hostKey and portKey name the .env entries; offset moves the near end's port
+function tunnel(name, direction, hostKey, portKey, offset = 0) {
   const env = loadEnv();
   const host = env[hostKey];
   const port = env[portKey];
   if (!host || !port) throw new Error(`${name}: set ${hostKey} and ${portKey} in .env`);
+  const near = Number(port) + offset;
   return {
     name,
     script: "ssh",
@@ -36,7 +37,7 @@ function tunnel(name, direction, hostKey, portKey) {
       // the teacher's hidden states are hundreds of MB per sample; AES-GCM moved 981 MB/s on one
       // stream between the boxes, the default chacha20 852
       "-c", "aes128-gcm@openssh.com",
-      direction, `127.0.0.1:${port}:127.0.0.1:${port}`,
+      direction, `127.0.0.1:${near}:127.0.0.1:${port}`,
       host,
     ],
     autorestart: true,
@@ -44,4 +45,4 @@ function tunnel(name, direction, hostKey, portKey) {
   };
 }
 
-module.exports = { tunnel };
+module.exports = { tunnel, loadEnv };
