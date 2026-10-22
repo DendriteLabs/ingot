@@ -1,5 +1,6 @@
-// Pre-eval box: the teacher for an eval box without teacher GPUs, on INGOT_TEACHER_GPUS, served on
-// 127.0.0.1:INGOT_TEACHER_PORT for ingot-teacher-tunnel.
+// Teacher box: the teacher for an eval box without teacher GPUs, on INGOT_TEACHER_GPUS, served on
+// 127.0.0.1:INGOT_TEACHER_PORT for ingot-teacher-tunnel; its workers row goes through
+// ingot-teacher-db-tunnel.
 const path = require("path");
 
 module.exports = {

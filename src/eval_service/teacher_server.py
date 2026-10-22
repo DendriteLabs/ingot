@@ -1,7 +1,8 @@
 """Runs on the box that hosts the teacher for an eval box without teacher GPUs: the teacher's vLLM
 servers on INGOT_TEACHER_GPUS behind one localhost endpoint, which the eval box reaches through its
 tunnel (INGOT_TEACHER_URL there). A request's hidden states wait in /dev/shm until the eval box
-downloads them once; the download deletes them."""
+downloads them once; the download deletes them. It shows in the workers table as teacher_server,
+through the central Postgres (ingot-teacher-db-tunnel)."""
 
 from __future__ import annotations
 
@@ -14,9 +15,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Protocol
 
+import psycopg
 from loguru import logger as log
 
-from common import models
+from common import db, models
 from common.config import chain_spec, settings
 from eval_service import config, servers
 
@@ -96,8 +98,19 @@ def _sweep_abandoned() -> None:
             log.info("{} state files no eval fetched swept", swept)
 
 
+def _heartbeat(link: db.Link, worker: str) -> None:
+    # the database being down must not stop the teacher serving the eval box
+    while True:
+        time.sleep(config.TEACHER_HEARTBEAT_S)
+        try:
+            db.heartbeat(link.conn(), worker)
+        except psycopg.Error as exc:
+            log.warning("teacher heartbeat failed: {}", exc)
+
+
 def main() -> None:
     s, spec = settings(), chain_spec()
+    link = db.Link(db.connect())  # first, so a database that is down fails before the slow setup
     gpus = s.gpus("teacher")
     if not gpus:
         raise SystemExit("INGOT_TEACHER_GPUS is empty: the GPUs this box serves the teacher on")
@@ -116,7 +129,10 @@ def main() -> None:
         shutil.disk_usage("/dev/shm").free,
     )
     threading.Thread(target=_sweep_abandoned, daemon=True).start()
+    worker = db.register_worker(link.conn(), "teacher_server")
+    threading.Thread(target=_heartbeat, args=(link, worker), daemon=True).start()
     try:
         server.serve_forever()
     finally:
         group.stop()
+        db.offline_quietly(link, worker)

@@ -46,5 +46,7 @@ PROGRESS_CHUNKS = 20  # how often a running eval writes samples_done for the das
 # A state file no eval fetched in this long was abandoned (its eval died); the teacher server
 # sweeps such files, /dev/shm being RAM.
 STATES_TTL_S = 3600
+# how often the teacher server touches its workers row
+TEACHER_HEARTBEAT_S = 30
 # how often a running eval logs its per-stage timings (eval_service.timing)
 TIMING_REPORT_S = 60.0
