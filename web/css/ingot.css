@@ -125,7 +125,7 @@ main { display: flex; flex-direction: column; gap: 64px; padding-top: 56px; padd
 .stamp-tab small.open { color: var(--brass); opacity: 1; }
 .stamp-tab:hover { color: var(--stamp-fg); }
 .stamp-tab[aria-selected="true"] { border-bottom-color: var(--brass); }
-.stamp.closed .stamp-king, .stamp.closed .stamp-line b { color: var(--zinc); }
+.stamp.closed .stamp-king, .stamp.closed .stamp-line b { color: var(--stamp-dim); }
 .stamp.closed .pixels { opacity: 0.45; }
 .stamp-label { color: var(--stamp-dim); opacity: 0.8; }
 .stamp-line { margin-top: 18px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--stamp-dim); }
