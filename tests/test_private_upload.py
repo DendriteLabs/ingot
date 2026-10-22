@@ -10,6 +10,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
+import pytest
 from botocore.exceptions import ClientError
 from nacl.signing import SigningKey
 
@@ -29,6 +30,9 @@ from private_store.contracts import (
 from private_store.crypto import MailboxCipher, encode_ss58_public_key
 from private_store.digests import model_digest_from_inventory
 from private_store.storage import MailboxStore, R2UploadController
+
+# the tests below declare fp8, which chain.toml has closed
+pytestmark = pytest.mark.usefixtures("fp8_open")
 
 BUCKET, MAILBOX = "private-models", "mailbox"
 SUBMISSION_KEY = SigningKey(b"s" * 32)
@@ -145,7 +149,7 @@ class FakeGateway:
 
 
 def make_deps(s3: FakeS3, gateway: FakeGateway | None = None) -> controller.Deps:
-    spec = chain_spec()
+    spec = signals.chain_spec()  # the open pair the activations were checked against
     return controller.Deps(
         r2=R2,
         spec=spec,
@@ -306,7 +310,8 @@ def test_a_spent_hotkey_is_refused_at_verification(conn):
 def test_parked_multipart_bytes_over_the_limit_close_and_purge_the_upload(conn):
     s3, gateway = FakeS3(), FakeGateway()
     deps = make_deps(s3, gateway)
-    deps.spec = replace(deps.spec, upload_limits={("qwen38_27b", "fp8"): 1000})
+    fp8 = replace(deps.spec.pair("qwen38_27b", "fp8"), upload_limit=1000)
+    deps.spec = replace(deps.spec, quants={**deps.spec.quants, ("qwen38_27b", "fp8"): fp8})
     prefix = model_prefix(RID)
     assert signals.handle(conn, [activate(block=100)]) == 1
     assert controller.tick(conn, deps)
@@ -372,3 +377,84 @@ def test_the_committed_digest_is_what_the_validator_rehashes_at_download(tmp_pat
     assert digest == snapshot_digest(tmp_path) == upload(FakeS3(), model_prefix(RID))
     (tmp_path / "model.safetensors").write_bytes(b"swapped")
     assert snapshot_digest(tmp_path) != digest
+
+
+def test_an_activate_for_a_closed_pair_gets_no_credentials(conn, monkeypatch):
+    monkeypatch.setattr(signals, "chain_spec", chain_spec)  # fp8 closed, q2 open
+    s3 = FakeS3()
+    deps = make_deps(s3)
+    assert signals.handle(conn, [activate(block=100)]) == 0
+    assert conn.execute("SELECT count(*) AS n FROM private_registrations").fetchone()["n"] == 0
+    assert not controller.tick(conn, deps)
+    assert (MAILBOX, mailbox_object_key(RID, 1)) not in s3.objects
+
+
+def test_a_gguf_registration_accepts_one_gguf_and_refuses_config_json(conn, monkeypatch):
+    monkeypatch.setattr(signals, "chain_spec", chain_spec)  # q2 open
+    s3 = FakeS3()
+    deps = make_deps(s3)
+    assert signals.handle(conn, [activate(block=100, quant="q2")]) == 1
+    controller.tick(conn, deps)
+    prefix = registration(conn)["model_prefix"]
+    digest = upload(s3, prefix, {"model.gguf": b"GGUF-bytes"})
+    signals.handle(conn, [ready(digest, block=200)])
+    controller.tick(conn, deps)
+    controller.tick(conn, deps)
+    assert registration(conn)["state"] == "SUBMITTED"
+    sub = db.one(conn, "SELECT family, quant FROM submissions")
+    assert (sub["family"], sub["quant"]) == ("qwen38_27b", "q2")
+
+    conn.execute("UPDATE submissions SET state = 'INVALID', error = 'x'")
+    controller.sweep(conn, deps)
+    assert signals.handle(conn, [activate(block=300, quant="q2")]) == 1
+    controller.tick(conn, deps)
+    prefix = registration(conn)["model_prefix"]
+    digest = upload(s3, prefix, {"model.gguf": b"GGUF-other", "config.json": b"{}"})
+    signals.handle(conn, [ready(digest, block=400)])
+    controller.tick(conn, deps)
+    controller.tick(conn, deps)
+    reg = registration(conn)
+    assert reg["state"] == "FAILED" and "config.json" in reg["fault_message"]
+
+
+def closed(conn: db.Conn, deps: controller.Deps, s3: FakeS3) -> None:
+    """The registration failed as closed: attempt given back, no credentials or bytes left."""
+    reg = registration(conn)
+    assert (reg["state"], reg["fault_message"], reg["extra_attempts"]) == ("FAILED", "closed", 1)
+    assert (MAILBOX, mailbox_object_key(RID, 1)) not in s3.objects, "no credentials to fetch"
+    assert not [k for b, k in s3.objects if b == BUCKET], "uploaded bytes removed"
+    assert s3.status(RID)["step"] == "failed — quant closed"
+    assert db.one(conn, "SELECT count(*) AS n FROM submissions")["n"] == 0
+
+
+def test_an_activation_in_flight_when_its_quant_closes_gets_no_credentials(conn):
+    s3 = FakeS3()
+    deps = make_deps(s3)
+    assert signals.handle(conn, [activate(block=100)]) == 1, "fp8 open at activation"
+    q2_open = replace(deps, spec=chain_spec())
+    assert controller.tick(conn, q2_open)
+    closed(conn, q2_open, s3)
+    assert not controller.tick(conn, q2_open)
+
+
+def test_credentials_issued_before_the_quant_closed_are_revoked(conn):
+    s3, gateway = FakeS3(), FakeGateway()
+    deps = make_deps(s3, gateway)
+    assert signals.handle(conn, [activate(block=100)]) == 1
+    assert controller.tick(conn, deps), "credentialed while fp8 was open"
+    upload(s3, registration(conn)["model_prefix"])
+    assert controller.sweep_credentialed(conn, replace(deps, spec=chain_spec())) == 1
+    assert gateway.revoked == ["tok-1"]
+    closed(conn, deps, s3)
+
+
+def test_an_upload_ready_when_its_quant_closes_is_not_submitted(conn):
+    s3, gateway = FakeS3(), FakeGateway()
+    deps = make_deps(s3, gateway)
+    assert signals.handle(conn, [activate(block=100)]) == 1
+    assert controller.tick(conn, deps)
+    digest = upload(s3, registration(conn)["model_prefix"])
+    assert signals.handle(conn, [ready(digest, block=200)]) == 1
+    assert controller.tick(conn, replace(deps, spec=chain_spec()))
+    assert gateway.revoked == ["tok-1"]
+    closed(conn, deps, s3)

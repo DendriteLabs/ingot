@@ -7,7 +7,6 @@ import json
 import threading
 import time
 from collections.abc import Callable
-from datetime import timedelta
 from pathlib import Path
 
 from loguru import logger as log
@@ -23,12 +22,6 @@ Upload = Callable[[str, bytes], str | None]
 _ONE_AT_A_TIME = (
     "EXISTS (SELECT 1 FROM submissions WHERE state IN ('WON', 'CROWNING')"
     " OR (state = 'EVALUATING' AND lease_until > now()))"
-)
-
-# CROWNED goes at once too: the newest KEEP_KINGS kings are kept by sweep.
-POLICY = cache.Policy(
-    newest=((frozenset({states.FAILED}), config.KEEP_FAILED),),
-    after=dict.fromkeys((states.LOST, states.CROWNED), timedelta(0)),
 )
 
 
@@ -47,7 +40,7 @@ def run_once(
 ) -> bool:
     conn = link.conn()
     db.heartbeat(conn, worker, queued=states.UNIQUE)
-    cache.sweep(conn, s.model_cache_dir, POLICY, keep_kings=config.KEEP_KINGS)
+    cache.sweep(conn, s.model_cache_dir)
     row = db.claim(
         conn,
         worker=worker,
@@ -58,7 +51,7 @@ def run_once(
     )
     if row is None:
         return False
-    king = db.current_king(conn)
+    king = db.current_king(conn, row["family"], row["quant"])
     seed = row["block_hash"] or str(row["id"])
     started = time.monotonic()
     drawn = data.draw(seed, config.SAMPLES_PER_DOMAIN, fits)
@@ -92,9 +85,17 @@ def run_once(
         # the duel ran for hours: the connection it started with may be gone by now
         conn = link.conn(check=True)
         if isinstance(exc, servers.ServerExited) and exc.gpu in s.gpus("challenger"):
-            _does_not_load(conn, upload, row, eval_id, f"the model does not load: {exc.reason}")
+            _does_not_load(conn, upload, row, eval_id, f"the model does not run: {exc.reason}")
             return True
         log.exception("eval {} crashed", eval_id)
+        if isinstance(exc, servers.ServerExited) and exc.gpu in s.gpus("king"):
+            # the king's model failed, not this challenger: back in line, no attempt spent
+            conn.execute(
+                "UPDATE evals SET error = %s, finished_at = now() WHERE id = %s",
+                (f"the king's server failed: {exc.reason}", eval_id),
+            )
+            db.finish(conn, row["id"], states.UNIQUE, "the king's server failed; queued again")
+            return True
         conn.execute(
             "UPDATE evals SET error = %s, finished_at = now() WHERE id = %s", (str(exc), eval_id)
         )
@@ -107,6 +108,9 @@ def run_once(
             max_attempts=config.MAX_ATTEMPTS,
         )
         return True
+    finally:
+        # the teacher stays loaded; the king and challenger free their GPUs until the next eval
+        servers.release("king", "challenger")
     scored = time.monotonic()
     conn = link.conn(check=True)
     results = s.eval_work_dir / "results" / f"{eval_id}.jsonl"
@@ -198,8 +202,10 @@ def main() -> None:
         data.row_count,
         servers.sweep(),
     )
-    forever(
-        lambda: run_once(
+
+    def tick() -> bool:
+        db.release_closed(link.conn(), spec)
+        return run_once(
             link,
             worker=worker,
             teacher=teacher,
@@ -207,7 +213,10 @@ def main() -> None:
             data=data,
             s=s,
             fits=fits,
-        ),
+        )
+
+    forever(
+        tick,
         idle_s=config.IDLE_S,
         on_stop=lambda: stop(link, worker),
     )

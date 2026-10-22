@@ -4,6 +4,7 @@ tokens, and both are measured against the teacher on the answer tokens; then the
 from __future__ import annotations
 
 import json
+import math
 import queue
 import shutil
 import threading
@@ -51,9 +52,31 @@ def needed(king: Distance) -> Distance:
 
 
 def won(challenger: Distance, king: Distance) -> bool:
-    """The challenger must be closer to the teacher on both measures, each by its margin."""
+    """The challenger must be closer to the teacher on both measures, each by its margin. A model
+    whose score is not finite diverged (inf, NaN, or it left the teacher's answer): a diverged
+    challenger loses, and a diverged king loses to any challenger that did not. NaN compares
+    False, so without this a king that diverges on some inputs could never be beaten."""
+    if not _finite(challenger):
+        return False
+    if not _finite(king):
+        return True
     bar = needed(king)
     return king.kl - challenger.kl >= bar.kl and king.dist - challenger.dist >= bar.dist
+
+
+def _finite(d: Distance) -> bool:
+    return math.isfinite(d.kl) and math.isfinite(d.dist)
+
+
+DIVERGED = Distance(kl=math.inf, dist=math.inf)
+
+
+class LeftAnswer(ValueError):
+    """A model read the teacher's answer and did not reproduce it: the model's own doing."""
+
+    def __init__(self, role: str, message: str) -> None:
+        self.role = role
+        super().__init__(message)
 
 
 Scorer = Callable[..., Duel]  # (teacher, challenger, king, samples, *, on_progress=None)
@@ -120,10 +143,14 @@ class _Evaluation:
         self.preemptions_at_start = self._preemptions()
         self.total, self.done, self.lock = total, 0, threading.Lock()
         self.on_progress = on_progress
+        self.diverged: set[str] = set()
 
     def run(self, samples: Sequence[Sample]) -> list[Result]:
         """The results of the samples that went through. A sample that fails is logged and left
-        out; more than MAX_FAILED_SAMPLES of them, or none scored at all, ends the eval."""
+        out; more than MAX_FAILED_SAMPLES of them, or none scored at all, ends the eval. A king
+        or challenger that left the teacher's answer is marked diverged (self.diverged): the
+        sample is left out for every role, so a model could otherwise shed the prompts it does
+        worst on, and the king's with them."""
         timing.stages.reset()
         pool = ThreadPoolExecutor(config.WORKERS)
         results: list[Result] = []
@@ -139,8 +166,12 @@ class _Evaluation:
             for sample, future in zip(samples, futures, strict=True):
                 try:
                     results.append(future.result())
+                except servers.ServerExited:
+                    raise  # a dead model server ends the eval; main.py blames its GPU's model
                 except Exception as exc:
                     failed += 1
+                    if isinstance(exc, LeftAnswer) and exc.role in ("king", "challenger"):
+                        self.diverged.add(exc.role)
                     log.warning("sample {} failed ({} so far): {}", sample.id, failed, exc)
                     if failed > config.MAX_FAILED_SAMPLES:
                         raise RuntimeError(f"{failed} samples failed, the last: {exc}") from exc
@@ -158,7 +189,10 @@ class _Evaluation:
         return results
 
     def distance(self, results: list[Result], role: str) -> Distance:
-        """Token-weighted means over all samples the role read."""
+        """Token-weighted means over all samples the role read; DIVERGED for a role that left
+        the teacher's answer on any sample."""
+        if role in self.diverged:
+            return DIVERGED
         sums = [by_role[role] for by_role, _ in results if role in by_role]
         return Distance(
             kl=sum(s.kl for s in sums) / sum(s.predictions for s in sums),
@@ -220,7 +254,7 @@ class _Evaluation:
             raise errors[0]
         for role, read in reads.items():
             if read != answer:
-                raise ValueError(f"{sample.id}: the {role} left the teacher's answer")
+                raise LeftAnswer(role, f"{sample.id}: the {role} left the teacher's answer")
 
     def _compare(
         self, prompt: list[int], answer: list[int], paths: dict[str, str]
@@ -233,12 +267,13 @@ class _Evaluation:
             # the last answer token is never fed back in, so no server wrote a row for it
             with timing.stages.timed("compare load"):
                 states = {
-                    role: metrics.load_states(p, prompt + answer[:-1]) for role, p in paths.items()
+                    role: metrics.load_states(p, prompt + answer[:-1], len(prompt) - 1)
+                    for role, p in paths.items()
                 }
             with timing.stages.timed("compare math"):
                 return (
                     self.compare_on[dev]
-                    .submit(metrics.compare, states, self.heads[dev], answer, len(prompt), dev)
+                    .submit(metrics.compare, states, self.heads[dev], answer, dev)
                     .result()
                 )
         finally:

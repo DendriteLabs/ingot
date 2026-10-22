@@ -1,32 +1,45 @@
-"""Insert the genesis king so the first challenger has something to beat.
+"""Insert a quant's genesis king so its first challenger has something to beat.
 
-    uv run scripts/create_genesis.py
+    uv run scripts/create_genesis.py [--quant q2]
 
-Reads the genesis repo from chain.toml. Inserts genesis into an empty kings table, or points the
-existing genesis row at it while no challenger has been crowned.
+Reads the pair (the open one by default) and its genesis from chain.toml. Inserts that genesis,
+or points the pair's existing genesis row at it while no challenger of the pair has been crowned.
 """
 
 from __future__ import annotations
 
-from common import db
+import argparse
+
+from common import db, models
 from common.config import chain_spec
 
 
 def main() -> None:
     spec = chain_spec()
-    uri = f"{spec.genesis_repo}@{spec.genesis_revision}"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--quant", default=spec.quant)
+    quant = spec.pair(spec.family, parser.parse_args().quant)
+    pair = (quant.family, quant.name)
+    uri = models.genesis_uri(quant)
     conn = db.connect()
-    if conn.execute("SELECT 1 FROM kings WHERE submission_id IS NOT NULL LIMIT 1").fetchone():
-        print("a challenger has been crowned; genesis is history, nothing to do")
+    if conn.execute(
+        "SELECT 1 FROM kings WHERE submission_id IS NOT NULL AND family = %s AND quant = %s",
+        pair,
+    ).fetchone():
+        print(f"a {quant.name} challenger has been crowned; genesis is history, nothing to do")
         return
     if conn.execute(
-        "UPDATE kings SET model_uri = %s, hf_repo = %s WHERE submission_id IS NULL RETURNING id",
-        (uri, spec.genesis_repo),
+        "UPDATE kings SET model_uri = %s, hf_repo = %s"
+        " WHERE submission_id IS NULL AND family = %s AND quant = %s RETURNING id",
+        (uri, quant.genesis_repo, *pair),
     ).fetchone():
-        print(f"genesis king updated: {uri}")
+        print(f"{quant.name} genesis king updated: {uri}")
         return
-    conn.execute("INSERT INTO kings (model_uri, hf_repo) VALUES (%s, %s)", (uri, spec.genesis_repo))
-    print(f"genesis king: {uri}")
+    conn.execute(
+        "INSERT INTO kings (model_uri, hf_repo, family, quant) VALUES (%s, %s, %s, %s)",
+        (uri, quant.genesis_repo, *pair),
+    )
+    print(f"{quant.name} genesis king: {uri}")
 
 
 if __name__ == "__main__":

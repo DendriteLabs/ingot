@@ -249,7 +249,9 @@ class WeightClient:
             netuid=netuid,
             uids=uids,
             weights=weights,
-            wait_for_inclusion=False,
+            # without inclusion "success" only means submitted: an extrinsic the chain rejects
+            # (rate limit, version key) would be recorded as set and not retried
+            wait_for_inclusion=True,
             wait_for_finalization=False,
         )
         if isinstance(result, tuple):

@@ -1,11 +1,38 @@
 # What miners and the validator must agree on. Read by common.config.chain_spec().
 
-[genesis]
-repo = "dendriteholdings/Ingot-genesis-27B-FP8"
-revision = "d4f9316b9b7540670c329e9a98868586d5db3ae3"
-# model_validation/families/<family> pins the architecture and the genesis safetensors size
+[competition]
+# model_validation/families/<family> pins the architecture
 family = "qwen38_27b"
-quant = "fp8"
+# The one quantization open to miners. Activations for any other get no credentials; its kings
+# keep their reign until newer kings push them out of the paid slots.
+active_quant = "q2"
+
+# One competition per quantization a miner may declare. upload_limit is the largest upload
+# (bytes, all files); a crowned king is Ingot-<roman numeral>-<king_name>, numbered per quant.
+[quants.qwen38_27b.fp8]
+format = "safetensors"
+genesis_repo = "dendriteholdings/Ingot-genesis-27B-FP8"
+genesis_revision = "d4f9316b9b7540670c329e9a98868586d5db3ae3"
+upload_limit = 35_000_000_000
+king_name = "27B-FP8"
+
+[quants.qwen38_27b.q2]
+format = "gguf"
+# prism-ml/Ternary-Bonsai-2-27B-gguf@b072e1d Ternary-Bonsai-2-27B-PQ2_0.gguf, byte for byte
+genesis_repo = "dendriteholdings/Ingot-genesis-27B-Q2"
+genesis_revision = "88c0a49cdf41018703181cff534669e113323d67"
+genesis_file = "Ingot-genesis-27B-Q2.gguf"
+upload_limit = 8_000_000_000
+weight_limit = 7_206_168_928        # genesis file size
+king_name = "27B-Q2"
+# "full": quantization-error fingerprints against the teacher;
+# "hash": identical weight files only.
+dedup = "hash"
+# a king is its one .gguf; published with genesis's license files beside it
+publish_files = ["LICENSE", "NOTICE.txt"]
+# the vision projector a king's card links to (the eval scores the text model only): upstream's
+vision_repo = "prism-ml/Ternary-Bonsai-2-27B-gguf@b072e1d3b35a0a630cece372c2127528e0994386"
+vision_files = ["Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf", "Ternary-Bonsai-2-27B-mmproj-BF16.gguf"]
 
 [teacher]
 repo = "Qwen/Qwen3.8-27B"
@@ -21,21 +48,12 @@ split = "chungus"
 chain_generation = "ingot-mainnet-2"
 mailbox_url = "https://pub-e6aba013d13549e5a737273de761280f.r2.dev"
 
-[upload_limits]
-# The family.quantization pairs a miner may declare in r2activate, each with the largest upload
-# (bytes, all files) it allows. Genesis fp8 is 30.9 GB as a submission.
-qwen38_27b.fp8 = 35_000_000_000
-
-[king_names]
-# What a crowned king of each pair is called after Ingot-<roman numeral>-; the HF repo carries
-# the same name. Same pairs as [upload_limits].
-qwen38_27b.fp8 = "27B-FP8"
-
 [files]
 # A submission is exactly config.json, model.safetensors.index.json and the top-level
 # *.safetensors shards the index names (names free). Any other file rejects it.
 required = ["config.json", "model.safetensors.index.json"]
-# Not part of a submission: genesis files added when a king is published to Hugging Face.
+# Not part of a submission: genesis files added when a safetensors king is published to Hugging
+# Face (a quant's own publish_files replaces this list).
 genesis = [
   "tokenizer.json",
   "tokenizer_config.json",

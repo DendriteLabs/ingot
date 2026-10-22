@@ -52,7 +52,10 @@ def _apply_activate(conn: Conn, signal: PrivateSignal) -> int:
     if signal.uid is None or guard.is_used(conn, signal.hotkey):
         return 0
     activation = parse_activation(signal.payload)
-    chain_spec().upload_limit(activation.family, activation.quant)
+    spec = chain_spec()
+    spec.pair(activation.family, activation.quant)
+    if spec.closed(activation.family, activation.quant):
+        raise ValueError(f"quant {activation.quant} is closed; open is {spec.quant}")
     pubkey = activation.pubkey.hex()
     rid = _rid(signal)
     inserted = conn.execute(

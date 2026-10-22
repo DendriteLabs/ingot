@@ -23,8 +23,9 @@ SAMPLES = [
 @pytest.mark.network
 def test_genesis_is_close_and_cannot_beat_itself():
     spec = chain_spec()
+    fp8 = spec.pair(spec.family, "fp8")  # vLLM serves the safetensors genesis
     teacher = models.snapshot(spec.teacher_repo, spec.teacher_revision)
-    genesis = models.snapshot(spec.genesis_repo, spec.genesis_revision)
+    genesis = models.snapshot(fp8.genesis_repo, fp8.genesis_revision)
     try:
         duel = run.duel(teacher, genesis, genesis, SAMPLES)
     finally:

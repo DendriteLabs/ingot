@@ -1,4 +1,7 @@
-"""Deletes downloaded private models a box no longer needs, judged by their submission state."""
+"""Deletes downloaded private models no service needs any more, judged by their submission state.
+Validation, dedup and eval sweep one shared folder by one policy, so a model each of them fetched
+is still there, verified, when the next one fetches it: a model stays while its submission waits
+or runs anywhere in the pipeline."""
 
 from __future__ import annotations
 
@@ -10,13 +13,27 @@ from pathlib import Path
 
 from loguru import logger as log
 
-from common import db
+from common import db, states
 
 
 @dataclass(frozen=True)
 class Policy:
     newest: tuple[tuple[frozenset[str], int], ...] = ()
     after: dict[str, timedelta] = field(default_factory=dict)
+
+
+KEEP_REJECTED = 3  # the newest INVALID or FAILED models, for a look
+KEEP_DUPLICATES = 3
+KEEP_KINGS = 2  # the newest kings: the next eval's king is the one on disk
+# Never a model still queued or running (VALID .. CROWNING); LOST at once; CROWNED at once
+# except the newest KEEP_KINGS kings.
+POLICY = Policy(
+    newest=(
+        (frozenset({states.INVALID, states.FAILED}), KEEP_REJECTED),
+        (frozenset({states.DUPLICATE}), KEEP_DUPLICATES),
+    ),
+    after=dict.fromkeys((states.LOST, states.CROWNED), timedelta(0)),
+)
 
 
 def doomed(
@@ -37,7 +54,9 @@ def doomed(
     return out
 
 
-def sweep(conn: db.Conn, cache_dir: Path, policy: Policy, keep_kings: int = 0) -> None:
+def sweep(
+    conn: db.Conn, cache_dir: Path, policy: Policy = POLICY, keep_kings: int = KEEP_KINGS
+) -> None:
     present = [p.name.removesuffix(".verified") for p in cache_dir.glob("*.verified")]
     if not present:
         return

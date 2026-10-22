@@ -68,3 +68,10 @@ def test_king_names():
         "Ingot-CXXIX-27B-FP8",
     ]
     assert name(2, "35B-FP4") == "Ingot-II-35B-FP4"
+
+
+def test_fp8_kings_keep_their_reign_next_to_new_q2_kings():
+    # the weight setter lists crowned kings of every quant together
+    fp8_yesterday, q2_today = king(1, days_ago=1), king(2, days_ago=0.1)
+    assert pay([fp8_yesterday, q2_today], registered(1, 2)) == {1: 0.2, 2: 0.2, 0: 0.6}
+    assert pay([king(1, days_ago=6), q2_today], registered(1, 2)) == {2: 0.2, 0: 0.8}

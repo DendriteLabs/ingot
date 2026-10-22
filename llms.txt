@@ -1,59 +1,101 @@
 # Ingot
 
 Ingot is a Bittensor subnet. A fixed open-source teacher model in BF16 is the reference.
-Miners submit quantized copies of it with the same architecture, no larger than genesis. The validator measures how
-far each copy drifts from the teacher, token by token and layer by layer, and crowns the copy
-that beats the current king by a margin. Every king is mirrored to Hugging Face under
-https://huggingface.co/dendriteholdings as `Ingot-<roman numeral>-27B-FP8`. The newest five
-kings share the emission for five days each; the rest burns to uid 0.
+Miners submit quantized copies of it with the same architecture, no larger than genesis. The
+validator measures how far each copy drifts from the teacher, token by token and layer by layer,
+and crowns the copy that beats the current king by a margin.
 
-The model to beat is always the newest king. Before the first coronation it is genesis.
+The subnet runs one quantization at a time, the open one (`chain.toml` `[competition]
+active_quant`). Each quantization has its own genesis, its own rules and its own line of kings,
+mirrored to Hugging Face under https://huggingface.co/dendriteholdings as
+`Ingot-<roman numeral>-<king_name>`, numbered per quantization: `27B-Q2` today, `27B-FP8` before
+it. The newest five kings of any quantization share the emission for five days each; the rest
+burns to uid 0.
+
+The model to beat is always the newest king of the open quantization. Before its first
+coronation it is that quantization's genesis.
 
 | | |
 | --- | --- |
 | Teacher | `Qwen/Qwen3.8-27B` (BF16) |
-| Genesis | `dendriteholdings/Ingot-genesis-27B-FP8` |
+| Open quantization | `qwen38_27b:q2`: ternary, one GGUF file |
+| q2 genesis | `dendriteholdings/Ingot-genesis-27B-Q2`, file `Ingot-genesis-27B-Q2.gguf` (7,206,168,928 bytes; `Ternary-Bonsai-2-27B-PQ2_0.gguf` of `prism-ml/Ternary-Bonsai-2-27B-gguf`, unchanged) |
+| q2 runtime | the PrismML llama.cpp fork at `e3de715` (tag `prism-b10777-e3de715`), the `llama-prism` submodule |
+| Closed | `qwen38_27b:fp8`, genesis `dendriteholdings/Ingot-genesis-27B-FP8` (rules kept below) |
 | Source of truth | `chain.toml` in this repo |
 
-## What a submission must be
+## What a q2 submission must be
+
+The rule in one line: **the genesis GGUF file with your own weight values.** Everything except
+the weight bytes is genesis's, compared against genesis's header pinned in the repo
+(`src/model_validation/families/qwen38_27b/genesis_q2.json`).
+
+- **One file.** Exactly one `*.gguf` at the top level (any name not starting with `.`), nothing
+  else: no tokenizer, README, `config.json`, `mmproj` or split GGUF. At most 8,000,000,000 bytes
+  uploaded, and the file at most 7,206,168,928 bytes, genesis's size.
+- **A clean container,** read by our own strict parser: GGUF v3; no duplicate keys or tensors;
+  tensors aligned and packed back to back with zero padding; each tensor exactly the bytes its
+  type and shape need; nothing after the last tensor.
+- **Genesis's metadata, all of it.** Every key with the same type and value, no key added: the
+  `qwen35` architecture, the tokenizer and chat template, and the `prism.hadamard.*` rotation
+  (which weights are stored rotated, block size, signs).
+- **Genesis's tensors.** The same 851 names and shapes, nothing added or missing. A tensor genesis
+  keeps unquantized (F32/BF16: norms, `ssm_a`, `ssm_conv1d`, `ssm_dt`, `ssm_norm`,
+  `ssm_alpha`, `ssm_beta`) keeps its type. A tensor genesis stores as PQ2_0 may use any accepted
+  type (PQ2_0, Q8_0, F16, BF16, F32), but at genesis's size no wider type fits, so in practice
+  every one stays PQ2_0.
+- **Ternary.** PQ2_0 stores each weight as a 2-bit code times its block's fp16 scale (128
+  weights per block); the codes are −1, 0 and +1. The fourth code (`11`, which the fork decodes as
+  +2) rejects the model.
+- **Sane values.** Every value is finite (no NaN, no infinity), and every weight is at most
+  10,000 in size once dequantized (a block's |scale| × its largest code, or a F32/F16/BF16 value
+  itself). Genesis peaks at 0.44 and 139; the cap only stops values the fork's fp16 paths would
+  overflow on.
+
+Your weight values are yours: retrain the ternary codes, re-fit the scales, tune the norm gains
+and the other unquantized values, fine-tune or distill from the teacher.
+
+`ingot check-model --path ./model.gguf` (or `scripts/validate_model.py --path ./model.gguf`) runs
+every check locally and prints each one.
+
+## What an fp8 submission must be (closed)
 
 - The genesis model: `config.json` equals genesis on every value except the free keys
   (`quantization_config.weight_block_size`, `quantization_config.modules_to_not_convert`,
   `transformers_version`, `use_cache`, `initializer_range`, `attention_dropout`), and holds no
   key genesis does not. `quant_method` is `fp8`.
-- The genesis tensors: every weight of `dendriteholdings/Ingot-genesis-27B-FP8` keeps its name and shape, nothing
-  is added; scale tensors are not compared to genesis, they follow your block size. In the text model a weight may be BF16 or F32, or FP8 E4M3 where genesis has it in FP8:
-  vLLM serves nothing else quantized (an FP8 `embed_tokens` does not load). The projections vLLM
-  fuses into one layer (`q/k/v_proj`, `gate/up_proj`, `in_proj_qkv/in_proj_z`,
-  `in_proj_b/in_proj_a`) are all FP8 or all unquantized. Tensors
-  under `model.visual.`, `mtp.` and `lm_head.` keep the genesis dtype (`lm_head` stays BF16: the
-  evaluator applies it itself to your last hidden state). An FP8 weight `x.weight` carries
-  `x.weight_scale_inv` shaped by your `weight_block_size` (two ints, 128 or larger), and
-  `modules_to_not_convert` lists every 2-D weight you left unquantized, in the text model and
-  the vision tower alike; the embeddings and `lm_head` aside, which vLLM never quantizes, and
-  norms and biases, which need no entry. vLLM builds an unlisted one as FP8 and does not load.
-  Every value is finite: a NaN or an infinity anywhere rejects the model. Weight values
-  are yours: quantize, fine-tune, distill, as you like.
+- The genesis tensors: every weight of `dendriteholdings/Ingot-genesis-27B-FP8` keeps its name and
+  shape, nothing is added; scale tensors are not compared to genesis, they follow your block size.
+  In the text model a weight may be BF16 or F32, or FP8 E4M3 where genesis has it in FP8: vLLM
+  serves nothing else quantized (an FP8 `embed_tokens` does not load). The projections vLLM fuses
+  into one layer (`q/k/v_proj`, `gate/up_proj`, `in_proj_qkv/in_proj_z`, `in_proj_b/in_proj_a`)
+  are all FP8 or all unquantized. Tensors under `model.visual.`, `mtp.` and `lm_head.` keep the
+  genesis dtype (`lm_head` stays BF16: the evaluator applies it itself to your last hidden
+  state). An FP8 weight `x.weight` carries `x.weight_scale_inv` shaped by your
+  `weight_block_size` (two ints, 128 or larger), and `modules_to_not_convert` lists every 2-D
+  weight you left unquantized, in the text model and the vision tower alike; the embeddings and
+  `lm_head` aside, which vLLM never quantizes, and norms and biases, which need no entry. vLLM
+  builds an unlisted one as FP8 and does not load. Every value is finite.
 - No larger than genesis: the tensors outside `model.visual.` and `mtp.` together hold at most
-  29,468,003,328 bytes, genesis's text model. Those two parts are shipped as genesis and
-  counted on neither side.
-- Exactly these files, all at the top level: `config.json`, `model.safetensors.index.json`
-  and the `*.safetensors` shards the index names (names are free). Any other file, including
-  the tokenizer, README or LICENSE, rejects the submission; the validator uses the genesis
-  copies, and a king is published with them added.
+  29,468,003,328 bytes, genesis's text model.
+- Exactly these files, all at the top level: `config.json`, `model.safetensors.index.json` and
+  the `*.safetensors` shards the index names (names are free). Every tensor is in exactly one
+  shard, the one the index names. Any other file rejects the submission; a king is published
+  with genesis's tokenizer and license added.
 
-`ingot check-model --path ./my-model` runs these checks locally. A rejected submission shows
-its reason in the status the validator publishes (below).
+A rejected submission shows its reason in the status the validator publishes (below).
 
 ## Your own quantization, not someone else's
 
 Before the evaluation the validator fingerprints your weights: what is left of them once every
 rearrangement that leaves the model's output unchanged is undone (permuted or rescaled
 neurons, heads and channels, moved norm gains, a permuted, rotated or rescaled residual stream)
-is your quantization error against the teacher. Independent quantizations make unrelated
-errors. The fingerprint is compared with genesis and with every earlier submission of other
-miners that passed this check; your own earlier models (same hotkey or coldkey) are never held
-against you.
+is your quantization error against the teacher. A q2 model is read exactly as the fork runs it,
+dequantized and taken out of its Hadamard rotation, and compared with the same BF16 teacher.
+Independent quantizations make unrelated errors. The fingerprint is compared with that
+quantization's genesis and with every earlier submission of other miners of the same
+quantization that passed this check; your own earlier models (same hotkey or coldkey) are never
+held against you.
 
 A submission is rejected as a duplicate, and its hotkey is spent, only when it is the same
 model as such a one: identical tensors, an error correlating with that model's at `COPY_CORR`
@@ -71,10 +113,10 @@ The evaluation dataset is the Hugging Face Parquet dataset and split named in `c
 `[dataset]`. The evaluator draws `SAMPLES_PER_DOMAIN` prompts from every domain, seeded by the
 block hash of your `r2ready` commitment. Inside a domain it spreads the draw as evenly as possible
 over the languages available there, then picks rows at random from each language; the seed makes
-the same draw reproducible on every validator (`eval_service/dataset.py`). The teacher answers each prompt
-(temperature 1.0, top_p 0.95, top_k 20, at most `MAX_TOKENS` tokens); the king and your model
-then read exactly the teacher's prompt and answer, in vLLM. Only the answer tokens are scored.
-For each model, per answer token:
+the same draw reproducible on every validator (`eval_service/dataset.py`). The teacher answers
+each prompt in vLLM (temperature 1.0, top_p 0.95, top_k 20, at most `MAX_TOKENS` tokens); the
+king and your model then read exactly the teacher's prompt and answer. Only the answer tokens are
+scored. For each model, per answer token:
 
 - KL: KL(teacher ‖ model) between the next-token distributions.
 - Distance: |h_model − h_teacher| / |h_teacher|, the hidden state's distance from the teacher's
@@ -83,15 +125,22 @@ For each model, per answer token:
 Lower is better. The teacher rereading its own answer gives the noise floor, recorded with
 every eval: batching alone makes two runs of the same model differ by about that much.
 
-The evaluator runs vLLM 0.31.0 on RTX PRO 6000 Blackwell GPUs (sm_120), one server per GPU:
-`--language-model-only --max-model-len 32768
---max-num-batched-tokens 32768 --no-enable-chunked-prefill --no-enable-prefix-caching
---mamba-ssm-cache-dtype float32 --gdn-prefill-backend triton`, plus a logits processor that
-forces the teacher's tokens and hidden-state extraction at `LAYERS` (`src/eval_service/servers.py`).
-FP8 GEMMs run on vLLM's CUTLASS block-scaled kernel, attention on FlashAttention. The evaluator
-applies the final norm (float32) and `lm_head` (BF16 weights, logits accumulated and kept in
-float32) itself from your own tensors and takes the log-softmax in float32
-(`src/eval_service/metrics.py`), so the next-token distribution scored is your model's.
+**q2 (GGUF)** models read the answer in `llama-states` (`src/eval_service/llama_states/`), a
+small program on the pinned fork's own library, one process per RTX PRO 6000 Blackwell GPU: one
+request at a time, flash attention, a 16-bit KV cache, passes of 2048 tokens, the hidden states
+after every 8th block taken by the fork's own layer capture. The evaluator rebuilds the
+next-token distribution from your last hidden state with your own `output_norm` and
+`output.weight`, dequantized exactly and with the fork's Hadamard rotation applied, in float32
+(`GgufHead`, `src/eval_service/metrics.py`); checked against the fork's own logits, the two agree
+to a KL of 0.000005. Run under the fork, the teacher itself lands at a KL of 0.00007 from the
+vLLM teacher: the engine difference is far below the margins.
+
+**fp8** models read it in vLLM 0.31.0, one server per GPU: `--language-model-only
+--max-model-len 32768 --max-num-batched-tokens 32768 --no-enable-chunked-prefill
+--no-enable-prefix-caching --mamba-ssm-cache-dtype float32 --gdn-prefill-backend triton`, plus a
+logits processor that forces the teacher's tokens and hidden-state extraction at `LAYERS`
+(`src/eval_service/servers.py`). The evaluator applies the final norm (float32) and `lm_head`
+(BF16 weights, logits kept in float32) itself from your own tensors.
 
 You win if your KL is lower than the king's by at least `KL_MARGIN` (1.5%) of the king's KL, and
 your distance lower than the king's by at least `DIST_MARGIN` (0.84%) of the king's distance, both
@@ -100,12 +149,18 @@ The margins are shares of the king's score, so the absolute bar shrinks as kings
 The margins, the sample count and the layers are in `src/eval_service/config.py`. A win makes
 you the new king immediately; a loss is final for that hotkey.
 
+A model that diverges loses: one that leaves the teacher's answer while reading it, or whose score
+comes out NaN or infinite on any sample. A diverged king loses to any challenger that did not
+diverge. A model that fails to load or stops responding during the eval is "the model does not
+run"; when it is the king's that fails, the challenger is queued again without losing an attempt.
+
 ## Who gets paid
 
-`src/common/reign.py`: the newest `SLOTS` (5) kings each receive
-`SHARE` (0.2) of the emission for `REIGN_DAYS` (5) after their coronation. A king stops
-earning when its reign is over or when five newer kings exist, whichever comes first. Whatever
-is not assigned goes to uid 0. One king: 20% to it, 80% burned. Five fresh kings: 20% each.
+`src/common/reign.py`: the newest `SLOTS` (5) kings, of any quantization, each receive
+`SHARE` (0.2) of the emission for `REIGN_DAYS` (5) after their coronation. A king stops earning
+when its reign is over or when five newer kings exist, whichever comes first. Whatever is not
+assigned goes to uid 0. One king: 20% to it, 80% burned. Five fresh kings: 20% each. Only the
+open quantization crowns new kings; a closed one's kings earn out their reign.
 
 A king whose uid is re-registered by another hotkey loses its share.
 
@@ -116,7 +171,10 @@ A king whose uid is re-registered by another hotkey loses its share.
   `MAX_UPLOAD_ATTEMPTS` (3) per hotkey (`src/chain_reader/config.py`).
 - A submission rejected as a duplicate spends the hotkey; no attempt is handed back.
 - A hotkey swap (same uid, same registration block, new hotkey) bars the new hotkey.
-- Identical model bytes cannot be submitted twice, by anyone.
+- Identical model bytes cannot be in the pipeline twice. A digest held by a submission that
+  failed (INVALID, FAILED) is free again.
+- If the open quantization changes while your submission waits, it ends FAILED with "closed":
+  no strike against your hotkey, and you get an extra attempt for the open one.
 
 ## Submitting a model
 
@@ -124,38 +182,51 @@ Your model never goes to a public URL. It is uploaded to the subnet's private bu
 becomes public if it wins.
 
 1. `r2activate:v2:<family>:<quant>:<base64url pubkey>` — you declare the model family and
-   quantization you upload (a pair listed in `chain.toml` `[upload_limits]`,
-   today only `qwen38_27b:fp8`); the CLI takes `--family` / `--quant`, defaulting to genesis. It
-   generates a one-time Ed25519 key and commits its public half on chain. An unlisted pair gets
-   no credentials. Your upload limit and the validation rules are those of the declared pair. The validator mints storage credentials scoped to your own
-   folder, encrypts them to that key and publishes them in a public mailbox.
-2. The CLI decrypts the credentials and uploads the model files.
+   quantization you upload: a pair listed in `chain.toml` `[quants]`, and only the open one
+   (`qwen38_27b:q2` today) gets credentials. The CLI takes `--family` / `--quant`, defaulting to
+   the open pair. It generates a one-time Ed25519 key and commits its public half on chain. Your
+   upload limit and the validation rules are those of the declared pair. The validator mints
+   storage credentials scoped to your own folder, encrypts them to that key and publishes them in
+   a public mailbox.
+2. The CLI decrypts the credentials and uploads the model files (for q2, `--path` may be the
+   `.gguf` file itself).
 3. `r2ready:v2:<model digest>` — freezes the upload. The digest is one sha256 over every file's
    path, size and sha256. The validator revokes the credentials, checks the file names and the
    upload limit, re-hashes every byte against the digest when it downloads the model, and
    queues the submission for validation and evaluation.
 
 Budgets: `UPLOAD_WINDOW_S` (24 h) from activate to ready; an upload is at most the
-`[upload_limits]` entry for the pair you declared (35 GB for `qwen38_27b.fp8`); going over
-it closes the upload and deletes it; bytes are kept `RETENTION_HOURS` (72) after they are no longer needed. Your status, including attempts
-left and the reason for any rejection, is published as plaintext at
-`<mailbox_url>/mailbox/v1/<registration_id>/status.json`; the CLI reads it for you.
+`upload_limit` of the pair you declared (8 GB for `qwen38_27b.q2`, 35 GB for `qwen38_27b.fp8`);
+going over it closes the upload and deletes it; bytes are kept `RETENTION_HOURS` (72) after they
+are no longer needed. Your status, including attempts left and the reason for any rejection, is
+published as plaintext at `<mailbox_url>/mailbox/v1/<registration_id>/status.json`; the CLI reads
+it for you.
 
 Local state lives in `./.ingot-miner/<hotkey>/`: `submission-key` must survive from
 activate to ready on the same machine; `upload-auth.json` is removed at ready.
+
+## A q2 king
+
+A crowned q2 king is published as `Ingot-<N>-27B-Q2` with its file renamed
+`Ingot-<N>-27B-Q2.gguf`, genesis's `LICENSE` and `NOTICE.txt`, and a card with its winning
+duel's scores, its gain over genesis, and how to run it: the fork at the commit Ingot scored it
+with (`llama-server -m Ingot-<N>-27B-Q2.gguf -ngl 99 -fa on --jinja`), and genesis's vision
+projector from `prism-ml/Ternary-Bonsai-2-27B-gguf` (`--mmproj Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf`) for image input, which Ingot does not
+score.
 
 ## The CLI
 
 ```
 uv sync && cp .env.example_miners .env         # INGOT_COLDKEY, INGOT_HOTKEY, netuid, network
 uv run ingot register                          # burned registration
-uv run ingot check-model --path ./my-model
-uv run ingot submit-private --path ./my-model    # activate → upload → ready
+uv run ingot check-model --path ./model.gguf
+uv run ingot submit-private --path ./model.gguf  # activate → upload → ready
 uv run ingot activate                          # the same, one step at a time
-uv run ingot upload-private --path ./my-model
+uv run ingot upload-private --path ./model.gguf
 uv run ingot ready --model-digest <hash>
 ```
 
 Every flag defaults to the matching `INGOT_*` value in `.env`. `--yes` skips the confirm
-prompts. The mailbox URL and the chain generation come from `chain.toml`; nothing else needs
-configuring.
+prompts. The mailbox URL, the chain generation and the open pair come from `chain.toml`; nothing
+else needs configuring. To run a model as the eval does, build the fork pinned in `llama-prism`
+(`bash scripts/build_llama.sh`).

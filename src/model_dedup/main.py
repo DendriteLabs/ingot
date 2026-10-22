@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable
-from datetime import timedelta
 from functools import partial
 from pathlib import Path
 from typing import Protocol
@@ -16,25 +15,15 @@ from loguru import logger as log
 from common import cache, db, guard, models, states
 from common.config import Settings, chain_spec, settings
 from common.loop import forever
-from model_dedup import config
+from model_dedup import config, files
 from model_dedup.bank import AUDIT, BANK, Bank
+from model_dedup.files import file_fingerprint, identical
 from model_dedup.verdict import Verdict, decide
 
 Fetch = Callable[[str, Path], Path]
 Fingerprint = Callable[[Path], dict]
 Upload = Callable[[str, bytes], str | None]
-_PASSED = (
-    states.UNIQUE,
-    states.EVALUATING,
-    states.WON,
-    states.LOST,
-    states.CROWNING,
-    states.CROWNED,
-)
-POLICY = cache.Policy(
-    newest=((frozenset({states.DUPLICATE}), config.KEEP_DUPLICATES),),
-    after=dict.fromkeys(_PASSED, timedelta(seconds=config.KEEP_UNIQUE_S)),
-)
+Judge = Callable[[dict, dict[str, dict]], Verdict]
 
 
 class FingerprintBank(Protocol):
@@ -62,9 +51,10 @@ def run_once(
     fingerprint: Fingerprint,
     fetch: Fetch = models.fetch,
     upload: Upload = models.upload_artifact,
+    judge: Judge = decide,
 ) -> bool:
     db.heartbeat(conn, worker, queued=states.VALID)
-    cache.sweep(conn, s.model_cache_dir, POLICY)
+    cache.sweep(conn, s.model_cache_dir)
     row = db.claim(
         conn, worker=worker, queued=states.VALID, running=states.DEDUPING, lease_s=config.LEASE_S
     )
@@ -77,7 +67,7 @@ def run_once(
     try:
         fp = fingerprint(fetch(row["model_uri"], s.model_cache_dir))
         shortlist = bank.shortlist(fp, hotkey=row["hotkey"], coldkey=row["coldkey"])
-        verdict = decide(fp, shortlist)
+        verdict = judge(fp, shortlist)
         bank.put(
             str(row["id"]),
             fp,
@@ -118,7 +108,7 @@ def run_once(
                 verdict.of,
                 verdict.corr,
                 verdict.copied_frac,
-                fp["rel_to_teacher"],
+                fp.get("rel_to_teacher"),
                 len(shortlist),
                 "; ".join(verdict.notes) or None,
                 time.perf_counter() - t0,
@@ -167,30 +157,43 @@ def _put_dedup_fail(upload: Upload, row: db.Row, doc: dict) -> None:
 
 
 def main() -> None:
-    from model_dedup.fingerprint import (  # torch: the dedup extra
-        VERSION,
-        fingerprint_dir,
-        key_id,
-        load_secret,
-    )
-
     s, spec = settings(), chain_spec()
-    secret = load_secret(s)
-    bank = Bank.connect(s)
-    if bank.genesis_scope() != (VERSION, key_id(secret)):
+    mode = spec.open.dedup
+    bank = Bank.connect(s, spec.quant, mode)
+    judge: Judge
+    if mode == "hash":
+        scope, fingerprint, judge = (files.VERSION, ""), file_fingerprint, identical
+    else:
+        from model_dedup.fingerprint import (  # torch: the dedup extra
+            VERSION,
+            fingerprint_dir,
+            key_id,
+            load_secret,
+        )
+
+        secret = load_secret(s)
+        scope, judge = (VERSION, key_id(secret)), decide
+        teacher_dir = models.snapshot(spec.teacher_repo, spec.teacher_revision)
+        fingerprint = partial(
+            fingerprint_dir, teacher_dir=teacher_dir, secret=secret, device=s.dedup_device
+        )
+    if bank.genesis_scope() != scope:
         raise SystemExit(
-            "the dedup bank has no genesis fingerprint under this secret and version;"
+            f"the {mode} dedup bank has no genesis fingerprint under this secret and version;"
             " run scripts/seed_dedup_bank.py"
         )
-    teacher_dir = models.snapshot(spec.teacher_repo, spec.teacher_revision)
-    fingerprint = partial(
-        fingerprint_dir, teacher_dir=teacher_dir, secret=secret, device=s.dedup_device
-    )
     link = db.Link()
     worker = db.register_worker(link.conn(), "model_dedup")
-    log.info("model dedup started — bank {} on {}", s.opensearch_index, s.dedup_device)
+    log.info("model dedup started ({}) — bank {} on {}", mode, bank.index, s.dedup_device)
+
+    def tick() -> bool:
+        db.release_closed(link.conn(), spec)
+        return run_once(
+            link.conn(), worker=worker, s=s, bank=bank, fingerprint=fingerprint, judge=judge
+        )
+
     forever(
-        lambda: run_once(link.conn(), worker=worker, s=s, bank=bank, fingerprint=fingerprint),
+        tick,
         idle_s=config.IDLE_S,
         on_stop=lambda: db.offline_quietly(link, worker),
     )

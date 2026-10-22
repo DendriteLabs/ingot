@@ -19,8 +19,6 @@ Check = Callable[..., str | None]
 Load = Callable[[str], Family]
 Upload = Callable[[str, bytes], str | None]
 
-POLICY = cache.Policy(newest=((frozenset({states.INVALID, states.FAILED}), config.KEEP_REJECTED),))
-
 
 def run_once(
     conn: db.Conn,
@@ -35,7 +33,7 @@ def run_once(
     upload: Upload = models.upload_artifact,
 ) -> bool:
     db.heartbeat(conn, worker, queued=states.SUBMITTED)
-    cache.sweep(conn, s.model_cache_dir, POLICY)
+    cache.sweep(conn, s.model_cache_dir)
     row = db.claim(
         conn,
         worker=worker,
@@ -47,8 +45,9 @@ def run_once(
         return False
     try:
         family = load(row["family"])
-        reason = check_files(list_files(row["model_uri"]), spec) or check(
-            fetch(row["model_uri"], s.model_cache_dir), spec=spec, family=family, quant=row["quant"]
+        pair = spec.pair(row["family"], row["quant"])
+        reason = check_files(list_files(row["model_uri"]), spec, pair.format) or check(
+            fetch(row["model_uri"], s.model_cache_dir), spec=spec, family=family, pair=pair
         )
     except Exception as exc:
         log.exception("validation of {} crashed", row["id"])
@@ -97,12 +96,17 @@ def _upload_fails(upload: Upload, row: db.Row, state: str, reason: str, barred: 
 def main() -> None:
     s, spec = settings(), chain_spec()
     link = db.Link()
-    for family, _quant in spec.upload_limits:
+    for family, _quant in spec.quants:
         pipeline.load(family)
     worker = db.register_worker(link.conn(), "model_validation")
-    log.info("model validation started — pairs {}", sorted(spec.upload_limits))
+    log.info("model validation started — pairs {}", sorted(spec.quants))
+
+    def tick() -> bool:
+        db.release_closed(link.conn(), spec)
+        return run_once(link.conn(), worker=worker, s=s, spec=spec)
+
     forever(
-        lambda: run_once(link.conn(), worker=worker, s=s, spec=spec),
+        tick,
         idle_s=config.IDLE_S,
         on_stop=lambda: db.offline_quietly(link, worker),
     )

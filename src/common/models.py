@@ -18,7 +18,7 @@ from typing import Any
 
 from loguru import logger as log
 
-from common.config import chain_spec, r2_settings, settings
+from common.config import Quant, r2_settings, settings
 from private_store.digests import verify_snapshot
 
 _PRIVATE_RE = re.compile(
@@ -32,8 +32,14 @@ def fetch(uri: str, cache_dir: Path) -> Path:
     match = _PRIVATE_RE.match(uri)
     if match:
         return _fetch_private(match["bucket"], match["prefix"] + "/", match["digest"], cache_dir)
-    repo, _, revision = uri.partition("@")
-    return snapshot(repo, revision or None)
+    repo, revision, file = _hub(uri)
+    return snapshot(repo, revision, allow_patterns=file)
+
+
+def genesis_uri(quant: Quant) -> str:
+    """repo@revision of a quant's genesis, with #file when it is one file of its repo."""
+    uri = f"{quant.genesis_repo}@{quant.genesis_revision}"
+    return f"{uri}#{quant.genesis_file}" if quant.genesis_file else uri
 
 
 def list_files(uri: str) -> list[str]:
@@ -43,8 +49,17 @@ def list_files(uri: str) -> list[str]:
         return bucket_keys(match["bucket"], match["prefix"] + "/")
     from huggingface_hub import HfApi
 
-    repo, _, revision = uri.partition("@")
-    return list(HfApi(token=_token()).list_repo_files(repo, revision=revision or None))
+    repo, revision, file = _hub(uri)
+    files = HfApi(token=_token()).list_repo_files(repo, revision=revision)
+    return [f for f in files if file is None or f == file]
+
+
+def _hub(uri: str) -> tuple[str, str | None, str | None]:
+    """repo@revision, or repo@revision#file for a model that is one file of its repo (a gguf
+    genesis next to its other quantizations)."""
+    rest, _, file = uri.partition("#")
+    repo, _, revision = rest.partition("@")
+    return repo, revision or None, file or None
 
 
 def safetensors_header(path: Path) -> dict[str, dict[str, Any]]:
@@ -103,20 +118,21 @@ def hub_layout(repo: str, revision: str | None = None) -> dict[str, tuple[str, t
     }
 
 
-def publish(model_dir: Path, repo_id: str, card: str) -> str:
-    """Mirror a king to a public Hugging Face repo, completed with the genesis tokenizer and
-    configs it was not required to ship: one commit after the repo's initial one. Returns the
-    repo url."""
+def publish(model_dir: Path, repo_id: str, card: str, pair: Quant) -> str:
+    """Mirror a king to a public Hugging Face repo, completed with the files of its quant's
+    genesis it was not allowed to ship (pair.publish_files): one commit after the repo's initial
+    one. A gguf king's one file is named after the repo. Returns the repo url."""
     from huggingface_hub import CommitOperationAdd, HfApi
 
     files: dict[str, str] = {}
     for path in sorted(model_dir.rglob("*")):
         name = path.relative_to(model_dir).as_posix()
         if path.is_file() and not any(fnmatch(name, p) for p in _UPLOAD_IGNORE):
+            if pair.format == "gguf" and name.endswith(".gguf"):
+                name = f"{repo_id.rsplit('/', 1)[-1]}.gguf"
             files[name] = str(path)
-    spec = chain_spec()
-    for name in spec.genesis_files:
-        files[name] = str(hub_file(spec.genesis_repo, name, spec.genesis_revision))
+    for name in pair.publish_files:
+        files[name] = str(hub_file(pair.genesis_repo, name, pair.genesis_revision))
     operations = [CommitOperationAdd(path_in_repo=n, path_or_fileobj=f) for n, f in files.items()]
     operations.append(CommitOperationAdd(path_in_repo="README.md", path_or_fileobj=card.encode()))
     api = HfApi(token=_token())
@@ -187,7 +203,8 @@ def _fetch_private(bucket: str, prefix: str, digest: str, cache_dir: Path) -> Pa
 
     dest = cache_dir / digest
     marker = cache_dir / f"{digest}.verified"
-    if marker.exists() and any(dest.glob("*.safetensors")):
+    # the marker is written only after the whole folder re-hashed to the digest
+    if marker.exists() and dest.is_dir() and any(dest.iterdir()):
         return dest
     shutil.rmtree(dest, ignore_errors=True)  # an unverified partial starts over
     dest.mkdir(parents=True)

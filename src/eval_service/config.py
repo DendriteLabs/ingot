@@ -1,3 +1,15 @@
+# The commit of the PrismML llama.cpp fork that runs q2 (gguf) models: llama-prism is
+# checked out here, so a bump moves both together.
+LLAMA_CPP_COMMIT = "e3de715222b2667c54a267441159a5729f11155e"  # tag prism-b10777-e3de715
+# A gguf model reads the teacher's answer in llama-states (scripts/build_llama.sh builds both),
+# one process per GPU, one request at a time, in passes of LLAMA_BATCH tokens.
+LLAMA_STATES = "build/llama_states/llama-states"
+LLAMA_BATCH = 2048
+# A read that takes longer than LLAMA_READ_S plus LLAMA_S_PER_1K per thousand tokens means a hung
+# process (genesis reads ~3k tokens/s); it is stopped and blamed on its GPU's model.
+LLAMA_READ_S = 120
+LLAMA_S_PER_1K = 10
+
 LEASE_S = 4 * 3600
 MAX_ATTEMPTS = 3
 IDLE_S = 5.0
@@ -36,6 +48,3 @@ PROGRESS_CHUNKS = 20  # how often a running eval writes samples_done for the das
 STATES_TTL_S = 3600
 # how often a running eval logs its per-stage timings (eval_service.timing)
 TIMING_REPORT_S = 60.0
-
-KEEP_FAILED = 3
-KEEP_KINGS = 2

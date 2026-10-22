@@ -6,13 +6,12 @@ from __future__ import annotations
 
 import json
 import struct
-import tomllib
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from common.config import REPO_ROOT, _king_names, _upload_limits, chain_spec
+from common.config import chain_spec
 from model_validation import families
 from model_validation.checks import (
     check_architecture,
@@ -234,9 +233,9 @@ def test_json_files_are_small_and_the_index_plain(tmp_path: Path):
 def test_bucket_names_allowed_during_upload():
     spec = chain_spec()
     for ok in ("config.json", "model.safetensors.index.json", "a.safetensors"):
-        assert spec.allows_file(ok)
+        assert spec.allows_file(ok, "safetensors")
     for bad in ("modeling.py", "tokenizer.json", "x/a.safetensors", "README.md", "manifest.json"):
-        assert not spec.allows_file(bad)
+        assert not spec.allows_file(bad, "safetensors")
 
 
 def shard(path: Path, tensors: dict[str, tuple[str, list[int], bytes]]) -> None:
@@ -280,7 +279,7 @@ SUBMISSION = ["config.json", INDEX, "layers-0.safetensors", "layers-1.safetensor
 
 def test_a_submission_is_config_index_and_shards_only():
     spec = chain_spec()
-    assert check_files(SUBMISSION, spec) is None
+    assert check_files(SUBMISSION, spec, "safetensors") is None
     for extra in (
         "tokenizer.json",
         "README.md",
@@ -289,22 +288,27 @@ def test_a_submission_is_config_index_and_shards_only():
         ".gitattributes",
         "manifest.json",
     ):
-        assert f"unexpected files: {extra}" == check_files([*SUBMISSION, extra], spec)
-    assert "subfolders" in str(check_files([*SUBMISSION, "draft/model.safetensors"], spec))
+        assert f"unexpected files: {extra}" == check_files(
+            [*SUBMISSION, extra], spec, "safetensors"
+        )
+    assert "subfolders" in str(
+        check_files([*SUBMISSION, "draft/model.safetensors"], spec, "safetensors")
+    )
 
 
 def test_missing_pieces_are_named():
     spec = chain_spec()
-    assert check_files(SUBMISSION[1:], spec) == "missing required files: config.json"
-    assert check_files([f for f in SUBMISSION if f != INDEX], spec) == (
+    assert check_files(SUBMISSION[1:], spec, "safetensors") == "missing required files: config.json"
+    assert check_files([f for f in SUBMISSION if f != INDEX], spec, "safetensors") == (
         f"missing required files: {INDEX}"
     )
-    assert check_files(["config.json", INDEX], spec) == "no safetensors weights"
+    assert check_files(["config.json", INDEX], spec, "safetensors") == "no safetensors weights"
 
 
 def test_index_must_name_exactly_the_shards(tmp_path: Path):
-    for shard in ("a.safetensors", "b.safetensors"):
-        (tmp_path / shard).write_bytes(b"")
+    for shard, name in (("a.safetensors", "x"), ("b.safetensors", "y")):
+        head = json.dumps({name: {"dtype": "BF16", "shape": [1], "data_offsets": [0, 2]}}).encode()
+        (tmp_path / shard).write_bytes(len(head).to_bytes(8, "little") + head + b"\0\0")
     index = tmp_path / "model.safetensors.index.json"
     index.write_text(json.dumps({"weight_map": {"x": "a.safetensors", "y": "b.safetensors"}}))
     assert check_index(tmp_path) is None
@@ -332,25 +336,6 @@ def test_pinned_qwen38_family_accepts_its_own_genesis():
     ):
         assert frozen in family.arch_keys
     assert "quantization_config.weight_block_size" not in family.arch_keys
-
-
-def test_upload_limit_is_per_declared_family_and_quantization():
-    spec = chain_spec()
-    assert spec.upload_limit("qwen38_27b", "fp8") == 35_000_000_000
-    with pytest.raises(ValueError, match="qwen38_27b.gptq is not an allowed pair"):
-        spec.upload_limit("qwen38_27b", "gptq")
-    raw = tomllib.loads((REPO_ROOT / "chain.toml").read_text())
-    raw["genesis"]["quant"] = "gptq"
-    with pytest.raises(ValueError, match="no entry for genesis qwen38_27b.gptq"):
-        _upload_limits(raw)
-
-
-def test_king_names_follow_the_declared_pairs(spec):
-    assert spec.king_name("qwen38_27b", "fp8") == "27B-FP8"
-    raw = tomllib.loads((REPO_ROOT / "chain.toml").read_text())
-    raw["upload_limits"]["qwen38_27b"]["fp4"] = 20_000_000_000
-    with pytest.raises(ValueError, match="same pairs"):
-        _king_names(raw)
 
 
 def test_activation_payload_carries_the_pair_and_fits_a_commitment():
@@ -381,4 +366,17 @@ def test_every_unquantized_linear_must_be_listed_embeddings_and_norms_need_not()
     assert layout_reason(bf16_up, dropped) == (
         "not FP8 but missing from modules_to_not_convert: "
         "model.layers.N.mlp.up_proj, model.visual.blocks.N.attn.qkv"
+    )
+
+
+def test_a_gguf_submission_is_one_top_level_gguf():
+    spec = chain_spec()
+    assert check_files(["model.gguf"], spec, "gguf") is None
+    assert check_files([], spec, "gguf") == "a gguf submission is exactly one .gguf file, not 0"
+    assert check_files(["a.gguf", "b.gguf"], spec, "gguf") == (
+        "a gguf submission is exactly one .gguf file, not 2"
+    )
+    assert "subfolders" in str(check_files(["q2/model.gguf"], spec, "gguf"))
+    assert check_files(["model.gguf", "config.json"], spec, "gguf") == (
+        "unexpected files: config.json"
     )

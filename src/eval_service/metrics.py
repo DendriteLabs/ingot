@@ -50,36 +50,102 @@ class FinalHead:
         return torch.log_softmax(logits, -1)
 
 
-def heads(models: dict[str, Path], devices: list[str]) -> dict[str, dict[str, FinalHead]]:
+class GgufHead:
+    """The output head of a gguf model as the llama-prism fork applies it to the last layer's
+    state: RMSNorm with the stored gain (gguf stores Qwen's 1 + w), the prism.hadamard rotation of
+    the input side when output.weight is stored folded, then output.weight. All in float32 from
+    the exact dequantized weight: llama-states writes only hidden states, the logits are made
+    here on the fly."""
+
+    def __init__(self, model_dir: Path, device: str) -> None:
+        from common.gguf import read_header
+        from common.gguf.dequant import hadamard, rotation, tensor
+
+        (path,) = model_dir.glob("*.gguf")
+        g = read_header(path)
+        if "output.weight" not in g.tensors:
+            raise ValueError(f"{path.name}: no output.weight (a tied head is not supported)")
+        arch = g.kv["general.architecture"].value
+        self.eps = float(g.kv[f"{arch}.attention.layer_norm_rms_epsilon"].value)
+        self.norm = torch.from_numpy(tensor(path, g, "output_norm.weight")).to(device)
+        self.head = torch.from_numpy(tensor(path, g, "output.weight")).to(device)
+        folded = rotation(g, "output.weight")
+        self.rot: tuple[torch.Tensor, torch.Tensor] | None = None
+        if folded:
+            block, signs = folded
+            self.rot = (
+                torch.from_numpy(hadamard(block)).to(device),
+                torch.from_numpy(signs).to(device),
+            )
+
+    def logprobs(self, h: torch.Tensor) -> torch.Tensor:
+        h = h.float()
+        h = h * torch.rsqrt(h.pow(2).mean(-1, keepdim=True) + self.eps) * self.norm
+        if self.rot is not None:
+            hm, signs = self.rot
+            rows, width = h.shape
+            h = ((h * signs).reshape(rows, width // hm.shape[0], hm.shape[0]) @ hm).reshape(
+                rows, width
+            )
+        with _no_tf32():
+            logits = torch.mm(h, self.head.T)
+        return torch.log_softmax(logits, -1)
+
+
+class _no_tf32:
+    def __enter__(self) -> None:
+        self.was = torch.backends.cuda.matmul.allow_tf32
+        torch.backends.cuda.matmul.allow_tf32 = False
+
+    def __exit__(self, *exc: object) -> None:
+        torch.backends.cuda.matmul.allow_tf32 = self.was
+
+
+def head(model_dir: Path, device: str) -> FinalHead | GgufHead:
+    """The final head of a safetensors checkpoint or of a gguf file's folder."""
+    if any(model_dir.glob("*.gguf")):
+        return GgufHead(model_dir, device)
+    return FinalHead(model_dir, device)
+
+
+def heads(
+    models: dict[str, Path], devices: list[str]
+) -> dict[str, dict[str, FinalHead | GgufHead]]:
     """Per device, role → final head. A model with the teacher's norm and lm_head shares the
-    teacher's copy, which leaves the comparison GPU more room."""
+    teacher's copy, which leaves the comparison GPU more room; a gguf model has its own."""
     teacher = FinalHead(models["teacher"], "cpu")
     shared = {
-        role: role == "teacher" or teacher.same(FinalHead(d, "cpu")) for role, d in models.items()
+        role: role == "teacher" or (not any(d.glob("*.gguf")) and teacher.same(FinalHead(d, "cpu")))
+        for role, d in models.items()
     }
-    out = {}
+    out: dict[str, dict[str, FinalHead | GgufHead]] = {}
     for dev in devices:
         on_dev = FinalHead(models["teacher"], dev)
-        out[dev] = {
-            role: on_dev if shared[role] else FinalHead(d, dev) for role, d in models.items()
-        }
+        out[dev] = {role: on_dev if shared[role] else head(d, dev) for role, d in models.items()}
         out[dev]["teacher_rerun"] = on_dev
     return out
 
 
-def load_states(path: str, read: list[int]) -> torch.Tensor:
-    """[rows, layers, hidden] a server wrote for one request, checked against the tokens it read."""
+def load_states(path: str, read: list[int], first: int) -> torch.Tensor:
+    """[rows from `first`, layers, hidden] a server wrote for one request, checked against the
+    tokens it read. vLLM writes every row; llama-states only those from its `first_row`."""
     with open(path + ".lock") as lock:
         # the server holds this lock exclusively until the file is complete
         fcntl.flock(lock, fcntl.LOCK_SH)
         data = load_file(path)
     states = data["hidden_states"]
-    if data["token_ids"].tolist() != read or states.shape[1] != len(config.LAYERS):
+    offset = int(data["first_row"][0]) if "first_row" in data else 0
+    if (
+        data["token_ids"].tolist() != read
+        or states.shape[0] != len(read) - offset
+        or not 0 <= offset <= first
+        or states.shape[1] != len(config.LAYERS)
+    ):
         raise ValueError(
-            f"{path}: states {tuple(states.shape)} do not match {len(read)} tokens"
-            f" x {len(config.LAYERS)} layers"
+            f"{path}: states {tuple(states.shape)} from row {offset} do not match {len(read)}"
+            f" tokens from row {first} x {len(config.LAYERS)} layers"
         )
-    return states
+    return states[first - offset :]
 
 
 def _zeros() -> list[float]:
@@ -120,18 +186,17 @@ class Sums:
 @torch.no_grad()
 def compare(
     states: dict[str, torch.Tensor],
-    heads: dict[str, FinalHead],
+    heads: dict[str, FinalHead | GgufHead],
     answer: list[int],
-    prompt_len: int,
     device: str,
 ) -> dict[str, Sums]:
-    """Sums for every role in `states` ([rows, layers, hidden], row r = state after reading token
-    r), each against `states["teacher"]`, over the rows that read or predict answer tokens."""
-    first = prompt_len - 1  # its state predicts the first answer token
+    """Sums for every role in `states` ([rows, layers, hidden] from the last prompt row, whose state
+    predicts the first answer token, as load_states returns them), each against
+    `states["teacher"]`, over the rows that read or predict answer tokens."""
     out = {role: Sums(len(answer), len(answer) - 1) for role in states}
     teacher = states["teacher"]
     for c in range(0, len(answer), CHUNK):
-        rows = slice(first + c, first + c + CHUNK)
+        rows = slice(c, c + CHUNK)
         ref = heads["teacher"].logprobs(teacher[rows, -1].to(device))
         ref_p, ref_top = ref.exp(), ref.argmax(-1)
         for role, s in out.items():
@@ -140,7 +205,7 @@ def compare(
             s.kl += (ref_p * (ref - lp)).sum().item()
             s.top1 += (lp.argmax(-1) == ref_top).sum().item()
     for c in range(0, len(answer) - 1, CHUNK):
-        rows = slice(prompt_len + c, prompt_len + c + CHUNK)
+        rows = slice(1 + c, 1 + c + CHUNK)
         a = teacher[rows].to(device).float()
         a_len = a.norm(dim=-1)
         for role, s in out.items():

@@ -52,17 +52,25 @@ def summary_vector(fp: dict) -> np.ndarray:
     return v / norm if norm > 0 else v
 
 
+def index_name(s: Settings, quant: str, mode: str = "full") -> str:
+    """One index per quant and dedup mode: hash fingerprints never meet full ones."""
+    return f"{s.opensearch_index}-{quant}" + ("-hash" if mode == "hash" else "")
+
+
 class Bank:
-    def __init__(self, client: Any, index: str) -> None:
-        self.client, self.index = client, index
+    def __init__(self, client: Any, index: str, mode: str = "full") -> None:
+        self.client, self.index, self.mode = client, index, mode
         if not client.indices.exists(index=index):
             client.indices.create(index=index, body=_MAPPING)
 
     @classmethod
-    def connect(cls, s: Settings) -> Bank:
+    def connect(cls, s: Settings, quant: str, mode: str = "full") -> Bank:
+        """The bank of one quant: fingerprints of different quants have different teachers and
+        layouts and are never compared."""
         from opensearchpy import OpenSearch
 
-        return cls(OpenSearch(hosts=[s.opensearch_url], timeout=60), s.opensearch_index)
+        client = OpenSearch(hosts=[s.opensearch_url], timeout=60)
+        return cls(client, index_name(s, quant, mode), mode)
 
     def genesis_scope(self) -> tuple[str, str] | None:
         """(version, key_id) of the seeded genesis fingerprint, or None before seeding."""
@@ -90,10 +98,11 @@ class Bank:
             "version": fp["version"],
             "key_id": fp["key_id"],
             "tensors_hash": fp["tensors_hash"],
-            "vec": summary_vector(fp).tolist(),
             "verdict": asdict(verdict) if verdict else None,
             "fingerprint": fp,
         }
+        if self.mode == "full":
+            body["vec"] = summary_vector(fp).tolist()
         # the next submission's shortlist must already see this one
         self.client.index(index=self.index, id=bank_id, body=body, refresh="wait_for")
 
@@ -125,7 +134,9 @@ class Bank:
             }
         }
         ids = {GENESIS}
-        for query, size in ((exact, 100), (nearest, config.NEAREST_K)):
+        # the hash mode compares identical files only
+        queries = [(exact, 100)] + ([(nearest, config.NEAREST_K)] if self.mode == "full" else [])
+        for query, size in queries:
             body = {"size": size, "_source": False, "query": query}
             ids |= {
                 h["_id"] for h in self.client.search(index=self.index, body=body)["hits"]["hits"]

@@ -17,6 +17,7 @@ import json
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from typing import Any, Protocol
 
 import boto3
@@ -216,12 +217,13 @@ def _fail(conn: Conn, row: Row, deps: Deps, reason: str, *, blocked: str = "") -
 def _verify(conn: Conn, row: Row, deps: Deps) -> None:
     rid = row["registration_id"]
     prefix = _prefix_of(row)
+    pair = deps.spec.pair(row["family"], row["quant"])
     try:
         deps.uploads.verify_upload(
             model_prefix=prefix,
             registration_id=rid,
-            max_upload_bytes=deps.spec.upload_limit(row["family"], row["quant"]),
-            allowed=deps.spec.allows_file,
+            max_upload_bytes=pair.upload_limit,
+            allowed=lambda name: deps.spec.allows_file(name, pair.format),
         )
     except ArtifactIntegrityError as exc:
         deps.uploads.abort_multipart_uploads(prefix)
@@ -237,7 +239,7 @@ def _verify(conn: Conn, row: Row, deps: Deps) -> None:
         INSERT INTO submissions
             (hotkey, uid, coldkey, model_uri, model_hash, block, block_hash, family, quant)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (model_hash) DO NOTHING
+        ON CONFLICT (model_hash) WHERE state NOT IN ('INVALID', 'FAILED') DO NOTHING
         RETURNING id
         """,
         (
@@ -253,6 +255,17 @@ def _verify(conn: Conn, row: Row, deps: Deps) -> None:
         ),
     ).fetchone()
     if submission is None:
+        # The digest is the miner's claim until validation downloads and re-hashes the bytes.
+        # Another row holding it that is not verified yet may be a squatter who copied this
+        # digest from the chain: wait for validation to settle it (INVALID frees the digest).
+        other = conn.execute(
+            "SELECT state FROM submissions WHERE model_hash = %s"
+            " AND state NOT IN ('INVALID', 'FAILED')",
+            (digest,),
+        ).fetchone()
+        if other is not None and other["state"] in (states.SUBMITTED, states.VALIDATING):
+            log.info("{}: digest held by an unverified submission; verifying later", rid)
+            return
         _fail(conn, row, deps, "these exact model bytes were already submitted")
         return
     db.event(conn, submission["id"], states.SUBMITTED)
@@ -266,6 +279,29 @@ def _verify(conn: Conn, row: Row, deps: Deps) -> None:
     )
     log.info("verified {} -> submission {}", rid, submission["id"])
     _publish_status(deps, row, step="verified — queued for validation and evaluation")
+
+
+def _close_pair(conn: Conn, row: Row, deps: Deps) -> None:
+    """The row's pair closed while it was in flight: no credentials for it, its upload access and
+    bytes removed, and its attempt given back (FAILED, so the miner may activate the open pair),
+    as db.release_closed does for a closed pair's submissions."""
+    if row["parent_token_id"]:
+        deps.gateway.revoke_parent_token(row["parent_token_id"])
+    deps.mailbox.delete([mailbox_object_key(row["registration_id"], 1)])
+    if row["model_prefix"]:
+        deps.uploads.abort_multipart_uploads(row["model_prefix"])
+        deps.uploads.cleanup_model_prefix(row["model_prefix"])
+    conn.execute(
+        "UPDATE private_registrations SET state = 'FAILED', fault_message = 'closed',"
+        " extra_attempts = extra_attempts + 1, updated_at = now() WHERE id = %s",
+        (row["id"],),
+    )
+    reason = (
+        f"{row['family']}.{row['quant']} is closed; activate {deps.spec.family}.{deps.spec.quant}"
+    )
+    log.warning("registration {} closed — {}", row["registration_id"], reason)
+    row = {**row, "extra_attempts": row["extra_attempts"] + 1}  # the status counts it
+    _publish_status(deps, row, step="failed — quant closed", reason=reason, retryable=True)
 
 
 def _close_upload_window(conn: Conn, deps: Deps, row: Row, reason: str) -> None:
@@ -293,12 +329,20 @@ def sweep_credentialed(conn: Conn, deps: Deps) -> int:
     ).fetchall()
     swept = 0
     for row in rows:
+        if deps.spec.closed(row["family"], row["quant"]):
+            _close_pair(conn, row, deps)
+            swept += 1
+            continue
         breach = None
         if row["age_s"] > config.UPLOAD_WINDOW_S:
             reason = f"upload window expired ({int(row['age_s'])}s with no ready signal)"
         else:
-            limit = deps.spec.upload_limit(row["family"], row["quant"])
-            breach = deps.uploads.quota_breach(_prefix_of(row), limit, deps.spec.allows_file)
+            pair = deps.spec.pair(row["family"], row["quant"])
+            breach = deps.uploads.quota_breach(
+                _prefix_of(row),
+                pair.upload_limit,
+                partial(deps.spec.allows_file, fmt=pair.format),
+            )
             reason = f"upload quota abused: {breach}" if breach else None
         if reason is None:
             continue
@@ -439,7 +483,9 @@ def tick(conn: Conn, deps: Deps) -> bool:
         if row is None:
             return False
         try:
-            if row["state"] == "ACTIVATED":
+            if deps.spec.closed(row["family"], row["quant"]):
+                _close_pair(conn, row, deps)  # never minted, kept or verified for a closed pair
+            elif row["state"] == "ACTIVATED":
                 _credential(conn, row, deps)
             elif row["state"] == "READY":
                 _revoke(conn, row, deps)

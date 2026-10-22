@@ -29,7 +29,8 @@ def run_once(
     if last is not None and block - last < config.SET_RATE_BLOCKS:
         return False
     rows = conn.execute(
-        "SELECT id, uid, hotkey, crowned_at FROM kings ORDER BY id DESC LIMIT %s",
+        "SELECT id, uid, hotkey, crowned_at FROM kings WHERE submission_id IS NOT NULL"
+        " ORDER BY id DESC LIMIT %s",
         (reign.SLOTS,),
     )
     rows = rows.fetchall()

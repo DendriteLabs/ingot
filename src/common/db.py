@@ -15,7 +15,7 @@ from psycopg.abc import Params
 from psycopg.rows import dict_row
 
 from common import states
-from common.config import settings
+from common.config import ChainSpec, settings
 
 Row = dict[str, Any]
 Conn = psycopg.Connection[Row]
@@ -174,8 +174,49 @@ def fail(conn: Conn, row: Row, *, back_to: str, error: str, max_attempts: int) -
     return state
 
 
-def current_king(conn: Conn) -> Row:
-    row = conn.execute("SELECT * FROM kings ORDER BY id DESC LIMIT 1").fetchone()
+def current_king(conn: Conn, family: str, quant: str) -> Row:
+    """The newest king of a pair; each starts from its own genesis."""
+    row = conn.execute(
+        "SELECT * FROM kings WHERE family = %s AND quant = %s ORDER BY id DESC LIMIT 1",
+        (family, quant),
+    ).fetchone()
     if row is None:
-        raise RuntimeError("no king in the database; run scripts/create_genesis.py")
+        raise RuntimeError(
+            f"no {family}.{quant} king; run scripts/create_genesis.py --quant {quant}"
+        )
     return row
+
+
+# the queued states of the stages a closed pair may not go through, and their running states,
+# released only once their lease has run out: a live worker still owns its row and finishes it
+# (its next queued state is released then), else its finish would overwrite FAILED "closed"
+_QUEUED = (states.SUBMITTED, states.VALID, states.UNIQUE)
+_RUNNING = (states.VALIDATING, states.DEDUPING, states.EVALUATING)
+
+
+def release_closed(conn: Conn, spec: ChainSpec) -> int:
+    """Fail the waiting rows of a closed pair with error "closed" and give their registration its
+    attempt back (FAILED, so the miner may activate the open pair): the miner did nothing wrong.
+    Returns how many."""
+    with conn.transaction():
+        rows = conn.execute(
+            "UPDATE submissions SET state = %s, error = 'closed', lease_until = NULL,"
+            " updated_at = now(), attempts = 0"
+            " WHERE (state = ANY(%s) OR (state = ANY(%s) AND lease_until < now()))"
+            " AND (family, quant) <> (%s, %s) RETURNING id",
+            (states.FAILED, list(_QUEUED), list(_RUNNING), spec.family, spec.quant),
+        ).fetchall()
+        ids = [r["id"] for r in rows]
+        if ids:
+            conn.execute(
+                "UPDATE private_registrations SET extra_attempts = extra_attempts + 1,"
+                " state = 'FAILED', fault_message = 'closed', updated_at = now()"
+                " WHERE submission_id = ANY(%s)",
+                (ids,),
+            )
+            conn.execute("UPDATE workers SET busy_with = NULL WHERE busy_with = ANY(%s)", (ids,))
+            for sid in ids:
+                event(conn, sid, states.FAILED, error="closed")
+    if ids:
+        log.info("released {} submissions of closed quants", len(ids))
+    return len(ids)

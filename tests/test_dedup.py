@@ -216,3 +216,15 @@ def test_summary_vectors_rank_like_the_full_comparison(fps):
 
 def test_fp8_blocks_are_dequantized(fps):
     assert 0.005 < fps["fp8"]["rel_to_teacher"] < 0.05, "an e4m3 rounding error, not a misread"
+
+
+def test_the_hash_mode_catches_identical_files_only(tmp_path):
+    from model_dedup.files import file_fingerprint, identical
+
+    for name, data in (("a/x.safetensors", b"w1"), ("b/renamed.safetensors", b"w1"),
+                       ("c/x.safetensors", b"w2")):  # fmt: skip
+        (tmp_path / name).parent.mkdir()
+        (tmp_path / name).write_bytes(data)
+    a, b, c = (file_fingerprint(tmp_path / d) for d in "abc")
+    assert identical(b, {"genesis": a}).of == "genesis", "shard names do not matter"
+    assert not identical(c, {"genesis": a}).duplicate

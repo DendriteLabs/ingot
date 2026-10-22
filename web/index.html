@@ -21,13 +21,17 @@
   <div>
     <div class="eyebrow">Refined. Assayed. Stamped.</div>
     <h1>Open models,<br><em>cast small.</em></h1>
-    <p class="lede">Miners quantize <span id="hero-teacher">the teacher</span> to FP8. Every copy is assayed against the original, token by token and layer by layer. The closest one is stamped king and earns.</p>
+    <p class="lede">Miners quantize <span id="hero-teacher">the teacher</span> to 2 bits. Every copy is assayed against the original, token by token and layer by layer. The closest one is stamped king and earns.</p>
     <div class="actions">
       <a class="btn" id="link-miner" href="#" target="_blank" rel="noopener">Run a miner</a>
       <a class="btn" id="link-dataset" href="#" target="_blank" rel="noopener" hidden>Dataset</a>
     </div>
   </div>
-  <aside class="stamp" aria-label="Reigning king">
+  <aside class="stamp" id="stamp" aria-label="The competitions">
+    <div class="stamp-tabs" role="tablist" aria-label="Competition">
+      <button class="stamp-tab" role="tab" data-tab="q2" aria-selected="true">2-bit <small class="open">open</small></button>
+      <button class="stamp-tab" role="tab" data-tab="fp8" aria-selected="false">8-bit <small>closed</small></button>
+    </div>
     <svg class="pixels" viewBox="0 0 160 120" shape-rendering="crispEdges" aria-hidden="true">
       <rect x="132" y="8" width="16" height="16" class="p1"/><rect x="112" y="20" width="10" height="10" class="p2"/>
       <rect x="146" y="34" width="8" height="8" class="p3"/><rect x="122" y="40" width="14" height="14" class="p1"/>
@@ -36,9 +40,10 @@
       <rect x="118" y="70" width="6" height="6" class="p3"/><rect x="152" y="84" width="6" height="6" class="p4"/>
       <rect x="92" y="58" width="4" height="4" class="p4"/>
     </svg>
-    <div class="stamp-label">Reigning king</div>
+    <div class="stamp-label" id="hero-label">Current competition</div>
     <div class="stamp-king" id="hero-king">—</div>
     <div class="stamp-repo" id="hero-repo"></div>
+    <div class="stamp-line" id="hero-line"></div>
   </aside>
 </section>
 

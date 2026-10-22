@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import bisect
 import hashlib
 import heapq
 import json
@@ -22,6 +23,7 @@ _PARQUET_COLUMNS = (
     "language",
     "user_prompt",
 )
+_ID_COLUMNS = ("dataset", "split", "entry_name", "domain", "language")
 Fits = Callable[["Sample"], bool]
 # candidates kept per language, as a multiple of the draw, for the ones `fits` passes over
 OVERDRAW = 4
@@ -107,42 +109,82 @@ def draw(
 def _draw_parquet(
     files: tuple[Path, ...], seed: str, samples_per_domain: int, fits: Fits | None = None
 ) -> list[Sample]:
+    import pyarrow as pa
+    import pyarrow.compute as pc
     import pyarrow.parquet as pq
 
     # Keeping the lowest seeded hashes makes the result independent of shard and row order.
+    # The ranking pass reads the id columns only; the prompts of the kept rows are read after.
     keep = samples_per_domain * (OVERDRAW if fits else 1)
-    reservoirs: dict[tuple[str, str], list[tuple[int, str, int, Sample]]] = defaultdict(list)
+    reservoirs: dict[tuple[str, str], list[tuple[int, str, int, str]]] = defaultdict(list)
+    starts = []  # the serial of each file's first row
     serial = 0
     for path in files:
         parquet = pq.ParquetFile(path)
         missing = set(_PARQUET_COLUMNS) - set(parquet.schema_arrow.names)
         if missing:
             raise ValueError(f"{path} is missing Parquet columns: {sorted(missing)}")
-        for batch in parquet.iter_batches(columns=_PARQUET_COLUMNS, batch_size=16_384):
-            for row in batch.to_pylist():
-                domain, language = row["domain"], row["language"]
-                sample_id = "/".join((row["dataset"], row["split"], row["entry_name"], language))
+        starts.append(serial)
+        for batch in parquet.iter_batches(columns=_ID_COLUMNS, batch_size=16_384):
+            # one string type for the join: shards hold string or large_string
+            parts = [
+                batch[c].cast(pa.large_string())
+                for c in ("dataset", "split", "entry_name", "language")
+            ]
+            if any(part.null_count for part in parts):
+                raise ValueError(f"{path} has a row without dataset, split, entry_name or language")
+            sep = pa.scalar("/", pa.large_string())
+            ids = pc.binary_join_element_wise(*parts, sep).to_pylist()  # ty: ignore[unresolved-attribute]
+            columns = (batch["dataset"].to_pylist(), batch["domain"].to_pylist())
+            for sample_id, source, domain, language in zip(
+                ids, *columns, batch["language"].to_pylist(), strict=True
+            ):
                 rank = _rank(seed, sample_id)
                 reservoir = reservoirs[domain, language]
-                if len(reservoir) < keep or rank < -reservoir[0][0]:
-                    sample = Sample(
-                        id=sample_id,
-                        messages=[{"role": "user", "content": row["user_prompt"]}],
-                        domain=domain,
-                        source=row["dataset"],
-                        language=language,
-                    )
-                    item = (-rank, sample_id, serial, sample)
-                    if len(reservoir) < keep:
-                        heapq.heappush(reservoir, item)
-                    else:
-                        heapq.heapreplace(reservoir, item)
+                if len(reservoir) < keep:
+                    heapq.heappush(reservoir, (-rank, sample_id, serial, source))
+                elif rank < -reservoir[0][0]:
+                    heapq.heapreplace(reservoir, (-rank, sample_id, serial, source))
                 serial += 1
 
+    prompts = _prompts(files, starts, {item[2] for r in reservoirs.values() for item in r})
     by_domain: dict[str, dict[str, list[Sample]]] = defaultdict(dict)
     for (domain, language), reservoir in reservoirs.items():
-        by_domain[domain][language] = [item[3] for item in reservoir]
+        by_domain[domain][language] = [
+            Sample(
+                id=sample_id,
+                messages=[{"role": "user", "content": prompts[row]}],
+                domain=domain,
+                source=source,
+                language=language,
+            )
+            for _, sample_id, row, source in reservoir
+        ]
     return _choose(by_domain, seed, samples_per_domain, fits)
+
+
+def _prompts(files: tuple[Path, ...], starts: list[int], serials: set[int]) -> dict[int, str]:
+    """user_prompt of the given rows (serials over all files in order), reading only the row
+    groups that hold them."""
+    import pyarrow.parquet as pq
+
+    wanted: dict[int, list[int]] = defaultdict(list)
+    for serial in serials:
+        wanted[bisect.bisect_right(starts, serial) - 1].append(serial)
+    out: dict[int, str] = {}
+    for f, rows in wanted.items():
+        parquet = pq.ParquetFile(files[f])
+        groups = [0]
+        for g in range(parquet.metadata.num_row_groups):
+            groups.append(groups[-1] + parquet.metadata.row_group(g).num_rows)
+        by_group: dict[int, list[int]] = defaultdict(list)
+        for serial in rows:
+            by_group[bisect.bisect_right(groups, serial - starts[f]) - 1].append(serial)
+        for g, serials_in in by_group.items():
+            column = parquet.read_row_group(g, columns=["user_prompt"])["user_prompt"]
+            for serial in serials_in:
+                out[serial] = column[serial - starts[f] - groups[g]].as_py()
+    return out
 
 
 def _choose(

@@ -2,7 +2,8 @@
 
     SUBMITTED → VALIDATING → VALID → DEDUPING → UNIQUE → EVALUATING → WON → CROWNING → CROWNED
                            ↘ INVALID           ↘ DUPLICATE          ↘ LOST
-Any running stage that raises max_attempts times ends in FAILED.
+Any running stage that raises max_attempts times ends in FAILED. A row whose quant closed
+while it queued ends FAILED with error "closed", and its registration gets the attempt back.
 """
 
 SUBMITTED = "SUBMITTED"  # verified private upload, waiting for the validator

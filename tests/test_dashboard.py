@@ -201,7 +201,8 @@ def test_publisher_keeps_the_site_current(conn, s, spec, tmp_path):
     assert not publisher.run_once(), "nothing changed, nothing written"
 
     conn.execute(
-        "INSERT INTO kings (submission_id, hotkey, uid, model_uri) VALUES (%s, 'hk-d', 4, 'm')",
+        "INSERT INTO kings (submission_id, hotkey, uid, model_uri, family, quant)"
+        " VALUES (%s, 'hk-d', 4, 'm', 'qwen38_27b', 'fp8')",
         (winner_sid,),
     )
     assert publisher.run_once()
@@ -215,6 +216,7 @@ def test_publisher_keeps_the_site_current(conn, s, spec, tmp_path):
     ), "a restart re-reads what the bucket holds"
 
 
+@pytest.mark.usefixtures("fp8_open")
 def test_a_committed_model_is_queued_and_published(conn, s, spec):
     """From the chain to the site: r2activate and r2ready, the verified upload, the queue."""
     crown_genesis(conn)

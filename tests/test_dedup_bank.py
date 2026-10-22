@@ -26,12 +26,12 @@ def bank() -> Iterator[Bank]:
         opensearch_index=f"ingot_test_{uuid.uuid4().hex[:8]}",
     )
     try:
-        bank = Bank.connect(s)
+        bank = Bank.connect(s, "q2")
     except Exception as exc:
         pytest.skip(f"no OpenSearch at {s.opensearch_url} ({exc}); run `docker compose up -d`")
     bank.put(GENESIS, fingerprint(quantization_error(0)), status=BANK, model_uri="org/genesis")
     yield bank
-    bank.client.indices.delete(index=s.opensearch_index)
+    bank.client.indices.delete(index=bank.index)
 
 
 def test_a_miners_own_models_are_never_compared(bank):

@@ -34,7 +34,7 @@ def build(conn: db.Conn, *, s: Settings, spec: ChainSpec, now: datetime | None =
         "updated_at": now,
         "netuid": s.netuid,
         "teacher": spec.teacher_repo,
-        "genesis": spec.genesis_repo,
+        "genesis": spec.open.genesis_repo,
         "links": {
             "github": config.GITHUB_URL,
             "dataset": f"https://huggingface.co/datasets/{spec.dataset_repo}"
@@ -62,9 +62,11 @@ def _kings(conn: db.Conn, spec: ChainSpec) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
         SELECT k.id, k.submission_id, k.hotkey, k.uid, k.hf_repo, k.crowned_at,
-               s.family, s.quant,
+               k.family, k.quant,
                CASE WHEN k.submission_id IS NOT NULL
-                    THEN row_number() OVER (PARTITION BY k.submission_id IS NULL ORDER BY k.id)
+                    THEN row_number() OVER (
+                        PARTITION BY k.family, k.quant, k.submission_id IS NULL ORDER BY k.id
+                    )
                END AS ordinal,
                COALESCE(w.score_challenger, first.score_king) AS score,
                w.score_challenger AS duel_challenger, w.score_king AS duel_king, w.id AS eval_id

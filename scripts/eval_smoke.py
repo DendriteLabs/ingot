@@ -41,10 +41,11 @@ def main() -> None:
     args = parser.parse_args()
 
     spec = chain_spec()
+    fp8 = spec.pair(spec.family, "fp8")  # vLLM serves the safetensors genesis
     teacher = args.teacher or models.snapshot(spec.teacher_repo, spec.teacher_revision)
     king, challenger = args.king, args.challenger
     if king is None or challenger is None:
-        genesis = models.snapshot(spec.genesis_repo, spec.genesis_revision)
+        genesis = models.snapshot(fp8.genesis_repo, fp8.genesis_revision)
         king, challenger = king or genesis, challenger or genesis
     if args.dataset:
         samples = dataset.draw(dataset.load(args.dataset).samples, args.seed, args.samples)

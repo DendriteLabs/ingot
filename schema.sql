@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS submissions (
     uid INT NOT NULL,
     coldkey TEXT,
     model_uri TEXT NOT NULL,
-    model_hash TEXT NOT NULL UNIQUE,
+    model_hash TEXT NOT NULL,            -- unique among live rows, see the index below
     block BIGINT NOT NULL,
     block_hash TEXT,
     family TEXT NOT NULL,                -- from the registration; validation loads these rules
@@ -49,6 +49,13 @@ ALTER TABLE submissions ADD CONSTRAINT submissions_state_check CHECK (state IN (
 ));
 
 CREATE INDEX IF NOT EXISTS submissions_state_created_idx ON submissions (state, created_at);
+
+-- The committed digest is the miner's claim until validation re-hashes the bytes: a row that
+-- failed (INVALID, FAILED) no longer holds it, so a squatter who copied someone's digest from the
+-- chain cannot block those bytes for good (chain_reader/controller.py _verify).
+ALTER TABLE submissions DROP CONSTRAINT IF EXISTS submissions_model_hash_key;
+CREATE UNIQUE INDEX IF NOT EXISTS submissions_model_hash_live_idx ON submissions (model_hash)
+    WHERE state NOT IN ('INVALID', 'FAILED');
 
 -- every private-store signal seen on chain; one commitment per hotkey per block
 CREATE TABLE IF NOT EXISTS commits (
@@ -113,6 +120,11 @@ CREATE TABLE IF NOT EXISTS kings (
     hf_repo TEXT,
     crowned_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- the quantization a king rules; each has its own genesis and its own numbering
+ALTER TABLE kings ADD COLUMN IF NOT EXISTS family TEXT;
+ALTER TABLE kings ADD COLUMN IF NOT EXISTS quant TEXT;
+UPDATE kings SET family = 'qwen38_27b', quant = 'fp8' WHERE quant IS NULL;
 
 CREATE TABLE IF NOT EXISTS evals (
     id BIGSERIAL PRIMARY KEY,

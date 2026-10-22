@@ -22,6 +22,7 @@ import torch
 from common.config import Settings
 from model_dedup.canon import Basis, canonicalize, fold_gain, residual_transform
 from model_dedup.checkpoint import Checkpoint
+from model_dedup.gguf_checkpoint import GgufCheckpoint
 from model_dedup.layout import EMBED
 
 # Part of every fingerprint: a change makes the bank incomparable and it has to be reseeded.
@@ -42,11 +43,21 @@ def key_id(secret: bytes) -> str:
 
 
 def fingerprint_dir(model_dir: Path, *, teacher_dir: Path, secret: bytes, device: str) -> dict:
+    """Against the safetensors teacher; a gguf model is read in the teacher's layout
+    (GgufCheckpoint)."""
     with torch.no_grad():
-        return fingerprint(Checkpoint(model_dir, device), Checkpoint(teacher_dir, device), secret)
+        return fingerprint(
+            open_checkpoint(model_dir, device), open_checkpoint(teacher_dir, device), secret
+        )
 
 
-def fingerprint(model: Checkpoint, teacher: Checkpoint, secret: bytes) -> dict:
+def open_checkpoint(path: Path, device: str) -> Checkpoint | GgufCheckpoint:
+    return GgufCheckpoint(path, device) if any(path.glob("*.gguf")) else Checkpoint(path, device)
+
+
+def fingerprint(
+    model: Checkpoint | GgufCheckpoint, teacher: Checkpoint | GgufCheckpoint, secret: bytes
+) -> dict:
     t0 = time.time()
     basis = residual_transform(model.get(EMBED), teacher.get(EMBED))
     entries = [

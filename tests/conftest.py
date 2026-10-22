@@ -8,6 +8,7 @@ import base64
 import os
 import uuid
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -72,6 +73,16 @@ def spec() -> ChainSpec:
     return chain_spec()
 
 
+@pytest.fixture
+def fp8_open(monkeypatch: pytest.MonkeyPatch) -> ChainSpec:
+    """chain.toml with fp8 as the open quant, for the r2activate of an fp8 pair."""
+    from chain_reader import signals
+
+    spec = replace(chain_spec(), quant="fp8")
+    monkeypatch.setattr(signals, "chain_spec", lambda: spec)
+    return spec
+
+
 def submit(conn: db.Conn, *, hotkey: str = "hk-1", uid: int = 7, block: int = 100) -> uuid.UUID:
     """Insert a verified private upload, as the access controller would."""
     digest = uuid.uuid4().hex * 2
@@ -87,7 +98,8 @@ def submit(conn: db.Conn, *, hotkey: str = "hk-1", uid: int = 7, block: int = 10
 
 def crown_genesis(conn: db.Conn) -> None:
     conn.execute(
-        "INSERT INTO kings (model_uri, hf_repo) VALUES ('org/genesis@main', 'org/genesis')"
+        "INSERT INTO kings (model_uri, hf_repo, family, quant)"
+        " VALUES ('org/genesis@main', 'org/genesis', 'qwen38_27b', 'fp8')"
     )
 
 

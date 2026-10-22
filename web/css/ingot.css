@@ -116,7 +116,21 @@ main { display: flex; flex-direction: column; gap: 64px; padding-top: 56px; padd
 .stamp .pixels .p2 { fill: var(--brass); opacity: 0.6; }
 .stamp .pixels .p3 { fill: var(--brass); opacity: 0.32; }
 .stamp .pixels .p4 { fill: var(--zinc); opacity: 0.35; }
+.stamp-tabs { position: absolute; top: 24px; left: 28px; display: flex; gap: 22px; }
+.stamp-tab {
+  background: none; border: 0; border-bottom: 1px solid transparent; padding: 0 0 6px; cursor: pointer;
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--stamp-dim);
+}
+.stamp-tab small { font-size: 9px; letter-spacing: 0.16em; opacity: 0.7; margin-left: 4px; }
+.stamp-tab small.open { color: var(--brass); opacity: 1; }
+.stamp-tab:hover { color: var(--stamp-fg); }
+.stamp-tab[aria-selected="true"] { border-bottom-color: var(--brass); }
+.stamp.closed .stamp-king, .stamp.closed .stamp-line b { color: var(--zinc); }
+.stamp.closed .pixels { opacity: 0.45; }
 .stamp-label { color: var(--stamp-dim); opacity: 0.8; }
+.stamp-line { margin-top: 18px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--stamp-dim); }
+.stamp-line:empty { display: none; }
+.stamp-line b { font-family: var(--display); font-weight: 700; font-size: 16px; letter-spacing: 0; color: var(--stamp-fg); margin-right: 8px; }
 .stamp-king {
   margin-top: 12px; font-family: var(--display); font-weight: 700; font-size: 38px; line-height: 1.05;
   letter-spacing: 0.005em; overflow-wrap: anywhere;
@@ -131,6 +145,7 @@ main { display: flex; flex-direction: column; gap: 64px; padding-top: 56px; padd
 .section .head .label { color: var(--text); font-weight: 500; }
 .section .head .label b { font-weight: 400; color: var(--muted); margin-right: 14px; }
 .section .head .meta { color: var(--muted); letter-spacing: 0.14em; text-align: right; }
+.section .head .meta b { font-weight: inherit; color: var(--text); }
 .empty { padding: 28px 0; text-align: center; font-family: var(--mono); font-size: 12px; color: var(--muted); }
 
 /* ---------- kings: the staircase beside the lineage ---------- */
@@ -215,7 +230,7 @@ main { display: flex; flex-direction: column; gap: 64px; padding-top: 56px; padd
 }
 .benchmark-chart-head h3 { margin: 0; overflow: hidden; font: inherit; color: var(--text-2); text-overflow: ellipsis; white-space: nowrap; }
 .benchmark-kind { flex-shrink: 0; color: var(--muted); }
-.bench-rows { --cols: 76px minmax(0, 1fr) 86px; display: grid; gap: 6px; padding: 10px 14px; border: 1px solid var(--line); background: var(--panel); }
+.bench-rows { --cols: 94px minmax(0, 1fr) 86px; display: grid; gap: 6px; padding: 10px 14px; border: 1px solid var(--line); background: var(--panel); }
 .bench-row {
   display: grid; grid-template-columns: var(--cols); align-items: center; gap: 12px;
   font-family: var(--mono); font-size: 11px; color: var(--text-2); text-decoration: none;

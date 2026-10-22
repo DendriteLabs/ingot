@@ -1,5 +1,6 @@
 """The eval's vLLM servers: one per GPU, each extracting hidden states and accepting forced tokens.
-A role (teacher, king, challenger) keeps its servers until it is handed another model."""
+The teacher keeps its servers until it is handed another model; the king's and challenger's are
+released after each eval."""
 
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ from pathlib import Path
 import httpx
 from loguru import logger as log
 
-from common.config import settings
+from common.config import REPO_ROOT, settings
 from eval_service import config, timing
 
 HIDDEN_STATES_DIR = settings().hidden_states_dir
@@ -235,6 +236,151 @@ class Group:
             self.admission.leave(i, need)
 
 
+class LlamaServer:
+    """One llama-states process on one GPU: the gguf model reads forced tokens and writes the
+    hidden states of LAYERS as a vLLM server's states file. It takes one request at a time."""
+
+    def __init__(self, model_dir: Path, gpu: int) -> None:
+        (self.model,) = model_dir.glob("*.gguf")
+        self.gpu, self.lock = gpu, threading.Lock()
+        self.dir = HIDDEN_STATES_DIR / f"gpu{gpu}"
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self.log = settings().eval_work_dir / "llama" / f"gpu{gpu}.log"
+        self.log.parent.mkdir(parents=True, exist_ok=True)
+        if self.log.exists():
+            self.log.replace(self.log.with_suffix(".prev.log"))
+        layers = ",".join(str(layer - 1) for layer in config.LAYERS)  # block il is layer il + 1
+        self.process = subprocess.Popen(
+            [
+                str(REPO_ROOT / config.LLAMA_STATES),
+                "-m",
+                str(self.model),
+                "--layers",
+                layers,
+                "-c",
+                str(config.MAX_MODEL_LEN),
+                "-b",
+                str(config.LLAMA_BATCH),
+            ],
+            env={**os.environ, "CUDA_VISIBLE_DEVICES": str(gpu)},
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=open(self.log, "w"),  # noqa: SIM115 - the child keeps it
+            text=True,
+            start_new_session=True,
+        )
+
+    def wait_ready(self, deadline: float) -> None:
+        """The model is loaded when the process says so. Its first line is read on a thread, so
+        a file that hangs the fork while loading fails at the deadline (the process is killed)
+        instead of wedging the eval."""
+        line = self._readline(deadline, "not loaded before the deadline")
+        try:
+            ready = bool(line) and json.loads(line).get("ready") is True
+        except json.JSONDecodeError:
+            ready = False
+        if not ready:
+            raise ServerExited(self.gpu, self._first_error(), self.log)
+
+    def _first_error(self) -> str:
+        text = self.log.read_text(errors="replace")
+        found = re.search(r"(?im)^.*\b(error|failed|cannot)\b.*$", text)
+        return found.group(0).strip()[:300] if found else "no error line in its log"
+
+    def alive(self) -> bool:
+        return self.process.poll() is None
+
+    def _readline(self, deadline: float, late: str) -> str:
+        """The process's next stdout line, read on a thread so a hung process cannot block past
+        `deadline`: then it is stopped and ServerExited names its GPU ("" when it exited)."""
+        out = self.process.stdout
+        assert out
+        got: list[str] = []
+        reader = threading.Thread(target=lambda: got.append(out.readline()), daemon=True)
+        reader.start()
+        reader.join(max(0.0, deadline - time.monotonic()))
+        if reader.is_alive():
+            self.stop()
+            raise ServerExited(self.gpu, late, self.log)
+        return got[0] if got else ""
+
+    def read(self, tokens: list[int], first: int) -> str:
+        """One forced read. A process that dies or hangs raises ServerExited for its GPU, so the
+        eval knows whose model failed (a challenger's: it does not run; a king's: not the
+        challenger's fault)."""
+        path = str(self.dir / f"{uuid.uuid4().hex}.safetensors")
+        request = {"tokens": tokens, "first": first, "out": path}
+        assert self.process.stdin
+        # generous for a 32k-token read at a few thousand tokens per second
+        budget = config.LLAMA_READ_S + len(tokens) / 1000 * config.LLAMA_S_PER_1K
+        deadline = time.monotonic() + budget
+        with self.lock:
+            try:
+                self.process.stdin.write(json.dumps(request) + "\n")
+                self.process.stdin.flush()
+            except (BrokenPipeError, OSError):
+                raise ServerExited(self.gpu, self._first_error(), self.log) from None
+            line = self._readline(deadline, f"a read of {len(tokens)} tokens did not finish")
+        if not line:
+            raise ServerExited(self.gpu, self._first_error(), self.log)
+        reply = json.loads(line)
+        if not reply["ok"]:
+            discard(path)
+            raise RuntimeError(f"llama-states on GPU {self.gpu}: {reply['error']}")
+        return path
+
+    def stop(self) -> None:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(self.process.pid, signal.SIGTERM)
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            self.process.wait(timeout=60)
+            return
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(self.process.pid, signal.SIGKILL)
+
+
+class LlamaGroup:
+    """A gguf model on several GPUs, one llama-states each. It only reads: the answer is always
+    the teacher's, so a request is a forced read and returns exactly the forced answer."""
+
+    def __init__(self, model_dir: Path, gpus: Sequence[int], role: str = "model") -> None:
+        self.model_dir, self.role = model_dir, role
+        self.servers = [LlamaServer(model_dir, gpu) for gpu in gpus]
+        self.waiting = [0] * len(self.servers)
+        self.cv = threading.Condition()
+
+    def wait_ready(self, deadline: float) -> None:
+        for server in self.servers:
+            server.wait_ready(deadline)
+
+    def alive(self) -> bool:
+        return all(server.alive() for server in self.servers)
+
+    def preemptions(self) -> float:
+        return 0.0  # a read is one pass over its own context; nothing is ever recomputed
+
+    def stop(self) -> None:
+        for server in self.servers:
+            server.stop()
+
+    def complete(
+        self, prompt: list[int], max_tokens: int, seed: int, force: list[int] | None = None
+    ) -> tuple[list[int], str]:
+        if force is None or len(force) != len(prompt) + max_tokens:
+            raise ValueError(f"the {self.role} runs in llama.cpp and only reads a forced answer")
+        with self.cv:
+            i = min(range(len(self.servers)), key=self.waiting.__getitem__)
+            self.waiting[i] += 1
+        try:
+            with timing.stages.timed(f"{self.role} request"):
+                # the last answer token is never read back in: rows are prompt + answer[:-1]
+                path = self.servers[i].read(force[:-1], len(prompt) - 1)
+        finally:
+            with self.cv:
+                self.waiting[i] -= 1
+        return force[len(prompt) :], path
+
+
 class RemoteGroup:
     """The teacher served by another box (ingot-teacher-server, through a tunnel): its answers come
     over HTTP and each request's hidden states are downloaded into the local states dir, where the
@@ -319,10 +465,11 @@ def sweep(older_than_s: float = 0.0) -> int:
     return swept
 
 
-_groups: dict[str, Group | RemoteGroup] = {}
+Groups = Group | LlamaGroup | RemoteGroup
+_groups: dict[str, Groups] = {}
 
 
-def serve(models: dict[str, Path]) -> dict[str, Group | RemoteGroup]:
+def serve(models: dict[str, Path]) -> dict[str, Groups]:
     """Groups serving `models` (role → model dir), healthy. A role whose model changed or whose
     server died is restarted; the others keep running. With INGOT_TEACHER_URL set the teacher is
     another box's and takes no GPU here."""
@@ -346,13 +493,23 @@ def serve(models: dict[str, Path]) -> dict[str, Group | RemoteGroup]:
                 + (" or INGOT_TEACHER_URL" if role == "teacher" else "")
             )
         log.info("starting the {} on GPUs {}: {}", role, gpus, model_dir)
-        _groups[role] = Group(model_dir, gpus, config.MEMORY_SHARE[role], role)
+        if any(model_dir.glob("*.gguf")):
+            _groups[role] = LlamaGroup(model_dir, gpus, role)
+        else:
+            _groups[role] = Group(model_dir, gpus, config.MEMORY_SHARE[role], role)
     deadline = time.monotonic() + config.SERVER_START_S
     # waited in turn: a role's time is when it was found ready, at most later than it became so
     for role in models:
         _groups[role].wait_ready(deadline)
         log.info("the {} is ready, {:.0f}s into serve", role, time.monotonic() - started)
     return {role: _groups[role] for role in models}
+
+
+def release(*roles: str) -> None:
+    """Stops these roles' servers, so their GPUs are free between evals."""
+    for role in roles:
+        if group := _groups.pop(role, None):
+            group.stop()
 
 
 def stop_all() -> None:

@@ -75,10 +75,13 @@ def check_model(path: str, family: str, quant: str) -> str | None:
         limit = spec.upload_limit(family, quant)
     except ValueError as exc:
         return str(exc)
-    size = sum(p.stat().st_size for p in Path(path).rglob("*") if p.is_file())
+    root = Path(path)
+    files = [root] if root.is_file() else [p for p in root.rglob("*") if p.is_file()]
+    size = sum(p.stat().st_size for p in files)
     if size > limit:
         return f"{size} bytes exceeds the {limit}-byte upload limit for {family}.{quant}"
-    return pipeline.validate(Path(path), spec=spec, family=pipeline.load(family), quant=quant)
+    pair = spec.pair(family, quant)
+    return pipeline.validate(root, spec=spec, family=pipeline.load(family), pair=pair)
 
 
 def _require_valid(path: str, *, family: str, quant: str, skip: bool) -> bool:

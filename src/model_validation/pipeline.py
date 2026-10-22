@@ -10,7 +10,7 @@ from pathlib import Path
 
 from loguru import logger as log
 
-from common.config import ChainSpec
+from common.config import ChainSpec, Quant
 from model_validation import families
 from model_validation.checks import (
     check_architecture,
@@ -33,16 +33,30 @@ def load(family: str) -> Family:
     return families.load(family)
 
 
-def validate(model_dir: Path, *, spec: ChainSpec, family: Family, quant: str) -> str | None:
+def validate(model_dir: Path, *, spec: ChainSpec, family: Family, pair: Quant) -> str | None:
+    """`model_dir` may be the .gguf file itself for the gguf format."""
+    if pair.format == "gguf":
+        files = (
+            [model_dir.name]
+            if model_dir.is_file()
+            else [p.relative_to(model_dir).as_posix() for p in model_dir.rglob("*") if p.is_file()]
+        )
+        if reason := check_files(files, spec, pair.format):
+            return reason
+        from model_validation.gguf_checks import validate_gguf
+
+        return validate_gguf(model_dir, pair, family.name)
     files = [p.relative_to(model_dir).as_posix() for p in model_dir.rglob("*") if p.is_file()]
-    if reason := check_files(files, spec) or check_json(model_dir) or check_index(model_dir):
+    if reason := (
+        check_files(files, spec, pair.format) or check_json(model_dir) or check_index(model_dir)
+    ):
         return reason
     config = json.loads((model_dir / "config.json").read_text())
     layout = layout_from_dir(model_dir)
     if reason := (
         check_config_keys(config, family.genesis_config)
         or check_architecture(config, family)
-        or check_quant(config, quant)
+        or check_quant(config, pair.name)
         or check_layout(layout, family, config)
         or check_weight_bytes(layout, family)
         or check_values(model_dir)

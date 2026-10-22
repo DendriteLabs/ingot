@@ -3,6 +3,7 @@ validator agree on). Tuning constants live in each service's config.py."""
 
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass
 from functools import lru_cache
@@ -90,10 +91,39 @@ class R2Settings(BaseSettings):
         return key
 
 
+FORMATS = ("safetensors", "gguf")
+DEDUP_MODES = ("full", "hash")
+_HF_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
 @dataclass(frozen=True)
-class ChainSpec:
+class Quant:
+    """One competition of a family: a quantization with its format, genesis, limits and king
+    name."""
+
+    family: str
+    name: str
+    format: str  # "safetensors" | "gguf"
     genesis_repo: str
     genesis_revision: str
+    # the one file of a gguf genesis
+    genesis_file: str | None
+    upload_limit: int
+    weight_limit: int | None
+    king_name: str
+    # genesis repo files a crowned king is published with (it was not allowed to ship them)
+    publish_files: tuple[str, ...] = ()
+    # files that run the vision tower beside a gguf king (llama.cpp --mmproj), in vision_repo
+    # (repo@revision) or else the genesis repo
+    vision_files: tuple[str, ...] = ()
+    vision_repo: str | None = None
+    # "full": error fingerprints against the teacher (GPU); "hash": identical weight files only
+    dedup: str = "full"
+
+
+@dataclass(frozen=True)
+class ChainSpec:
+    # the open pair
     family: str
     quant: str
     teacher_repo: str
@@ -104,27 +134,40 @@ class ChainSpec:
     chain_generation: str
     mailbox_url: str
     required_files: tuple[str, ...]
-    genesis_files: tuple[str, ...]
-    upload_limits: dict[tuple[str, str], int]
-    king_names: dict[tuple[str, str], str]
+    quants: dict[tuple[str, str], Quant]
 
-    def allows_file(self, name: str) -> bool:
-        """A name that may exist in a submission's bucket folder: the required files or a
-        top-level *.safetensors shard."""
-        if "/" in name:
+    def allows_file(self, name: str, fmt: str) -> bool:
+        """A name that may exist in a submission's bucket folder. safetensors: the required files
+        or a top-level *.safetensors shard; gguf: a top-level *.gguf (one, see check_files). No
+        hidden name (a leading "."): publishing skips those, so a king would go out without them."""
+        if "/" in name or name.startswith("."):
             return False
+        if fmt == "gguf":
+            return name.endswith(".gguf")
         return name in self.required_files or name.endswith(".safetensors")
 
-    def upload_limit(self, family: str, quant: str) -> int:
-        """Bytes a miner who declared this pair may upload; an unlisted pair is not allowed."""
-        if (family, quant) not in self.upload_limits:
-            allowed = ", ".join(f"{f}.{q}" for f, q in self.upload_limits)
+    def pair(self, family: str, quant: str) -> Quant:
+        """The listed pair; an unlisted one is not allowed."""
+        if (family, quant) not in self.quants:
+            allowed = ", ".join(f"{f}.{q}" for f, q in self.quants)
             raise ValueError(f"{family}.{quant} is not an allowed pair ({allowed})")
-        return self.upload_limits[(family, quant)]
+        return self.quants[(family, quant)]
+
+    @property
+    def open(self) -> Quant:
+        """The pair miners may submit now."""
+        return self.quants[(self.family, self.quant)]
+
+    def closed(self, family: str, quant: str) -> bool:
+        return (family, quant) != (self.family, self.quant)
+
+    def upload_limit(self, family: str, quant: str) -> int:
+        """Bytes a miner who declared this pair may upload."""
+        return self.pair(family, quant).upload_limit
 
     def king_name(self, family: str, quant: str) -> str:
         """The suffix a crowned king of this pair carries, e.g. 27B-FP8."""
-        return self.king_names[(family, quant)]
+        return self.pair(family, quant).king_name
 
 
 @lru_cache
@@ -142,10 +185,8 @@ def chain_spec(path: Path = REPO_ROOT / "chain.toml") -> ChainSpec:
     raw = tomllib.loads(path.read_text())
     files = raw["files"]
     return ChainSpec(
-        genesis_repo=raw["genesis"]["repo"],
-        genesis_revision=raw["genesis"]["revision"],
-        family=raw["genesis"]["family"],
-        quant=raw["genesis"]["quant"],
+        family=raw["competition"]["family"],
+        quant=raw["competition"]["active_quant"],
         teacher_repo=raw["teacher"]["repo"],
         teacher_revision=raw["teacher"]["revision"],
         dataset_repo=raw["dataset"]["repo"],
@@ -154,34 +195,56 @@ def chain_spec(path: Path = REPO_ROOT / "chain.toml") -> ChainSpec:
         chain_generation=raw["private_store"]["chain_generation"],
         mailbox_url=raw["private_store"]["mailbox_url"],
         required_files=tuple(files["required"]),
-        genesis_files=tuple(files["genesis"]),
-        upload_limits=_upload_limits(raw),
-        king_names=_king_names(raw),
+        quants=_quants(raw),
     )
 
 
-def _upload_limits(raw: dict) -> dict[tuple[str, str], int]:
-    limits = {
-        (family, quant): limit
-        for family, quants in raw["upload_limits"].items()
-        for quant, limit in quants.items()
-    }
-    if bad := [f"{f}.{q}" for (f, q), v in limits.items() if not isinstance(v, int) or v < 1]:
-        raise ValueError(f"chain.toml [upload_limits] needs positive byte counts: {bad}")
-    genesis = (raw["genesis"]["family"], raw["genesis"]["quant"])
-    if genesis not in limits:
-        raise ValueError(f"chain.toml [upload_limits] has no entry for genesis {'.'.join(genesis)}")
-    return limits
-
-
-def _king_names(raw: dict) -> dict[tuple[str, str], str]:
-    names = {
-        (family, quant): name
-        for family, quants in raw["king_names"].items()
-        for quant, name in quants.items()
-    }
-    if bad := [f"{f}.{q}" for (f, q), v in names.items() if not isinstance(v, str) or not v]:
-        raise ValueError(f"chain.toml [king_names] needs non-empty names: {bad}")
-    if names.keys() != _upload_limits(raw).keys():
-        raise ValueError("chain.toml [king_names] must list the same pairs as [upload_limits]")
-    return names
+def _quants(raw: dict) -> dict[tuple[str, str], Quant]:
+    out: dict[tuple[str, str], Quant] = {}
+    for family, quants in raw["quants"].items():
+        for quant, c in quants.items():
+            where = f"chain.toml [quants.{family}.{quant}]"
+            if c.get("format") not in FORMATS:
+                raise ValueError(f"{where} format must be one of {', '.join(FORMATS)}")
+            for key in ("upload_limit", "weight_limit"):
+                value = c.get(key, 1)
+                if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                    raise ValueError(f"{where} {key} must be a positive byte count")
+            if c["format"] == "gguf" and not c.get("genesis_file"):
+                raise ValueError(f"{where} needs a genesis_file")
+            if not isinstance(c.get("king_name"), str) or not _HF_NAME.fullmatch(c["king_name"]):
+                raise ValueError(f"{where} needs a king_name of letters, digits, . _ -")
+            if c.get("vision_repo") and "@" not in c["vision_repo"]:
+                raise ValueError(f"{where} vision_repo must be repo@revision")
+            if c.get("dedup", "full") not in DEDUP_MODES:
+                raise ValueError(f"{where} dedup must be one of {', '.join(DEDUP_MODES)}")
+            if not c.get("genesis_repo") or not c.get("genesis_revision"):
+                raise ValueError(f"{where} needs genesis_repo and genesis_revision")
+            out[(family, quant)] = Quant(
+                family=family,
+                name=quant,
+                format=c["format"],
+                genesis_repo=c["genesis_repo"],
+                genesis_revision=c["genesis_revision"],
+                genesis_file=c.get("genesis_file"),
+                upload_limit=c["upload_limit"],
+                weight_limit=c.get("weight_limit"),
+                king_name=c["king_name"],
+                vision_files=tuple(c.get("vision_files", [])),
+                vision_repo=c.get("vision_repo"),
+                dedup=c.get("dedup", "full"),
+                publish_files=tuple(
+                    c.get(
+                        "publish_files",
+                        raw["files"]["genesis"] if c["format"] == "safetensors" else [],
+                    )
+                ),
+            )
+    names = [q.king_name for q in out.values()]
+    if dupes := sorted({n for n in names if names.count(n) > 1}):
+        raise ValueError(f"chain.toml [quants] king names must be unique: {', '.join(dupes)}")
+    competition = raw["competition"]
+    if (competition["family"], competition["active_quant"]) not in out:
+        open_ = f"{competition['family']}.{competition['active_quant']}"
+        raise ValueError(f"chain.toml [competition] opens {open_}, which [quants] does not list")
+    return out

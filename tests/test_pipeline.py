@@ -224,7 +224,7 @@ def test_challenger_beats_king_and_gets_paid(conn, s, spec):
 
     published: list[str] = []
 
-    def publish(_model_dir: Path, repo: str, _card: str) -> str:
+    def publish(_model_dir: Path, repo: str, _card: str, _pair: object) -> str:
         published.append(repo)
         return "url"
 
@@ -238,7 +238,7 @@ def test_challenger_beats_king_and_gets_paid(conn, s, spec):
     assert weight_setter.run_once(conn, chain, worker=WORKER, s=s)
     assert chain.calls == [([0, 7], [0.8, 0.2])]
     ws = db.one(conn, "SELECT ok, kings FROM weight_sets")
-    assert ws["ok"] and ws["kings"] == [king["id"], 1], "newest king first, then genesis"
+    assert ws["ok"] and ws["kings"] == [king["id"]], "crowned kings only, never genesis"
     chain.current = 1050
     assert not weight_setter.run_once(conn, chain, worker=WORKER, s=s), (
         "rate limited for SET_RATE_BLOCKS"
@@ -390,6 +390,7 @@ def test_one_eval_at_a_time(conn, s):
     assert state(conn, waiting) == states.UNIQUE
 
 
+@pytest.mark.usefixtures("fp8_open")
 def test_used_hotkey_cannot_activate_again(conn):
     payload = activation_signal_payload(bytes(32), family="qwen38_27b", quant="fp8")
     fresh_hotkey, spent_hotkey = "5Fresh" + "A" * 42, "5Spent" + "B" * 42  # SS58-shaped
@@ -662,7 +663,7 @@ def test_a_challenger_that_does_not_load_is_invalid_not_retried(conn, s, spec):
     evaluate(conn, s, exits_on(s.gpus("challenger")[0]))
     assert state(conn, sid) == states.INVALID
     error = db.one(conn, "SELECT error FROM submissions WHERE id = %s", (sid,))["error"]
-    assert error == f"the model does not load: {reason}"
+    assert error == f"the model does not run: {reason}"
 
 
 def test_a_hotkey_is_barred_after_max_invalid(conn, s, spec):
@@ -795,3 +796,67 @@ def test_an_eval_is_stored_after_its_connection_drops_mid_duel(conn, s, spec):
     assert state(conn, sid) == states.WON
     ev = db.one(conn, "SELECT won, finished_at FROM evals")
     assert ev["won"] and ev["finished_at"]
+
+
+def test_a_queued_submission_of_a_closed_quant_fails_and_gets_its_attempt_back(conn, s, spec):
+    sid = submit(conn)  # fp8, closed now that q2 is open
+    conn.execute(
+        "INSERT INTO private_registrations (netuid, uid, hotkey, registration_id,"
+        " activation_block, submission_pubkey, family, quant, state, submission_id)"
+        " VALUES (97, 7, 'hk-1', 'rid-1', 1, 'pk', 'qwen38_27b', 'fp8', 'SUBMITTED', %s)",
+        (sid,),
+    )
+    assert db.release_closed(conn, spec) == 1
+    row = db.one(conn, "SELECT state, error FROM submissions WHERE id = %s", (sid,))
+    assert (row["state"], row["error"]) == (states.FAILED, "closed")
+    reg = db.one(conn, "SELECT state, extra_attempts FROM private_registrations")
+    assert (reg["state"], reg["extra_attempts"]) == ("FAILED", 1)
+    assert not validate(conn, s, spec), "nothing left to claim"
+    assert db.release_closed(conn, spec) == 0
+
+
+def test_a_running_row_of_a_closed_quant_is_released_only_after_its_worker(conn, spec):
+    sid = submit(conn)  # fp8, closed
+    conn.execute(
+        "UPDATE submissions SET state = 'VALIDATING', lease_until = now() + interval '1 hour'"
+        " WHERE id = %s",
+        (sid,),
+    )
+    assert db.release_closed(conn, spec) == 0, "its worker still owns it"
+    db.finish(conn, sid, states.VALID)  # the worker's finish is not overwritten afterwards
+    assert db.release_closed(conn, spec) == 1 and state(conn, sid) == states.FAILED
+    assert db.release_closed(conn, spec) == 0, "released once: one attempt back, not two"
+
+
+def test_the_first_q2_king_is_ingot_i_even_after_fp8_kings(conn, s, spec):
+    crown_genesis(conn)
+    fp8 = submit(conn, hotkey="hk-1", uid=7)
+    conn.execute("UPDATE submissions SET state = 'WON' WHERE id = %s", (fp8,))
+    publish = lambda _d, repo, _c, _p: repo  # noqa: E731
+    assert promoter.run_once(conn, worker=WORKER, s=s, spec=spec, fetch=fetch, publish=publish)
+    q2 = submit(conn, hotkey="hk-2", uid=8)
+    conn.execute("UPDATE submissions SET state = 'WON', quant = 'q2' WHERE id = %s", (q2,))
+    assert promoter.run_once(conn, worker=WORKER, s=s, spec=spec, fetch=fetch, publish=publish)
+    kings = conn.execute("SELECT hf_repo, family, quant FROM kings ORDER BY id").fetchall()
+    assert [(k["hf_repo"], k["quant"]) for k in kings] == [
+        ("org/genesis", "fp8"),
+        ("ingot-test/Ingot-I-27B-FP8", "fp8"),
+        ("ingot-test/Ingot-I-27B-Q2", "q2"),
+    ]
+    names = [k["name"] for k in dashboard_state.build(conn, s=s, spec=spec)["kings"]]
+    assert names == ["GENESIS", "Ingot-I-27B-FP8", "Ingot-I-27B-Q2"]
+
+
+def test_a_challenger_duels_the_king_of_its_own_quant(conn, s):
+    crown_genesis(conn)
+    conn.execute(
+        "INSERT INTO kings (model_uri, hf_repo, family, quant)"
+        " VALUES ('org/q2-genesis@main', 'org/q2-genesis', 'qwen38_27b', 'q2')"
+    )
+    sid = submit(conn)
+    conn.execute("UPDATE submissions SET state = 'UNIQUE' WHERE id = %s", (sid,))
+    assert evaluate(conn, s, duel(0.5, 0.1))
+    king = db.one(conn, "SELECT k.quant FROM evals e JOIN kings k ON k.id = e.king_id")
+    assert king["quant"] == "fp8"
+    with pytest.raises(RuntimeError, match="create_genesis.py --quant q3"):
+        db.current_king(conn, "qwen38_27b", "q3")

@@ -157,11 +157,21 @@ def fetch_credentials(
             attempt += 1
 
 
+def _root(local_dir: str) -> Path:
+    """The folder the relpaths are taken from: --path itself, or a .gguf file's folder."""
+    path = Path(local_dir).resolve()
+    return path.parent if path.is_file() and path.suffix == ".gguf" else path
+
+
 def upload_paths(local_dir: str) -> list[str]:
-    """Every relpath the uploader sends; dotfiles and __pycache__ are left out."""
-    root = Path(local_dir).resolve()
+    """Every relpath the uploader sends; dotfiles and __pycache__ are left out. A .gguf file
+    path sends that one file."""
+    path = Path(local_dir).resolve()
+    if path.is_file() and path.suffix == ".gguf":
+        return [path.name]
+    root = path
     if not root.is_dir():
-        raise SystemExit(f"model path is not a directory: {local_dir}")
+        raise SystemExit(f"model path is neither a directory nor a .gguf file: {local_dir}")
     paths = []
     for path in sorted(p for p in root.rglob("*") if p.is_file()):
         rel = path.relative_to(root)
@@ -176,7 +186,7 @@ def upload_paths(local_dir: str) -> list[str]:
 
 def plan_upload(local_dir: str) -> list[tuple[str, int, str, Path]]:
     """(relpath, size, sha256, absolute path) for every file to upload."""
-    root = Path(local_dir).resolve()
+    root = _root(local_dir)
     plan = []
     for rel in upload_paths(local_dir):
         path = root / rel
