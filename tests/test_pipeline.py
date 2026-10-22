@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import zlib
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
@@ -56,6 +56,9 @@ def rules(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(eval_config, "KL_MARGIN", 0.05)
     monkeypatch.setattr(eval_config, "DIST_MARGIN", 0.05)
     monkeypatch.setattr(validation_config, "MAX_ATTEMPTS", 2)
+    # an eval claimed ahead by one test must not reach the next
+    monkeypatch.setattr(eval_service, "_pending", None)
+    monkeypatch.setattr(eval_service, "_claiming", None)
 
 
 @pytest.fixture(autouse=True)
@@ -163,7 +166,7 @@ def dedup(
     )
 
 
-def evaluate(conn, s, scorer: Scorer, upload=no_upload) -> bool:
+def evaluate(conn, s, scorer: Scorer, upload=no_upload, prefetcher=None) -> bool:
     return eval_service.run_once(
         db.Link(conn),
         worker=WORKER,
@@ -174,6 +177,7 @@ def evaluate(conn, s, scorer: Scorer, upload=no_upload) -> bool:
         fetch=fetch,
         scorer=scorer,
         upload=upload,
+        **({"prefetcher": prefetcher} if prefetcher else {}),
     )
 
 
@@ -373,6 +377,66 @@ def test_the_next_eval_faces_the_new_king(conn, s, spec):
     assert evaluate(conn, s, score) and state(conn, second) == states.LOST
     faced = db.one(conn, "SELECT king_id FROM evals WHERE submission_id = %s", (second,))
     assert faced["king_id"] == new_king["id"]
+
+
+def test_the_next_eval_is_claimed_and_answered_ahead(conn, s, spec):
+    """While a duel drains its teacher, the next submission is claimed and drawn and the teacher
+    starts answering it; that eval then skips those answers' teacher stage, and still faces the
+    king the duel before it crowned."""
+    crown_genesis(conn)
+    first, second = submit(conn, hotkey="hk-1", uid=7), submit(conn, hotkey="hk-2", uid=8)
+    for _ in range(2):
+        validate(conn, s, spec)
+        dedup(conn, s)
+    seen: list[dict] = []
+
+    class FakePrefetch:
+        def __init__(self, _teacher_dir: Path, drawn: Sequence[Sample]) -> None:
+            self.drawn = drawn
+
+        def result(self) -> dict:
+            return {i: ([1, 2], "f") for i in range(len(self.drawn))}
+
+    def claimed_ahead() -> None:
+        thread = eval_service._claiming
+        assert thread is not None
+        thread.join()
+
+    def score(
+        _teacher: Path,
+        challenger: Path,
+        king: Path,
+        samples: Sequence[Sample],
+        *,
+        prefetched: dict,
+        on_teacher_drained: Callable[[], None],
+        **_: object,
+    ) -> Duel:
+        seen.append(dict(prefetched))
+        on_teacher_drained()
+        # a real duel runs on for minutes after draining; here the claim must land before the
+        # verdict, which would close the queue for the coronation
+        claimed_ahead()
+
+        def of(model: Path) -> Distance:
+            value = 0.1 if "hk-1" in str(model) else 0.5
+            return Distance(value, value)
+
+        records = [{"sample_id": sample.id} for sample in samples]
+        return Duel(of(challenger), of(king), Distance(0.0, 0.0), samples=records)
+
+    assert evaluate(conn, s, score, prefetcher=FakePrefetch) and state(conn, first) == states.WON
+    claimed_ahead()
+    assert state(conn, second) == states.EVALUATING, "claimed while the first duel drained"
+    assert db.one(conn, "SELECT count(*) AS n FROM evals")["n"] == 1, "its eval starts later"
+    assert promoter.run_once(
+        conn, worker=WORKER, s=s, spec=spec, fetch=fetch, publish=lambda *_: "url"
+    )
+    assert evaluate(conn, s, score, prefetcher=FakePrefetch) and state(conn, second) == states.LOST
+    new_king = db.one(conn, "SELECT id FROM kings ORDER BY id DESC LIMIT 1")["id"]
+    faced = db.one(conn, "SELECT king_id FROM evals WHERE submission_id = %s", (second,))
+    assert faced["king_id"] == new_king
+    assert seen[0] == {} and seen[1] == {i: ([1, 2], "f") for i in range(4)}
 
 
 def test_one_eval_at_a_time(conn, s):
@@ -785,7 +849,9 @@ def test_the_running_eval_shows_its_progress(conn, s, spec):
     assert validate(conn, s, spec) and dedup(conn, s)
     seen: list[dict] = []
 
-    def score(_t: Path, _c: Path, _k: Path, samples: Sequence[Sample], *, on_progress) -> Duel:
+    def score(
+        _t: Path, _c: Path, _k: Path, samples: Sequence[Sample], *, on_progress, **_: object
+    ) -> Duel:
         on_progress(3)
         seen.extend(r for r in dashboard_state._queue(conn)["rows"] if r["id"] == sid)
         return duel(0.5, 0.1)(_t, _c, _k, samples)

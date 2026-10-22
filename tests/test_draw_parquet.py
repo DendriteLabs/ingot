@@ -85,3 +85,6 @@ def test_the_draw_is_the_full_row_draw(files, seed, per_domain):
     assert dataset._draw_parquet(files, seed, per_domain, fits) == reference(
         files, seed, per_domain, fits
     )
+    # the eval holds the corpus in memory and draws from that, the same draw
+    held = dataset.Dataset([], "x", files, 0, dataset.load_index(files))
+    assert held.draw(seed, per_domain, fits) == reference(files, seed, per_domain, fits)

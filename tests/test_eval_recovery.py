@@ -24,6 +24,7 @@ class Scripted(_Evaluation):
     def __init__(self, outcomes: Sequence[Result | Exception]) -> None:
         self.outcomes = outcomes
         self.compare_on, self.preemptions_at_start = {}, 0.0
+        self.on_teacher_drained = None
 
     def _preemptions(self) -> float:
         return 0.0

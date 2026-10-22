@@ -240,12 +240,13 @@ class LlamaServer:
     """One llama-states process on one GPU: the gguf model reads forced tokens and writes the
     hidden states of LAYERS as a vLLM server's states file. It takes one request at a time."""
 
-    def __init__(self, model_dir: Path, gpu: int) -> None:
+    def __init__(self, model_dir: Path, gpu: int, index: int = 0) -> None:
         (self.model,) = model_dir.glob("*.gguf")
         self.gpu, self.lock = gpu, threading.Lock()
         self.dir = HIDDEN_STATES_DIR / f"gpu{gpu}"
         self.dir.mkdir(parents=True, exist_ok=True)
-        self.log = settings().eval_work_dir / "llama" / f"gpu{gpu}.log"
+        name = f"gpu{gpu}.log" if index == 0 else f"gpu{gpu}-{index}.log"
+        self.log = settings().eval_work_dir / "llama" / name
         self.log.parent.mkdir(parents=True, exist_ok=True)
         if self.log.exists():
             self.log.replace(self.log.with_suffix(".prev.log"))
@@ -340,12 +341,14 @@ class LlamaServer:
 
 
 class LlamaGroup:
-    """A gguf model on several GPUs, one llama-states each. It only reads: the answer is always
-    the teacher's, so a request is a forced read and returns exactly the forced answer."""
+    """A gguf model on several GPUs, LLAMA_PER_GPU llama-states each. It only reads: the answer is
+    always the teacher's, so a request is a forced read and returns exactly the forced answer."""
 
     def __init__(self, model_dir: Path, gpus: Sequence[int], role: str = "model") -> None:
         self.model_dir, self.role = model_dir, role
-        self.servers = [LlamaServer(model_dir, gpu) for gpu in gpus]
+        self.servers = [
+            LlamaServer(model_dir, gpu, k) for gpu in gpus for k in range(config.LLAMA_PER_GPU)
+        ]
         self.waiting = [0] * len(self.servers)
         self.cv = threading.Condition()
 

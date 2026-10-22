@@ -8,12 +8,14 @@ import heapq
 import json
 from collections import defaultdict
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from common import models
 from common.config import ChainSpec
+from eval_service import config
 
 _PARQUET_COLUMNS = (
     "dataset",
@@ -39,17 +41,31 @@ class Sample:
 
 
 @dataclass(frozen=True)
+class ParquetIndex:
+    rows: dict[tuple[str, str], tuple[list[str], list[int], list[str]]]
+    starts: list[int]  # the serial of each file's first row
+    prompts: list[Any]  # each file's user_prompt column, a pyarrow ChunkedArray
+
+    def prompt(self, serial: int) -> str:
+        f = bisect.bisect_right(self.starts, serial) - 1
+        return self.prompts[f][serial - self.starts[f]].as_py()
+
+
+@dataclass(frozen=True)
 class Dataset:
     samples: list[Sample]
     sha256: str
     parquet_files: tuple[Path, ...] = ()
     parquet_rows: int = 0
+    index: ParquetIndex | None = None
 
     @property
     def row_count(self) -> int:
         return self.parquet_rows or len(self.samples)
 
     def draw(self, seed: str, samples_per_domain: int, fits: Fits | None = None) -> list[Sample]:
+        if self.index:
+            return _draw_index(self.index, seed, samples_per_domain, fits)
         if self.parquet_files:
             return _draw_parquet(self.parquet_files, seed, samples_per_domain, fits)
         return draw(self.samples, seed, samples_per_domain, fits)
@@ -93,7 +109,9 @@ def fetch(spec: ChainSpec, local: Path) -> Dataset:
     digest = hashlib.sha256(
         f"{spec.dataset_repo}@{root.name}:{spec.dataset_split}".encode()
     ).hexdigest()
-    return Dataset(samples=[], sha256=digest, parquet_files=files, parquet_rows=rows)
+    return Dataset(
+        samples=[], sha256=digest, parquet_files=files, parquet_rows=rows, index=load_index(files)
+    )
 
 
 def draw(
@@ -109,15 +127,19 @@ def draw(
 def _draw_parquet(
     files: tuple[Path, ...], seed: str, samples_per_domain: int, fits: Fits | None = None
 ) -> list[Sample]:
+    return _draw_index(load_index(files), seed, samples_per_domain, fits)
+
+
+def load_index(files: tuple[Path, ...]) -> ParquetIndex:
+    """Reads the id columns and the prompts of every file into a ParquetIndex."""
     import pyarrow as pa
     import pyarrow.compute as pc
     import pyarrow.parquet as pq
 
-    # Keeping the lowest seeded hashes makes the result independent of shard and row order.
-    # The ranking pass reads the id columns only; the prompts of the kept rows are read after.
-    keep = samples_per_domain * (OVERDRAW if fits else 1)
-    reservoirs: dict[tuple[str, str], list[tuple[int, str, int, str]]] = defaultdict(list)
-    starts = []  # the serial of each file's first row
+    rows: dict[tuple[str, str], tuple[list[str], list[int], list[str]]] = defaultdict(
+        lambda: ([], [], [])
+    )
+    starts = []
     serial = 0
     for path in files:
         parquet = pq.ParquetFile(path)
@@ -139,52 +161,45 @@ def _draw_parquet(
             for sample_id, source, domain, language in zip(
                 ids, *columns, batch["language"].to_pylist(), strict=True
             ):
-                rank = _rank(seed, sample_id)
-                reservoir = reservoirs[domain, language]
-                if len(reservoir) < keep:
-                    heapq.heappush(reservoir, (-rank, sample_id, serial, source))
-                elif rank < -reservoir[0][0]:
-                    heapq.heapreplace(reservoir, (-rank, sample_id, serial, source))
+                key_ids, key_serials, key_sources = rows[domain, language]
+                key_ids.append(sample_id)
+                key_serials.append(serial)
+                key_sources.append(source)
                 serial += 1
+    # the prompt columns: tens of GB, read in parallel (pyarrow lets the threads run)
+    with ThreadPoolExecutor(config.DRAW_THREADS) as pool:
+        prompts = list(
+            pool.map(lambda p: pq.read_table(p, columns=["user_prompt"])["user_prompt"], files)
+        )
+    return ParquetIndex(dict(rows), starts, prompts)
 
-    prompts = _prompts(files, starts, {item[2] for r in reservoirs.values() for item in r})
+
+def _draw_index(
+    index: ParquetIndex, seed: str, samples_per_domain: int, fits: Fits | None
+) -> list[Sample]:
+    # Keeping the lowest seeded hashes makes the result independent of shard and row order.
+    # Each key's rows are ranked in file order, as reading the files ranked them.
+    keep = samples_per_domain * (OVERDRAW if fits else 1)
     by_domain: dict[str, dict[str, list[Sample]]] = defaultdict(dict)
-    for (domain, language), reservoir in reservoirs.items():
+    for (domain, language), (ids, serials, sources) in index.rows.items():
+        reservoir: list[tuple[int, str, int, str]] = []
+        for sample_id, serial, source in zip(ids, serials, sources, strict=True):
+            rank = _rank(seed, sample_id)
+            if len(reservoir) < keep:
+                heapq.heappush(reservoir, (-rank, sample_id, serial, source))
+            elif rank < -reservoir[0][0]:
+                heapq.heapreplace(reservoir, (-rank, sample_id, serial, source))
         by_domain[domain][language] = [
             Sample(
                 id=sample_id,
-                messages=[{"role": "user", "content": prompts[row]}],
+                messages=[{"role": "user", "content": index.prompt(serial)}],
                 domain=domain,
                 source=source,
                 language=language,
             )
-            for _, sample_id, row, source in reservoir
+            for _, sample_id, serial, source in reservoir
         ]
     return _choose(by_domain, seed, samples_per_domain, fits)
-
-
-def _prompts(files: tuple[Path, ...], starts: list[int], serials: set[int]) -> dict[int, str]:
-    """user_prompt of the given rows (serials over all files in order), reading only the row
-    groups that hold them."""
-    import pyarrow.parquet as pq
-
-    wanted: dict[int, list[int]] = defaultdict(list)
-    for serial in serials:
-        wanted[bisect.bisect_right(starts, serial) - 1].append(serial)
-    out: dict[int, str] = {}
-    for f, rows in wanted.items():
-        parquet = pq.ParquetFile(files[f])
-        groups = [0]
-        for g in range(parquet.metadata.num_row_groups):
-            groups.append(groups[-1] + parquet.metadata.row_group(g).num_rows)
-        by_group: dict[int, list[int]] = defaultdict(list)
-        for serial in rows:
-            by_group[bisect.bisect_right(groups, serial - starts[f]) - 1].append(serial)
-        for g, serials_in in by_group.items():
-            column = parquet.read_row_group(g, columns=["user_prompt"])["user_prompt"]
-            for serial in serials_in:
-                out[serial] = column[serial - starts[f] - groups[g]].as_py()
-    return out
 
 
 def _choose(
@@ -197,11 +212,14 @@ def _choose(
     seeded rank order; what `fits` rejects is passed over, within OVERDRAW times the draw."""
     keep = samples_per_domain * OVERDRAW
     chosen: list[Sample] = []
+    # fits renders the long candidates through the tokenizer, which lets other threads run
+    pool = ThreadPoolExecutor(config.DRAW_THREADS)
     for domain, languages in tree.items():
         ranked: dict[str, list[Sample]] = {}
         for language, items in languages.items():
-            ordered = sorted(items, key=lambda sample: (_rank(seed, sample.id), sample.id))
-            ranked[language] = [s for s in ordered[:keep] if fits is None or fits(s)]
+            ordered = sorted(items, key=lambda sample: (_rank(seed, sample.id), sample.id))[:keep]
+            passes = pool.map(fits, ordered) if fits else (True for _ in ordered)
+            ranked[language] = [s for s, ok in zip(ordered, passes, strict=True) if ok]
         counts = _equal_shares(
             {language: len(items) for language, items in ranked.items()},
             samples_per_domain,
@@ -209,6 +227,7 @@ def _choose(
         )
         for language, count in counts.items():
             chosen.extend(ranked[language][:count])
+    pool.shutdown()
     return sorted(chosen, key=lambda sample: sample.id)
 
 
