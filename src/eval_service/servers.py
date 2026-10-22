@@ -314,8 +314,8 @@ class LlamaServer:
         assert self.process.stdin
         # generous for a 32k-token read at a few thousand tokens per second
         budget = config.LLAMA_READ_S + len(tokens) / 1000 * config.LLAMA_S_PER_1K
-        deadline = time.monotonic() + budget
         with self.lock:
+            deadline = time.monotonic() + budget
             try:
                 self.process.stdin.write(json.dumps(request) + "\n")
                 self.process.stdin.flush()
