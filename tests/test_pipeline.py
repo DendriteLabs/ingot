@@ -440,6 +440,31 @@ def test_a_restart_reactivates_offline_but_not_draining(conn):
         assert db.one(conn, "SELECT state FROM workers WHERE name = %s", (name,))["state"] == after
 
 
+def test_a_silent_worker_goes_offline_and_comes_back_with_its_next_heartbeat(conn):
+    alive, gone, drained = (db.register_worker(conn, n) for n in ("alive", "gone", "drained"))
+    stale = f"now() - make_interval(secs => {db.WORKER_STALE_S + 60})"
+    conn.execute(f"UPDATE workers SET last_heartbeat_at = {stale} WHERE name <> %s", (alive,))
+    conn.execute("UPDATE workers SET state = 'DRAINING' WHERE name = %s", (drained,))
+
+    db.heartbeat(conn, alive)
+    rows = conn.execute("SELECT name, state FROM workers").fetchall()
+    assert {r["name"]: r["state"] for r in rows if r["name"] != WORKER} == {
+        alive: "ACTIVE",
+        gone: "OFFLINE",
+        drained: "DRAINING",
+    }
+
+    db.heartbeat(conn, gone)  # it was only busy (a long eval): back as soon as it speaks
+    assert db.one(conn, "SELECT state FROM workers WHERE name = %s", (gone,))["state"] == "ACTIVE"
+
+
+def test_a_draining_worker_stays_draining_through_its_heartbeats(conn):
+    name = db.register_worker(conn, "svc")
+    conn.execute("UPDATE workers SET state = 'DRAINING' WHERE name = %s", (name,))
+    db.heartbeat(conn, name)
+    assert db.one(conn, "SELECT state FROM workers WHERE name = %s", (name,))["state"] == "DRAINING"
+
+
 def test_every_state_change_is_an_event(conn, s, spec):
     crown_genesis(conn)
     sid = submit(conn, hotkey="hk-1", uid=7)

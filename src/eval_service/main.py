@@ -194,6 +194,9 @@ def main() -> None:
     teacher_dir = models.snapshot(spec.teacher_repo, spec.teacher_revision)
     data = dataset.fetch(spec, s.dataset_path)
     fits = run.fits(run.load_tokenizer(teacher_dir))  # the draw sizes prompts with it
+    if not s.teacher_url:
+        # a teacher on this box's GPUs loads now, not with the first eval; every eval keeps it
+        servers.serve({"teacher": teacher_dir})
     worker = db.register_worker(link.conn(), "eval_service")
     log.info(
         "eval service started — teacher {} dataset {} ({} samples); {} orphaned state files swept",

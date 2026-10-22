@@ -19,6 +19,9 @@ from common.config import ChainSpec, settings
 
 Row = dict[str, Any]
 Conn = psycopg.Connection[Row]
+# a worker silent this long is OFFLINE: one killed without its exit write (its box gone, or its
+# tunnel cut first) would otherwise show ACTIVE for good
+WORKER_STALE_S = 30 * 60
 
 
 def connect(url: str | None = None) -> Conn:
@@ -85,11 +88,19 @@ def register_worker(conn: Conn, service: str) -> str:
 
 
 def heartbeat(conn: Conn, worker: str, *, queued: str | None = None) -> None:
-    """Touch the worker row; `queued` is the submission state this service drains."""
+    """Touch the worker row; `queued` is the submission state this service drains. A row marked
+    OFFLINE while it was silent (a long eval) comes back ACTIVE. Every other ACTIVE row silent for
+    WORKER_STALE_S goes OFFLINE; a DRAINING one stays, so no heartbeat undoes a drain."""
     conn.execute(
         "UPDATE workers SET last_heartbeat_at = now(),"
+        " state = CASE WHEN state = 'OFFLINE' THEN 'ACTIVE' ELSE state END,"
         " queued = (SELECT count(*) FROM submissions WHERE state = %s) WHERE name = %s",
         (queued, worker),
+    )
+    conn.execute(
+        "UPDATE workers SET state = 'OFFLINE' WHERE state = 'ACTIVE'"
+        " AND last_heartbeat_at < now() - make_interval(secs => %s)",
+        (WORKER_STALE_S,),
     )
 
 
