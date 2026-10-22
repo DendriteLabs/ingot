@@ -6,8 +6,9 @@ LLAMA_CPP_COMMIT = "e3de715222b2667c54a267441159a5729f11155e"  # tag prism-b1077
 LLAMA_STATES = "build/llama_states/llama-states"
 LLAMA_BATCH = 2048
 # A read spends most of its time off the GPU, writing its ~0.7 GB states file: one process kept a
-# GPU 10-20% busy, so a second one about doubles the reads a GPU gets through. Each holds ~12 GB.
-LLAMA_PER_GPU = 2
+# GPU 10-20% busy, and two got through an eval's reads in a quarter of its time. Four on one GPU
+# per role (~12 GB each) leave the other GPUs to the teacher, the stage every eval waits on.
+LLAMA_PER_GPU = 4
 # A read that takes longer than LLAMA_READ_S plus LLAMA_S_PER_1K per thousand tokens means a hung
 # process (genesis reads ~3k tokens/s); it is stopped and blamed on its GPU's model.
 LLAMA_READ_S = 120
@@ -26,9 +27,9 @@ DRAW_THREADS = 32
 KL_MARGIN = 0.015  # of the king's mean KL(teacher ‖ model) per answer token
 DIST_MARGIN = 0.0084  # of the king's mean |h - h_teacher| / |h_teacher| over LAYERS
 
-# One vLLM server per GPU. The comparison math runs on the challenger's GPUs, whose servers
-# leave room for it (an lm_head copy and a few GiB of work space).
-MEMORY_SHARE = {"teacher": 0.88, "king": 0.88, "challenger": 0.80}
+# One vLLM server per GPU. The comparison math runs on the king's and the challenger's GPUs, whose
+# servers leave room for it (an lm_head copy and a few GiB of work space).
+MEMORY_SHARE = {"teacher": 0.88, "king": 0.80, "challenger": 0.80}
 BASE_PORT = 9100
 SERVER_START_S = 3600
 # Hidden states are compared at every 8th layer; the last one also gives the next-token

@@ -136,7 +136,10 @@ class _Evaluation:
         serving = time.monotonic()
         self.tokenizer = load_tokenizer(models["teacher"])
         self.eos = _eos(models["teacher"])
-        devices = [f"cuda:{gpu}" for gpu in settings().gpus("challenger")]
+        # both readers' GPUs: a gguf reader leaves most of its GPU free, and the comparison is a
+        # quarter of an eval's GPU time, too much for one GPU alone
+        readers = (*settings().gpus("king"), *settings().gpus("challenger"))
+        devices = [f"cuda:{gpu}" for gpu in readers]
         self.heads = metrics.heads(models, devices)
         log.info(
             "eval setup: servers ready in {:.0f}s, tokenizer and final heads loaded in {:.0f}s",

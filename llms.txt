@@ -126,8 +126,8 @@ Lower is better. The teacher rereading its own answer gives the noise floor, rec
 every eval: batching alone makes two runs of the same model differ by about that much.
 
 **q2 (GGUF)** models read the answer in `llama-states` (`src/eval_service/llama_states/`), a
-small program on the pinned fork's own library, one process per RTX PRO 6000 Blackwell GPU: one
-request at a time, flash attention, a 16-bit KV cache, passes of 2048 tokens, the hidden states
+small program on the pinned fork's own library, `LLAMA_PER_GPU` processes per RTX PRO 6000
+Blackwell GPU, each one request at a time, flash attention, a 16-bit KV cache, passes of 2048 tokens, the hidden states
 after every 8th block taken by the fork's own layer capture. The evaluator rebuilds the
 next-token distribution from your last hidden state with your own `output_norm` and
 `output.weight`, dequantized exactly and with the fork's Hadamard rotation applied, in float32
