@@ -254,10 +254,10 @@ def _fails(conn: db.Conn) -> list[dict[str, Any]]:
                u.source AS barred_by,
                u.created_at AS barred_at
         FROM (
-            SELECT hotkey, uid, state AS stage, error AS reason, updated_at AS at
+            SELECT hotkey, uid, quant, state AS stage, error AS reason, updated_at AS at
             FROM submissions WHERE state IN ('INVALID', 'DUPLICATE', 'FAILED')
             UNION ALL
-            SELECT hotkey, uid, 'UPLOAD' AS stage, fault_message AS reason, updated_at AS at
+            SELECT hotkey, uid, quant, 'UPLOAD' AS stage, fault_message AS reason, updated_at AS at
             FROM private_registrations WHERE state = 'FAILED'
         ) f LEFT JOIN used_hotkeys u ON u.hotkey = f.hotkey
         ORDER BY f.at DESC LIMIT %s

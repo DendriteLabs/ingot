@@ -72,7 +72,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .links .llms:disabled { opacity: 0.5; cursor: wait; }
 
 /* ---------- hero ---------- */
-main { display: flex; flex-direction: column; gap: 64px; padding-top: 56px; padding-bottom: 96px; }
+main { display: flex; flex-direction: column; gap: 64px; padding-top: 56px; padding-bottom: 96px; counter-reset: section; }
 .hero { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 48px; align-items: stretch; }
 .eyebrow, .stamp-label, .section .head, .foot {
   font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.2em;
@@ -140,10 +140,12 @@ main { display: flex; flex-direction: column; gap: 64px; padding-top: 56px; padd
 .stamp-repo a:hover { color: var(--stamp-fg); }
 
 /* ---------- sections ---------- */
-.section { border-top: 1px solid var(--line-strong); padding-top: 18px; min-width: 0; }
+.section { border-top: 1px solid var(--line-strong); padding-top: 18px; min-width: 0; counter-increment: section; }
 .section .head { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; margin-bottom: 18px; }
 .section .head .label { color: var(--text); font-weight: 500; }
 .section .head .label b { font-weight: 400; color: var(--muted); margin-right: 14px; }
+/* sections number themselves, so one the page hides leaves no gap */
+.section .head .label b::before { content: counter(section, decimal-leading-zero); }
 .section .head .meta { color: var(--muted); letter-spacing: 0.14em; text-align: right; }
 .section .head .meta b { font-weight: inherit; color: var(--text); }
 .empty { padding: 28px 0; text-align: center; font-family: var(--mono); font-size: 12px; color: var(--muted); }
@@ -163,6 +165,9 @@ main { display: flex; flex-direction: column; gap: 64px; padding-top: 56px; padd
 .lineage .name a:hover { color: var(--accent-ink); }
 .lineage .meta-line { font-family: var(--mono); font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lineage .gain { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--accent-ink); }
+.kings .empty { display: grid; place-items: center; }
+.kings .chart > .empty { height: 280px; }
+.lineage > .empty { flex: 1; }
 @media (max-width: 960px) { .kings { grid-template-columns: minmax(0, 1fr); } .lineage { height: auto; } }
 @media (max-width: 560px) { .lineage .meta-line { white-space: normal; } }
 

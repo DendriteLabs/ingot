@@ -88,10 +88,12 @@ include = [
     "tests/test_dedup.py",
     "src/eval_service/dataset.py",
     "tests/test_dataset.py",
+    "tests/test_answer_rows.py",
 ]
 
 [tool.ty.overrides.rules]
 unresolved-import = "ignore"
+unused-ignore-comment = "ignore"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

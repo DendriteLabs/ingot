@@ -54,49 +54,57 @@ function render() {
   renderLineage();
   renderReign();
   renderRegistration();
+  // a closed round queues nothing
+  $("queue").hidden = !ROUNDS[selectedRound].open;
   renderPipeline();
   renderHistory();
   renderFails();
 }
 
+const ROUNDS = {
+  q2: {
+    label: "2-bit", open: true,
+    genesis: { label: "Bonsai 2 Q2", name: "Bonsai-2-27B-Q2", versus: "Bonsai-2-27B-Q2", about: "Prism's 2-bit quantization",
+      repo: "dendriteholdings/Ingot-genesis-27B-Q2", run: "Bonsai-2-27B-PQ2_0" },
+  },
+  fp8: {
+    label: "8-bit", open: false,
+    genesis: { label: "Qwen FP8", name: "Qwen FP8", versus: "Qwen's own FP8", about: "Qwen's own quantization",
+      repo: "dendriteholdings/Ingot-genesis-27B-FP8", run: "Ingot-genesis-27B-FP8" },
+  },
+};
+let selectedRound = "q2";
+// a backend from before the 2-bit round sends no quant: everything it knows is 8-bit
+const inRound = (row) => (row.quant ?? "fp8") === selectedRound;
+
 // each eval scores its own samples, so divergences from different evals do not compare. A king's
 // divergence relative to genesis is chained instead: the king it beat times the challenger / king
-// ratio measured in its coronation eval. Returns the kings with `rel` (1 = genesis) and `gain` (%).
-function kingGains(quant) {
+// ratio measured in its coronation eval. Returns the selected round's kings with `rel` (1 =
+// genesis) and `gain` (%).
+function kingGains() {
   let rel = 1;
-  const kings = quant ? state.kings.filter((k) => (k.quant ?? "fp8") === quant) : state.kings;
-  return kings.map((k) => {
+  return state.kings.filter(inRound).map((k) => {
     if (k.duel_challenger != null) rel *= Number(k.duel_challenger) / Number(k.duel_king);
     return { ...k, rel, gain: 100 * (1 - rel) };
   });
 }
 
-let heroTab = "q2";
 function renderHero() {
   mount($("hero-teacher"), link(hubUrl(state.teacher), state.teacher));
   document.querySelectorAll(".stamp-tab").forEach((tab) => {
-    tab.setAttribute("aria-selected", String(tab.dataset.tab === heroTab));
-    tab.onclick = () => { heroTab = tab.dataset.tab; renderHero(); };
+    tab.setAttribute("aria-selected", String(tab.dataset.tab === selectedRound));
+    tab.onclick = () => { selectedRound = tab.dataset.tab; render(); loadBenchmarks(); };
   });
-  const crowned = kingGains(heroTab).filter((k) => k.submission_id);
-  const king = crowned.at(-1);
+  const { open, genesis } = ROUNDS[selectedRound];
+  const king = kingGains().filter((k) => k.submission_id).at(-1);
   const teacher = state.teacher.split("/").pop();
-  const headline = (name, repo) => {
-    const url = repo ? hubUrl(repo) : null;
-    mount($("hero-king"), url ? link(url, name) : name);
-    mount($("hero-repo"), url ? link(url, repo) : "");
-  };
-  const gainLine = (genesis) => (king ? [el("b", {}, `${king.gain.toFixed(1)}%`), `closer to ${teacher} than ${genesis}`] : []);
-  $("stamp").classList.toggle("closed", heroTab === "fp8");
-  if (heroTab === "q2") {
-    mount($("hero-label"), "Open round");
-    if (king) headline(king.name, king.hf_repo); else headline(GENESIS.name, GENESIS.repo);
-    mount($("hero-line"), ...gainLine(GENESIS.name));
-  } else {
-    mount($("hero-label"), "Closed round");
-    headline(king ? king.name : "—", king?.hf_repo);
-    mount($("hero-line"), ...gainLine("Qwen's own FP8"));
-  }
+  const [name, repo] = king ? [king.name, king.hf_repo] : [genesis.name, genesis.repo];
+  const url = repo ? hubUrl(repo) : null;
+  $("stamp").classList.toggle("closed", !open);
+  mount($("hero-label"), open ? "Open round" : "Closed round");
+  mount($("hero-king"), url ? link(url, name) : name);
+  mount($("hero-repo"), url ? link(url, repo) : "");
+  mount($("hero-line"), ...(king ? [el("b", {}, `${king.gain.toFixed(1)}%`), `closer to ${teacher} than ${genesis.versus}`] : []));
 }
 
 // the kings in order with their chart value (`v`, the gain over genesis) and the step each took:
@@ -113,6 +121,10 @@ function renderLineage() {
   // the kings as a stack of stamps, newest on top; at the bottom genesis, the stock quant every
   // king is measured against
   const kings = kingSteps();
+  if (!kings.length) {
+    mount($("lineage"), el("div", { class: "empty" }, "no kings yet."));
+    return;
+  }
   const current = kings.at(-1);
   const rows = kings.slice().reverse().map((k) => {
     const url = k.hf_repo ? hubUrl(k.hf_repo) : null;
@@ -134,12 +146,12 @@ function renderKingsChart() {
   // every judged model is a dot in the order it was judged, kings brass and losers grey. The y
   // axis is how much closer to the teacher a model is than genesis. The brass staircase is the bar
   // to beat: flat while a king holds, one step up at each coronation.
-  mount($("kings-meta"), "closer to the original ", link(hubUrl(state.teacher), state.teacher.split("/").pop()), " than Qwen's stock quantization");
-  if (state.kings.length < 2) {
+  mount($("kings-meta"), "closer to the original ", link(hubUrl(state.teacher), state.teacher.split("/").pop()), ` than ${ROUNDS[selectedRound].genesis.versus}`);
+  const crowned = kingSteps();
+  if (crowned.length < 2) {
     mount(box, el("div", { class: "empty" }, "the staircase starts with the first coronation."));
     return;
   }
-  const crowned = kingSteps();
   const byId = new Map(crowned.map((k) => [k.id, k]));
   const lost = state.losers.filter((e) => byId.has(e.king_id)).map((e) => ({
     ...e, crowned: false, evalId: e.id, t: new Date(e.finished_at).getTime(),
@@ -254,8 +266,9 @@ async function loadBenchmarks() {
     const doc = await res.json();
     const { results } = doc;
     if (!Array.isArray(results)) throw new Error("benchmark feed needs a results array");
-    mount($("benchmarks-meta"), el("b", {}, "Qwen BF16"), ": the unquantized teacher · ", el("b", {}, GENESIS.name), ": Prism's 2-bit quantization");
-    const fingerprint = JSON.stringify([doc, (state?.kings ?? []).map((k) => k.name)]);
+    const { genesis } = ROUNDS[selectedRound];
+    mount($("benchmarks-meta"), el("b", {}, "Qwen BF16"), ": the unquantized teacher · ", el("b", {}, genesis.name), `: ${genesis.about}`);
+    const fingerprint = JSON.stringify([doc, selectedRound, (state?.kings ?? []).map((k) => k.name)]);
     if (fingerprint === benchmarkDocument) {
       return;
     }
@@ -274,18 +287,6 @@ async function loadBenchmarks() {
   }
 }
 
-const ROMAN = { I: 1, V: 5, X: 10, L: 50, C: 100, D: 500, M: 1000 };
-// a benchmark result's model is a king's repo name, Ingot-<numeral>-<suffix>; genesis is generation 0
-function generation(model) {
-  const m = /^Ingot-([IVXLCDM]+)-/.exec(model || "");
-  if (m) {
-    const n = [...m[1]].reduce((sum, c, i, a) => sum + (ROMAN[c] < ROMAN[a[i + 1]] ? -ROMAN[c] : ROMAN[c]), 0);
-    return { numeral: m[1], ordinal: n };
-  }
-  if (/genesis/i.test(model || "")) return { numeral: "genesis", ordinal: 0 };
-  return { numeral: model || "?", ordinal: Infinity };
-}
-
 // <defs> with a vertical gradient named `id` fading to transparent, for the fill under a chart's
 // line: `tone` picks its colour (fill-gold, fill-grey in the stylesheet)
 function gradient(id, tone = "fill-gold") {
@@ -302,20 +303,19 @@ const BENCHMARKS = [
 ];
 const PROTOCOL = "sampled-16k-150-v1";
 const TEACHER_RUN = "Qwen3.8-27B-BF16";
-const GENESIS = { run: "Bonsai-2-27B-PQ2_0", label: "Bonsai 2 Q2", name: "Bonsai-2-27B-Q2", repo: "dendriteholdings/Ingot-genesis-27B-Q2" };
-const ACTIVE_QUANT = "q2";
 
 function renderBenchmarkCharts(results, benchmarks) {
   const complete = (r) => r.status === "complete" && typeof r.score === "number" && Number.isFinite(r.score);
   const runs = results.filter((r) => r.protocol?.id === PROTOCOL);
-  const known = (state?.kings ?? []).map((k) => ({ ...k, ...generation(k.name) }));
-  const kings = known.filter((k) => k.quant === ACTIVE_QUANT && k.ordinal > 0 && Number.isFinite(k.ordinal))
-    .sort((a, b) => a.ordinal - b.ordinal).slice(-2);
+  const { genesis } = ROUNDS[selectedRound];
+  // the round's two newest kings; a king's benchmark run is named after it (2-bit and 8-bit kings
+  // share numerals, never names)
+  const kings = state ? kingGains().filter((k) => k.submission_id).slice(-2) : [];
   const models = [
     { tone: "teacher", label: "Qwen BF16", repo: state?.teacher, is: (r) => r.model === TEACHER_RUN },
-    { tone: "genesis", label: GENESIS.label, repo: GENESIS.repo, is: (r) => r.model === GENESIS.run },
-    ...kings.map((k, i) => ({ tone: i === kings.length - 1 ? "king latest" : "king", label: `King ${k.numeral}`, repo: k.hf_repo,
-      is: (r) => generation(r.model).ordinal === k.ordinal })),
+    { tone: "genesis", label: genesis.label, repo: genesis.repo, is: (r) => r.model === genesis.run },
+    ...kings.map((k, i) => ({ tone: i === kings.length - 1 ? "king latest" : "king", label: `King ${numeralOf(k)}`, repo: k.hf_repo,
+      is: (r) => r.model === k.name })),
   ];
   const pct = (v) => `${v.toFixed(1)}%`;
   const signed = (v) => `${v < 0 ? "−" : "+"}${Math.abs(v).toFixed(1)}`;
@@ -339,7 +339,7 @@ function renderBenchmarkCharts(results, benchmarks) {
       return el(repo ? "a" : "div", {
         class: `bench-row ${tone}${scored(row) ? "" : " missing"}`,
         href: repo ? hubUrl(repo) : null, target: repo ? "_blank" : null, rel: repo ? "noopener" : null,
-        title: scored(row) ? `${run.model}: ${pct(run.score)}${d == null ? "" : ` · ${signed(d)} points from ${GENESIS.label}`} · ${tasksOf(run)}`
+        title: scored(row) ? `${run.model}: ${pct(run.score)}${d == null ? "" : ` · ${signed(d)} points from ${genesis.label}`} · ${tasksOf(run)}`
           : pending === "running" && run.completed != null ? `running · ${tasksOf(run)}` : pending,
       },
       el("span", { class: "bench-label" }, label),
@@ -500,9 +500,12 @@ function renderPipeline() {
 }
 
 function renderHistory() {
-  // finished duels only: a running eval is in the queue, a crashed one is in fails
-  const rows = state.history.filter((e) => e.won != null);
-  $("history-meta").textContent = `${rows.length} shown`;
+  // finished duels of the round only: a running eval is in the queue, a crashed one is in fails.
+  // An eval's round is its king's.
+  const kings = kingGains();
+  const ids = new Set(kings.map((k) => k.id));
+  const rows = state.history.filter((e) => e.won != null && ids.has(e.king_id));
+  $("history-meta").textContent = `${ROUNDS[selectedRound].label} · ${rows.length} shown`;
   if (!rows.length) {
     mount($("history-wrap"), el("div", { class: "empty" }, "no completed duels yet."));
     return;
@@ -540,7 +543,7 @@ function renderHistory() {
   const body = rows.map((e) => {
     const v = e.won ? "crowned" : "lost";
     const url = `eval.html?id=${e.id}`;
-    const tr = el("tr", { class: e.won && e.king_id === state.kings.at(-2)?.id ? "open crowned-now" : "open", tabindex: "0", title: "open this eval" },
+    const tr = el("tr", { class: e.won && e.king_id === kings.at(-2)?.id ? "open crowned-now" : "open", tabindex: "0", title: "open this eval" },
       el("td", { class: "when", title: fmtDateTime(e.finished_at) }, fmtRelative(e.finished_at)),
       uidCell(e.uid, e.hotkey),
       hotkeyCell(e.hotkey),
@@ -563,8 +566,8 @@ function renderHistory() {
 }
 
 function renderFails() {
-  const rows = state.fails;
-  $("fails-meta").textContent = `${rows.length} shown`;
+  const rows = state.fails.filter(inRound);
+  $("fails-meta").textContent = `${ROUNDS[selectedRound].label} · ${rows.length} shown`;
   if (!rows.length) {
     mount($("fails-wrap"), el("div", { class: "empty" }, "no failures."));
     return;

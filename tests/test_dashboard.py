@@ -90,8 +90,8 @@ def test_state_after_a_coronation(conn, s, spec):
     assert [(e["uid"], e["king"], e["score_challenger"]) for e in doc["losers"]] == [
         (8, "Ingot-I-27B-FP8", 0.9)
     ]
-    assert [(f["hotkey"], f["stage"], f["reason"]) for f in doc["fails"]] == [
-        ("hk-bad", "INVALID", "no fp8")
+    assert [(f["hotkey"], f["stage"], f["reason"], f["quant"]) for f in doc["fails"]] == [
+        ("hk-bad", "INVALID", "no fp8", "fp8")
     ]
     assert (
         db.one(conn, "SELECT state FROM submissions WHERE id = %s", (winner,))["state"] == "CROWNED"
