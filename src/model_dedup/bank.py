@@ -118,24 +118,26 @@ class Bank:
         own = [{"term": {"hotkey": hotkey}}] + ([{"term": {"coldkey": coldkey}}] if coldkey else [])
         exact = {"bool": {"filter": [*scope, {"term": {"tensors_hash": fp["tensors_hash"]}}]}}
         exact["bool"]["must_not"] = own
-        nearest = {
-            "script_score": {
-                "query": {"bool": {"filter": scope, "must_not": own}},
-                "script": {
-                    "source": "knn_score",
-                    "lang": "knn",
-                    # unit vectors: L2 ranks like cosine
-                    "params": {
-                        "field": "vec",
-                        "query_value": summary_vector(fp).tolist(),
-                        "space_type": "l2",
+        queries: list[tuple[dict, int]] = [(exact, 100)]
+        # the hash mode compares identical files only: its fingerprint has no tensors to vectorize
+        if self.mode == "full":
+            nearest = {
+                "script_score": {
+                    "query": {"bool": {"filter": scope, "must_not": own}},
+                    "script": {
+                        "source": "knn_score",
+                        "lang": "knn",
+                        # unit vectors: L2 ranks like cosine
+                        "params": {
+                            "field": "vec",
+                            "query_value": summary_vector(fp).tolist(),
+                            "space_type": "l2",
+                        },
                     },
-                },
+                }
             }
-        }
+            queries.append((nearest, config.NEAREST_K))
         ids = {GENESIS}
-        # the hash mode compares identical files only
-        queries = [(exact, 100)] + ([(nearest, config.NEAREST_K)] if self.mode == "full" else [])
         for query, size in queries:
             body = {"size": size, "_source": False, "query": query}
             ids |= {

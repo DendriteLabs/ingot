@@ -228,3 +228,40 @@ def test_the_hash_mode_catches_identical_files_only(tmp_path):
     a, b, c = (file_fingerprint(tmp_path / d) for d in "abc")
     assert identical(b, {"genesis": a}).of == "genesis", "shard names do not matter"
     assert not identical(c, {"genesis": a}).duplicate
+
+
+class FakeOpenSearch:
+    """Just what Bank calls: the hash bank's exact query is answered from its docs."""
+
+    def __init__(self, docs: dict[str, dict]) -> None:
+        self.docs, self.queries = docs, []
+        self.indices = type("I", (), {"exists": lambda *_, **__: True})()
+
+    def search(self, index, body):
+        self.queries.append(body["query"])
+        want = [f["term"]["tensors_hash"] for f in body["query"]["bool"]["filter"]
+                if "tensors_hash" in f["term"]]  # fmt: skip
+        hits = [i for i, d in self.docs.items() if d["tensors_hash"] in want]
+        return {"hits": {"hits": [{"_id": i} for i in hits]}}
+
+    def mget(self, index, body, _source):
+        found = [{"_id": i, "found": i in self.docs, "_source": {"fingerprint": self.docs.get(i)}}
+                 for i in body["ids"]]  # fmt: skip
+        return {"docs": found}
+
+
+def test_a_hash_bank_shortlists_without_a_vector(tmp_path):
+    from model_dedup.bank import GENESIS, Bank
+    from model_dedup.files import file_fingerprint, identical
+
+    for name, data in (("genesis/g.gguf", b"g"), ("copy/x.gguf", b"g"), ("own/y.gguf", b"y")):
+        (tmp_path / name).parent.mkdir()
+        (tmp_path / name).write_bytes(data)
+    genesis, copy, own = (file_fingerprint(tmp_path / d) for d in ("genesis", "copy", "own"))
+    client = FakeOpenSearch({GENESIS: genesis})
+    bank = Bank(client, "ingot_dedup-q2-hash", mode="hash")
+
+    shortlist = bank.shortlist(copy, hotkey="hk", coldkey=None)  # a files-1 fingerprint
+    assert identical(copy, shortlist).of == GENESIS
+    assert not identical(own, bank.shortlist(own, hotkey="hk", coldkey=None)).duplicate
+    assert all("script_score" not in q for q in client.queries), "no vector query in hash mode"
