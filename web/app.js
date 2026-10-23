@@ -310,9 +310,9 @@ function renderBenchmarkCharts(results, benchmarks) {
   const complete = (r) => r.status === "complete" && typeof r.score === "number" && Number.isFinite(r.score);
   const runs = results.filter((r) => r.protocol?.id === PROTOCOL);
   const { genesis } = ROUNDS[selectedRound];
-  // the round's two newest kings; a king's benchmark run is named after it (2-bit and 8-bit kings
+  // the round's five newest kings; a king's benchmark run is named after it (2-bit and 8-bit kings
   // share numerals, never names)
-  const kings = state ? kingGains().filter((k) => k.submission_id).slice(-2) : [];
+  const kings = state ? kingGains().filter((k) => k.submission_id).slice(-5) : [];
   const models = [
     { tone: "teacher", label: "Qwen BF16", repo: state?.teacher, is: (r) => r.model === TEACHER_RUN },
     { tone: "genesis", label: genesis.label, repo: genesis.repo, is: (r) => r.model === genesis.run },
