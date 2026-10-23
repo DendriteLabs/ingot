@@ -7,3 +7,4 @@ __pycache__/
 .ingot-miner/
 dist/
 build/
+.claude/
