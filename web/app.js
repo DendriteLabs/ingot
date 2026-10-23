@@ -104,7 +104,9 @@ function renderHero() {
   mount($("hero-label"), open ? "Open round" : "Closed round");
   mount($("hero-king"), url ? link(url, name) : name);
   mount($("hero-repo"), url ? link(url, repo) : "");
-  mount($("hero-line"), ...(king ? [el("b", {}, `${king.gain.toFixed(1)}%`), `closer to ${teacher} than ${genesis.versus}`] : []));
+  mount($("hero-line"), ...(king
+    ? [el("b", {}, `${king.gain.toFixed(1)}%`), "closer to ", link(hubUrl(state.teacher), teacher), " than ", link(hubUrl(genesis.repo), genesis.versus)]
+    : []));
 }
 
 // the kings in order with their chart value (`v`, the gain over genesis) and the step each took:
@@ -144,7 +146,8 @@ function renderKingsChart() {
   // every judged model is a dot in the order it was judged, kings brass and losers grey. The y
   // axis is how much closer to the teacher a model is than genesis. The brass staircase is the bar
   // to beat: flat while a king holds, one step up at each coronation.
-  mount($("kings-meta"), "closer to the original ", link(hubUrl(state.teacher), state.teacher.split("/").pop()), ` than ${ROUNDS[selectedRound].genesis.versus}`);
+  const { genesis } = ROUNDS[selectedRound];
+  mount($("kings-meta"), "closer to the original ", link(hubUrl(state.teacher), state.teacher.split("/").pop()), " than ", link(hubUrl(genesis.repo), genesis.versus));
   const crowned = kingSteps();
   if (crowned.length < 2) {
     mount(box, el("div", { class: "empty" }, "the staircase starts with the first coronation."));
@@ -265,7 +268,8 @@ async function loadBenchmarks() {
     const { results } = doc;
     if (!Array.isArray(results)) throw new Error("benchmark feed needs a results array");
     const { genesis } = ROUNDS[selectedRound];
-    mount($("benchmarks-meta"), el("b", {}, "Qwen BF16"), ": the unquantized teacher · ", el("b", {}, genesis.name), `: ${genesis.about}`);
+    mount($("benchmarks-meta"), el("b", {}, link(hubUrl(state.teacher), "Qwen BF16")), ": the unquantized teacher · ",
+      el("b", {}, link(hubUrl(genesis.repo), genesis.name)), `: ${genesis.about}`);
     const fingerprint = JSON.stringify([doc, selectedRound, (state?.kings ?? []).map((k) => k.name)]);
     if (fingerprint === benchmarkDocument) {
       return;
