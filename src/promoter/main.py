@@ -1,8 +1,10 @@
 """The kings row lands first, so the next eval already faces the new king while the upload
-runs."""
+runs. After each coronation the older kings' downloads are deleted, each once its mirror is
+checked (verify_mirror_before_delete)."""
 
 from __future__ import annotations
 
+import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +18,7 @@ from promoter import config
 
 Fetch = Callable[[str, Path], Path]
 Publish = Callable[[Path, str, str, Quant], str]
+Matches = Callable[[Path, str, Quant], bool]
 
 
 def run_once(
@@ -26,6 +29,7 @@ def run_once(
     spec: ChainSpec,
     fetch: Fetch = models.fetch,
     publish: Publish = models.publish,
+    matches: Matches = models.mirror_matches,
 ) -> bool:
     db.heartbeat(conn, worker, queued=states.WON)
     row = db.claim(
@@ -72,7 +76,40 @@ def run_once(
         return True
     db.finish(conn, row["id"], states.CROWNED)
     log.info("crowned {} from submission {} (hotkey {})", title, row["id"], row["hotkey"])
+    sweep(conn, s, spec, matches)
     return True
+
+
+def sweep(conn: db.Conn, s: Settings, spec: ChainSpec, matches: Matches) -> None:
+    """Deletes the downloads of every king but each pair's newest KEEP_KINGS. With
+    verify_mirror_before_delete one is deleted only once its mirror matches it; one that does not
+    stays, and is checked again after the next coronation."""
+    rows = conn.execute(
+        "SELECT k.family, k.quant, k.hf_repo, s.model_hash,"
+        " row_number() OVER (PARTITION BY k.family, k.quant ORDER BY k.id DESC) AS rank"
+        " FROM kings k JOIN submissions s ON s.id = k.submission_id"
+    ).fetchall()
+    newest = {r["model_hash"] for r in rows if r["rank"] <= config.KEEP_KINGS}
+    for r in rows:
+        digest = r["model_hash"]
+        dest = s.model_cache_dir / digest
+        marker = s.model_cache_dir / f"{digest}.verified"
+        if digest in newest or not marker.exists():
+            continue
+        if s.verify_mirror_before_delete:
+            try:
+                ok = bool(r["hf_repo"]) and matches(
+                    dest, r["hf_repo"], spec.pair(r["family"], r["quant"])
+                )
+            except Exception:
+                log.exception("checking the mirror {} failed", r["hf_repo"])
+                ok = False
+            if not ok:
+                log.warning("king {} kept: its mirror {} does not match", digest, r["hf_repo"])
+                continue
+        shutil.rmtree(dest, ignore_errors=True)
+        marker.unlink(missing_ok=True)
+        log.info("deleted older king {} (mirrored at {})", digest, r["hf_repo"])
 
 
 @dataclass(frozen=True)

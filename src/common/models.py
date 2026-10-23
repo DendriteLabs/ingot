@@ -6,6 +6,7 @@ or `<namespace>/<repo>[@<revision>]` on Hugging Face (genesis, the teacher, mirr
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -124,13 +125,7 @@ def publish(model_dir: Path, repo_id: str, card: str, pair: Quant) -> str:
     one. A gguf king's one file is named after the repo. Returns the repo url."""
     from huggingface_hub import CommitOperationAdd, HfApi
 
-    files: dict[str, str] = {}
-    for path in sorted(model_dir.rglob("*")):
-        name = path.relative_to(model_dir).as_posix()
-        if path.is_file() and not any(fnmatch(name, p) for p in _UPLOAD_IGNORE):
-            if pair.format == "gguf" and name.endswith(".gguf"):
-                name = f"{repo_id.rsplit('/', 1)[-1]}.gguf"
-            files[name] = str(path)
+    files = {name: str(path) for name, path in _mirrored(model_dir, repo_id, pair).items()}
     for name in pair.publish_files:
         files[name] = str(hub_file(pair.genesis_repo, name, pair.genesis_revision))
     operations = [CommitOperationAdd(path_in_repo=n, path_or_fileobj=f) for n, f in files.items()]
@@ -140,6 +135,57 @@ def publish(model_dir: Path, repo_id: str, card: str, pair: Quant) -> str:
     api.create_commit(repo_id=repo_id, operations=operations, commit_message="Mirror Ingot king")
     log.info("published {} to {} ({} files)", model_dir, repo_id, len(operations))
     return f"https://huggingface.co/{repo_id}"
+
+
+def _mirrored(model_dir: Path, repo_id: str, pair: Quant) -> dict[str, Path]:
+    """name in the mirror → local file, for the files of the king's own upload."""
+    files: dict[str, Path] = {}
+    for path in sorted(model_dir.rglob("*")):
+        name = path.relative_to(model_dir).as_posix()
+        if path.is_file() and not any(fnmatch(name, p) for p in _UPLOAD_IGNORE):
+            if pair.format == "gguf" and name.endswith(".gguf"):
+                name = f"{repo_id.rsplit('/', 1)[-1]}.gguf"
+            files[name] = path
+    return files
+
+
+def mirror_matches(model_dir: Path, repo_id: str, pair: Quant) -> bool:
+    """Whether the Hugging Face mirror holds every file of `model_dir` byte for byte: one
+    model_info call, each file compared by size and by its lfs sha256 or git blob sha1."""
+    from huggingface_hub import HfApi
+
+    info = HfApi(token=_token()).model_info(repo_id, files_metadata=True)
+    remote = {s.rfilename: s for s in info.siblings or []}
+    for name, path in _mirrored(model_dir, repo_id, pair).items():
+        sibling = remote.get(name)
+        size = path.stat().st_size
+        if sibling is None:
+            log.warning("mirror {} lacks {}", repo_id, name)
+            return False
+        if sibling.lfs is not None:
+            same = sibling.lfs.size == size and sibling.lfs.sha256 == _sha256(path)
+        else:
+            same = sibling.size == size and sibling.blob_id == _git_blob_sha1(path)
+        if not same:
+            log.warning("mirror {} differs at {}", repo_id, name)
+            return False
+    return True
+
+
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        while chunk := fh.read(1 << 24):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _git_blob_sha1(path: Path) -> str:
+    h = hashlib.sha1(f"blob {path.stat().st_size}\0".encode())
+    with path.open("rb") as fh:
+        while chunk := fh.read(1 << 24):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def upload_artifact(key: str, body: bytes) -> str | None:

@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     hidden_states_dir: Path = Path("/dev/shm/ingot-hidden-states")
     hf_token: str = Field("", validation_alias=AliasChoices("HF_TOKEN", "INGOT_HF_TOKEN"))
     king_hf_namespace: str = "dendriteholdings"
+    # the promoter deletes an older king's download only once its mirror matches it byte for byte
+    verify_mirror_before_delete: bool = True
     wallet_coldkey: str = ""
     wallet_hotkey: str = ""
     wallet_path: str = ""
