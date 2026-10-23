@@ -125,11 +125,18 @@ scored. For each model, per answer token:
 Lower is better. The teacher rereading its own answer gives the noise floor, recorded with
 every eval: batching alone makes two runs of the same model differ by about that much.
 
+Every eval runs on one machine, the eval box: eight NVIDIA RTX PRO 6000 Blackwell Server Edition
+GPUs (96 GB each, driver 595.84, CUDA 13.2), two Xeon Platinum 8563C (104 cores) and 1 TB of RAM,
+Ubuntu 24.04. Six GPUs serve the teacher in vLLM; the king reads on the seventh and the
+challenger on the eighth, one GPU each. The fork is built on that box (`scripts/build_llama.sh`)
+with CUDA 13.0 and GCC 13.3, its kernels for `sm_120a` only: a q2 model is read with the fork's
+PQ2_0 CUDA kernels as they compile for Blackwell.
+
 **q2 (GGUF)** models read the answer in `llama-states` (`src/eval_service/llama_states/`), a
-small program on the pinned fork's own library, `LLAMA_PER_GPU` processes per RTX PRO 6000
-Blackwell GPU, each one request at a time, flash attention, a 16-bit KV cache, passes of 2048 tokens, the hidden states
-after every 8th block taken by the fork's own layer capture. The evaluator rebuilds the
-next-token distribution from your last hidden state with your own `output_norm` and
+small program on the pinned fork's own library, `LLAMA_PER_GPU` (4) processes on the model's
+GPU, each one request at a time, flash attention, a 16-bit KV cache, passes of 2048 tokens, the
+hidden states after every 8th block taken by the fork's own layer capture. The evaluator rebuilds
+the next-token distribution from your last hidden state with your own `output_norm` and
 `output.weight`, dequantized exactly and with the fork's Hadamard rotation applied, in float32
 (`GgufHead`, `src/eval_service/metrics.py`); checked against the fork's own logits, the two agree
 to a KL of 0.000005. Run under the fork, the teacher itself lands at a KL of 0.00007 from the
