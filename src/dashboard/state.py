@@ -50,7 +50,7 @@ def build(conn: db.Conn, *, s: Settings, spec: ChainSpec, now: datetime | None =
         "kings": kings,
         "stats": _stats(conn),
         "reign": _reign(conn, kings, now),
-        "queue": _queue(conn),
+        "queue": _queue(conn, now),
         "history": _history(conn, names),
         "losers": _losers(conn, names),
         "fails": _fails(conn),
@@ -177,7 +177,12 @@ def _reign(conn: db.Conn, kings: list[dict[str, Any]], now: datetime) -> dict[st
     }
 
 
-def _queue(conn: db.Conn) -> dict[str, Any]:
+# eval id -> (samples_done, when the dashboard first saw that count); progress is written to the
+# eval row alone, so the queue's updated time is advanced here each time the count moves
+_progress_seen: dict[int, tuple[int, datetime]] = {}
+
+
+def _queue(conn: db.Conn, now: datetime | None = None) -> dict[str, Any]:
     counts = conn.execute(
         "SELECT state, count(*) AS n FROM submissions WHERE state = ANY(%s) GROUP BY state",
         (ACTIVE,),
@@ -198,6 +203,18 @@ def _queue(conn: db.Conn) -> dict[str, Any]:
         """,
         (ACTIVE, config.QUEUE_LIMIT),
     ).fetchall()
+    now = now or datetime.now(UTC)
+    live = {r["eval_id"] for r in rows if r["eval_id"] is not None}
+    for stale in _progress_seen.keys() - live:
+        del _progress_seen[stale]
+    for r in rows:
+        if r["eval_id"] is None:
+            continue
+        seen = _progress_seen.get(r["eval_id"])
+        if seen is None or seen[0] != r["samples_done"]:
+            seen = (r["samples_done"], now)
+            _progress_seen[r["eval_id"]] = seen
+        r["updated_at"] = max(r["updated_at"], seen[1])
     return {
         "counts": {state: 0 for state in ACTIVE} | {r["state"]: r["n"] for r in counts},
         "rows": rows,
