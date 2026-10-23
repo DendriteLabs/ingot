@@ -116,7 +116,9 @@ def run_once(
             drawn,
             on_progress=_progress(link, eval_id),
             prefetched=prefetched,
-            on_teacher_drained=lambda: _claim_ahead(worker, data, fits, teacher_dir, s, prefetcher),
+            on_teacher_drained=lambda: _claim_ahead(
+                worker, data, fits, teacher_dir, s, prefetcher, fetch
+            ),
         )
         log.info("eval {}: duel took {:.0f}s", eval_id, time.monotonic() - fetched)
     except Exception as exc:
@@ -218,9 +220,11 @@ def _claim_ahead(
     teacher_dir: Path,
     s: Settings,
     prefetcher: Prefetcher,
+    fetch: Fetch,
 ) -> None:
-    """Claims the next eval and starts its draw and prefetch, on a thread: the duel's own threads
-    call this, and a draw takes minutes. What it claimed waits in _pending for run_once."""
+    """Claims the next eval, starts its draw and prefetch and downloads its challenger, on a
+    thread: the duel's own threads call this, and a draw takes minutes. What it claimed waits in
+    _pending for run_once."""
     global _claiming
 
     def work() -> None:
@@ -253,6 +257,17 @@ def _claim_ahead(
                 db.finish(conn, row["id"], states.UNIQUE, "claimed ahead and dropped; queued again")
         finally:
             conn.close()
+        if _pending is not None and _pending.row is row:
+            try:
+                started = time.monotonic()
+                fetch(row["model_uri"], s.model_cache_dir)
+                log.info(
+                    "challenger of {} fetched ahead in {:.0f}s",
+                    row["hotkey"],
+                    time.monotonic() - started,
+                )
+            except Exception:
+                log.exception("fetching the challenger of {} ahead failed", row["hotkey"])
 
     _claiming = threading.Thread(target=work, daemon=True)
     _claiming.start()
