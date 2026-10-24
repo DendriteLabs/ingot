@@ -226,6 +226,44 @@ main { display: flex; flex-direction: column; gap: 64px; padding-top: 56px; padd
 .hero-chart-plot .bottom { stop-opacity: 0; }
 
 /* ---------- benchmark cards: bars from the teacher's zero line ---------- */
+/* the king the cards compare, picked in the section head; the ranking shows only in the open list */
+/* the open list hangs from the head's left edge, so it fits a phone screen too */
+#benchmarks .head { position: relative; }
+.bench-picker { margin-left: 18px; }
+.bench-picker:empty { display: none; }
+.kp-button {
+  display: inline-flex; align-items: center; gap: 8px; padding: 0 0 2px;
+  border-bottom: 1px solid var(--line-strong); color: var(--accent-ink); letter-spacing: inherit; text-transform: inherit;
+}
+.kp-button::after {
+  content: ""; width: 5px; height: 5px; border-right: 1px solid currentColor; border-bottom: 1px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+}
+.kp-button[aria-expanded="true"]::after { transform: translateY(1px) rotate(-135deg); }
+.kp-button:hover, .kp-button[aria-expanded="true"] { border-bottom-color: var(--accent-ink); }
+.kp-button:focus-visible { outline: 1px solid var(--brass); outline-offset: 3px; }
+.kp-pop {
+  position: absolute; top: calc(100% + 8px); left: 0; z-index: 3; width: 300px; max-width: 100%;
+  border: 1px solid var(--line-strong); background: var(--panel); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  font-weight: 400; text-transform: none; letter-spacing: 0.02em;
+}
+.kp-head {
+  padding: 8px 14px 6px; border-bottom: 1px solid var(--line); text-align: right;
+  color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em;
+}
+.kp-list { margin: 0; padding: 4px 0; list-style: none; }
+.kp-list li {
+  display: grid; grid-template-columns: 14px 64px minmax(0, 1fr) 44px; align-items: center; gap: 12px;
+  padding: 7px 14px; cursor: pointer; color: var(--text-2);
+}
+.kp-list li.active { background: var(--band); color: var(--text); }
+.kp-list li[aria-selected="true"] { background: var(--accent-wash); box-shadow: inset 3px 0 0 var(--accent); color: var(--text); }
+.kp-list li.running { color: var(--muted); }
+.kp-rank { color: var(--muted); }
+.kp-name { text-transform: uppercase; letter-spacing: 0.08em; }
+.kp-bar { height: 4px; background: var(--line); }
+.kp-bar i { display: block; height: 100%; background: var(--brass); }
+.kp-score { text-align: right; font-variant-numeric: tabular-nums; }
 .benchmark-charts { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 16px; }
 .benchmark-card { min-width: 0; grid-column: span 4; }
 .benchmark-card:nth-child(n + 4) { grid-column: span 3; }

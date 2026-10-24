@@ -65,7 +65,7 @@ const ROUNDS = {
   q2: {
     label: "2-bit", open: true,
     genesis: { label: "Bonsai 2 Q2", name: "Bonsai-2-27B-Q2", versus: "Bonsai-2-27B-Q2", about: "Prism's 2-bit quantization",
-      repo: "dendriteholdings/Ingot-genesis-27B-Q2", run: "Bonsai-2-27B-PQ2_0" },
+      repo: "dendriteholdings/Ingot-genesis-27B-Q2", run: "Ingot-genesis-27B-Q2" },
   },
   fp8: {
     label: "8-bit", open: false,
@@ -304,20 +304,94 @@ const BENCHMARKS = [
   ["GPQA Diamond", "science"], ["MATH-500", "math"], ["τ³-bench Banking", "tool use"], ["MMMU", "vision"],
 ];
 const PROTOCOL = "sampled-16k-150-v1";
+// The 2-bit round's Terminal-Bench is on v2 (agent budget x24, verifier x2.0) so a task ends at the
+// 150-step limit, not on the clock; the closed 8-bit round keeps its v1 runs
+const PROTOCOLS = { q2: { "Terminal-Bench 2.1": "sampled-16k-150-v2" } };
+const protocolOf = (benchmark) => PROTOCOLS[selectedRound]?.[benchmark] ?? PROTOCOL;
 const TEACHER_RUN = "Qwen3.8-27B-BF16";
+const complete = (r) => r.status === "complete" && typeof r.score === "number" && Number.isFinite(r.score);
+// the king a visitor picked, per round; unset (every page load) means the best overall
+const chosenKing = {};
+
+// the round's kings, best first by the sum of their points over genesis: the +/- figures on the cards,
+// added up. Each benchmark counts the points it moves, so MATH-500, where every model sits near 96,
+// barely counts; a plain mean ranks the same but reads near 59% only because of it. A per-benchmark
+// share of the gap to the teacher lets MATH's 1.4-point gap and its noise dominate. A king's benchmark
+// run is named after it (2-bit and 8-bit kings share numerals, never names); a king still running
+// ranks after every finished one, most done first.
+function rankKings(runs, benchmarks) {
+  const { genesis } = ROUNDS[selectedRound];
+  const scoreOf = (model, name) => {
+    const run = runs.find((r) => r.benchmark === name && r.model === model);
+    return run && complete(run) ? run.score : null;
+  };
+  const kings = state ? kingGains().filter((k) => k.submission_id) : [];
+  const full = (row) => row.done === benchmarks.length;
+  return kings.map((king, order) => {
+    const pairs = benchmarks.map(([name]) => [scoreOf(king.name, name), scoreOf(genesis.run, name)]);
+    return {
+      king, order,
+      done: pairs.filter(([mine]) => mine != null).length,
+      sum: pairs.reduce((total, [mine, base]) => total + (mine != null && base != null ? mine - base : 0), 0),
+    };
+  }).sort((a, b) => (full(b) - full(a)) || (full(a) ? b.sum - a.sum : b.done - a.done || b.order - a.order));
+}
+
+// the chosen king's name in the section head; it opens the ranked kings as a listbox, by mouse or keyboard
+function renderKingPicker(ranked, pick, redraw) {
+  const total = BENCHMARKS.length;
+  const { genesis } = ROUNDS[selectedRound];
+  const best = Math.max(...ranked.filter((row) => row.done === total).map((row) => row.sum), 1);
+  const signed = (v) => `${v < 0 ? "−" : "+"}${Math.abs(v).toFixed(1)}`;
+  const options = ranked.map((row, i) => el("li", {
+    role: "option", id: `king-option-${i}`, "aria-selected": String(row === pick),
+    class: row.done === total ? null : "running",
+  },
+  el("span", { class: "kp-rank" }, row.done === total ? i + 1 : "·"),
+  el("span", { class: "kp-name" }, `King ${numeralOf(row.king)}`),
+  el("span", { class: "kp-bar" }, row.done === total ? el("i", { style: `width: ${Math.max(0, (100 * row.sum) / best)}%` }) : null),
+  el("span", { class: "kp-score" }, row.done === total ? signed(row.sum) : `${row.done}/${total}`)));
+  const pop = el("div", { class: "kp-pop", hidden: true },
+    el("div", { class: "kp-head" }, `sum of points vs ${genesis.label}`),
+    el("ul", { class: "kp-list", role: "listbox", id: "king-list", "aria-label": `Kings by their summed points over ${genesis.label}` }, ...options));
+  const button = el("button", { class: "kp-button", type: "button", "aria-haspopup": "listbox", "aria-expanded": "false", "aria-controls": "king-list",
+    title: "compare another king" }, `King ${numeralOf(pick.king)}`);
+  let active = ranked.indexOf(pick);
+  const show = (open) => {
+    pop.hidden = !open;
+    button.setAttribute("aria-expanded", String(open));
+    options.forEach((li, i) => li.classList.toggle("active", open && i === active));
+  };
+  const choose = (i) => { chosenKing[selectedRound] = ranked[i].king.name; show(false); redraw(); $("bench-picker").querySelector("button").focus(); };
+  button.onclick = () => show(pop.hidden);
+  button.onkeydown = (ev) => {
+    const step = { ArrowDown: 1, ArrowUp: -1 }[ev.key];
+    if (step) { ev.preventDefault(); active = pop.hidden ? active : (active + step + options.length) % options.length; show(true); }
+    else if (ev.key === "Enter" && !pop.hidden) { ev.preventDefault(); choose(active); }
+    else if (ev.key === "Escape") show(false);
+  };
+  options.forEach((li, i) => { li.onclick = () => choose(i); li.onpointermove = () => { active = i; show(true); }; });
+  mount($("bench-picker"), button, pop);
+}
+// one listener for the page: a click outside the picker closes its list
+document.addEventListener("click", (ev) => {
+  const box = $("bench-picker");
+  if (!box || box.contains(ev.target)) return;
+  box.querySelector(".kp-pop")?.setAttribute("hidden", "");
+  box.querySelector(".kp-button")?.setAttribute("aria-expanded", "false");
+});
 
 function renderBenchmarkCharts(results, benchmarks) {
-  const complete = (r) => r.status === "complete" && typeof r.score === "number" && Number.isFinite(r.score);
-  const runs = results.filter((r) => r.protocol?.id === PROTOCOL);
+  const runs = results.filter((r) => r.protocol?.id === protocolOf(r.benchmark));
   const { genesis } = ROUNDS[selectedRound];
-  // the round's five newest kings; a king's benchmark run is named after it (2-bit and 8-bit kings
-  // share numerals, never names)
-  const kings = state ? kingGains().filter((k) => k.submission_id).slice(-5) : [];
+  const ranked = rankKings(runs, benchmarks);
+  const pick = ranked.find((row) => row.king.name === chosenKing[selectedRound]) ?? ranked[0];
+  if (pick) renderKingPicker(ranked, pick, () => renderBenchmarkCharts(results, benchmarks));
+  else mount($("bench-picker"));
   const models = [
     { tone: "teacher", label: "Qwen BF16", repo: state?.teacher, is: (r) => r.model === TEACHER_RUN },
     { tone: "genesis", label: genesis.label, repo: genesis.repo, is: (r) => r.model === genesis.run },
-    ...kings.map((k, i) => ({ tone: i === kings.length - 1 ? "king latest" : "king", label: `King ${numeralOf(k)}`, repo: k.hf_repo,
-      is: (r) => r.model === k.name })),
+    ...(pick ? [{ tone: "king latest", label: `King ${numeralOf(pick.king)}`, repo: pick.king.hf_repo, is: (r) => r.model === pick.king.name }] : []),
   ];
   const pct = (v) => `${v.toFixed(1)}%`;
   const signed = (v) => `${v < 0 ? "−" : "+"}${Math.abs(v).toFixed(1)}`;
