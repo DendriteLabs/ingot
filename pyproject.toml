@@ -78,6 +78,7 @@ include = [
     "src/eval_service/run.py",
     "scripts/eval_smoke.py",
     "scripts/build_eval_corpus.py",
+    "scripts/build_agent_corpus.py",
     "src/model_dedup/canon.py",
     "src/model_dedup/checkpoint.py",
     "src/model_dedup/gguf_checkpoint.py",

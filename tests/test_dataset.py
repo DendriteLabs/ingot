@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from eval_service import config
-from eval_service.dataset import Dataset, Sample, draw, load
+from eval_service.dataset import Dataset, Sample, _cut, draw, load
 
 
 def write(path: Path, n: int) -> None:
@@ -181,3 +181,24 @@ def test_agent_rows_draw_their_own_count_as_conversations(tmp_path: Path, monkey
     assert all(s.messages == turn["messages"] and s.tools == turn["tools"] for s in swe)
     math = [sample for sample in chosen if sample.domain == "math"]
     assert all(s.tools is None and s.messages[0]["content"].startswith("prompt ") for s in math)
+
+
+def short(sample: Sample) -> bool:
+    return len(sample.messages) <= 9
+
+
+def test_trajectories_are_cut_before_a_seeded_turn_that_fits():
+    turns = [
+        m
+        for i in range(10)
+        for m in ({"role": "assistant", "content": f"a{i}"}, {"role": "tool", "content": f"o{i}"})
+    ]
+    trajectory = Sample("t", [{"role": "user", "content": "task"}, *turns])
+    cuts = {seed: _cut(trajectory, seed, short) for seed in map(str, range(40))}
+    assert all(c is not None and c.messages[-1]["role"] == "tool" for c in cuts.values())
+    assert {len(c.messages) for c in cuts.values() if c} == {3, 5, 7, 9}, (
+        "every fitting turn, no other"
+    )
+    assert _cut(trajectory, "7", short) == cuts["7"]
+    prompt = Sample("p", [{"role": "user", "content": "q"}])
+    assert _cut(prompt, "7", short) == prompt and _cut(prompt, "7", lambda s: False) is None

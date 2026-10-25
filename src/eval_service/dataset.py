@@ -6,10 +6,11 @@ import bisect
 import hashlib
 import heapq
 import json
+import random
 from collections import defaultdict
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -155,7 +156,7 @@ def load_index(files: tuple[Path, ...]) -> ParquetIndex:
         if missing:
             raise ValueError(f"{path} is missing Parquet columns: {sorted(missing)}")
         starts.append(serial)
-        # an agent row's conversation: JSON {"messages", "tools"}, the chat cut before an agent turn
+        # an agent row's conversation: JSON {"messages", "tools"}, a whole trajectory the draw cuts
         texts.append([c for c in ("user_prompt", "conversation") if c in names])
         for batch in parquet.iter_batches(columns=_ID_COLUMNS, batch_size=16_384):
             # one string type for the join: shards hold string or large_string
@@ -213,8 +214,8 @@ def _choose(
     fits: Fits | None,
 ) -> list[Sample]:
     """`samples_per_domain` from each domain (DOMAIN_SAMPLES from those it names), spread evenly
-    over its languages, each language's samples in seeded rank order; what `fits` rejects is
-    passed over, within OVERDRAW times the draw."""
+    over its languages, each language's samples in seeded rank order and trajectories cut (_cut);
+    what `fits` rejects is passed over, within OVERDRAW times the draw."""
     chosen: list[Sample] = []
     # fits renders the long candidates through the tokenizer, which lets other threads run
     pool = ThreadPoolExecutor(config.DRAW_THREADS)
@@ -224,8 +225,8 @@ def _choose(
         ranked: dict[str, list[Sample]] = {}
         for language, items in languages.items():
             ordered = sorted(items, key=lambda sample: (_rank(seed, sample.id), sample.id))[:keep]
-            passes = pool.map(fits, ordered) if fits else (True for _ in ordered)
-            ranked[language] = [s for s, ok in zip(ordered, passes, strict=True) if ok]
+            cuts = pool.map(lambda sample: _cut(sample, seed, fits), ordered)
+            ranked[language] = [sample for sample in cuts if sample is not None]
         counts = _equal_shares(
             {language: len(items) for language, items in ranked.items()},
             quota,
@@ -235,6 +236,24 @@ def _choose(
             chosen.extend(ranked[language][:count])
     pool.shutdown()
     return sorted(chosen, key=lambda sample: sample.id)
+
+
+def _cut(sample: Sample, seed: str, fits: Fits | None) -> Sample | None:
+    """A trajectory (a sample with assistant turns) cut before a seeded random assistant turn after
+    the first, uniform over those whose prompt fits; any other sample as it is, if it fits."""
+    turns = [i for i, m in enumerate(sample.messages) if m["role"] == "assistant"][1:]
+    if not turns:
+        return sample if fits is None or fits(sample) else None
+    rng = random.Random(f"{seed}/{sample.id}")
+    while turns:
+        # the prompt only grows turn by turn, so a turn that does not fit rules out every later
+        # one; picking again among the earlier ones keeps the pick uniform over the ones that fit
+        turn = rng.choice(turns)
+        cut = replace(sample, messages=sample.messages[:turn])
+        if fits is None or fits(cut):
+            return cut
+        turns = turns[: turns.index(turn)]
+    return None
 
 
 def _equal_shares(sizes: dict[str, int], n: int, seed: str) -> dict[str, int]:

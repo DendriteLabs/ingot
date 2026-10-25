@@ -114,10 +114,11 @@ The evaluation dataset is the Hugging Face Parquet dataset and split named in `c
 `DOMAIN_SAMPLES` (150) from each agent domain, swe and terminal, seeded by the block hash of your
 `r2ready` commitment. Inside a domain it spreads the draw as evenly as possible over the languages
 available there, then picks rows at random from each language; the seed makes the same draw
-reproducible on every validator (`eval_service/dataset.py`). An agent domain's row is an agent's
-conversation cut before one of its turns: the task, the tool schemas, and the agent's earlier tool
-calls and their output, up to `MAX_MODEL_LEN` (65536) tokens with the answer. The teacher answers
-each prompt in vLLM (temperature 1.0, top_p 0.95, top_k 20, at most `MAX_TOKENS` tokens); the
+reproducible on every validator (`eval_service/dataset.py`). An agent domain's row is a whole
+agent trajectory, and the draw cuts it before a seeded random assistant turn after the first, one
+whose prompt leaves room for the answer in `MAX_MODEL_LEN` (65536) tokens: the prompt is the task,
+the tool schemas, and the agent's earlier tool calls and their output. The teacher answers each
+prompt in vLLM (temperature 1.0, top_p 0.95, top_k 20, at most `MAX_TOKENS` tokens); the
 king and your model then read exactly the teacher's prompt and answer. Only the answer tokens are
 scored. For each model, per answer token:
 
