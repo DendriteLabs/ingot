@@ -116,7 +116,7 @@ The evaluation dataset is the Hugging Face Parquet dataset and split named in `c
 available there, then picks rows at random from each language; the seed makes the same draw
 reproducible on every validator (`eval_service/dataset.py`). An agent domain's row is a whole
 agent trajectory, and the draw cuts it before a seeded random assistant turn after the first, one
-whose prompt leaves room for the answer in `MAX_MODEL_LEN` (65536) tokens: the prompt is the task,
+whose prompt leaves room for the answer in `MAX_MODEL_LEN` (36864) tokens: the prompt is the task,
 the tool schemas, and the agent's earlier tool calls and their output. The teacher answers each
 prompt in vLLM (temperature 1.0, top_p 0.95, top_k 20, at most `MAX_TOKENS` tokens); the
 king and your model then read exactly the teacher's prompt and answer. Only the answer tokens are
@@ -131,8 +131,8 @@ every eval: batching alone makes two runs of the same model differ by about that
 
 Every eval runs on one machine, the eval box: eight NVIDIA RTX PRO 6000 Blackwell Server Edition
 GPUs (96 GB each, driver 595.84, CUDA 13.2), two Xeon Platinum 8563C (104 cores) and 1 TB of RAM,
-Ubuntu 24.04. Four GPUs serve the teacher in vLLM; the king reads on two and the challenger
-on the other two. The fork is built on that box (`scripts/build_llama.sh`)
+Ubuntu 24.04. Six GPUs serve the teacher in vLLM; the king reads on the seventh and the
+challenger on the eighth, one GPU each. The fork is built on that box (`scripts/build_llama.sh`)
 with CUDA 13.0 and GCC 13.3, its kernels for `sm_120a` only: a q2 model is read with the fork's
 PQ2_0 CUDA kernels as they compile for Blackwell.
 
@@ -147,7 +147,7 @@ to a KL of 0.000005. Run under the fork, the teacher itself lands at a KL of 0.0
 vLLM teacher: the engine difference is far below the margins.
 
 **fp8** models read it in vLLM 0.31.0, one server per GPU: `--language-model-only
---max-model-len 65536 --max-num-batched-tokens 65536 --no-enable-chunked-prefill
+--max-model-len 36864 --max-num-batched-tokens 36864 --no-enable-chunked-prefill
 --no-enable-prefix-caching --mamba-ssm-cache-dtype float32 --gdn-prefill-backend triton`, plus a
 logits processor that forces the teacher's tokens and hidden-state extraction at `LAYERS`
 (`src/eval_service/servers.py`). The evaluator applies the final norm (float32) and `lm_head`

@@ -6,8 +6,8 @@ LLAMA_CPP_COMMIT = "e3de715222b2667c54a267441159a5729f11155e"  # tag prism-b1077
 LLAMA_STATES = "build/llama_states/llama-states"
 LLAMA_BATCH = 2048
 # A read spends most of its time off the GPU, writing its ~0.7 GB states file: one process kept a
-# GPU 10-20% busy, and two got through an eval's reads in a quarter of its time. Four per GPU
-# (~12 GB each) leave room for the comparison, which runs on the readers' GPUs.
+# GPU 10-20% busy, and two got through an eval's reads in a quarter of its time. Four on one GPU
+# per role (~12 GB each) leave the other GPUs to the teacher, the stage every eval waits on.
 LLAMA_PER_GPU = 4
 # A read that takes longer than LLAMA_READ_S plus LLAMA_S_PER_1K per thousand tokens means a hung
 # process (genesis reads ~3k tokens/s); it is stopped and blamed on its GPU's model.
@@ -38,8 +38,10 @@ SERVER_START_S = 3600
 LAYERS = tuple(range(8, 65, 8))
 
 MAX_TOKENS = 4096
-# prompt and answer together; the draw passes over prompts that leave less than MAX_TOKENS
-MAX_MODEL_LEN = 65536
+# prompt and answer together; the draw passes over prompts that leave less than MAX_TOKENS. At
+# 65536 a teacher GPU's KV cache held 87k tokens, one or two agent prompts: 5 requests in flight
+# and a 70-minute duel (eval 158). 32k of prompt keeps most of an agent run's depth.
+MAX_MODEL_LEN = 36864
 SAMPLING = {"temperature": 1.0, "top_p": 0.95, "top_k": 20}
 # Every Nth sample the teacher reads its own answer again: the noise floor batching adds.
 RERUN_EVERY = 10
