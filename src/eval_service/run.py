@@ -224,7 +224,7 @@ class _Evaluation:
         try:
             with timing.stages.timed("shm wait"):
                 _wait_for_room()
-            prompt = _render(self.tokenizer, sample.messages)
+            prompt = _render(self.tokenizer, sample.messages, sample.tools)
             if (ahead := self.prefetched.pop(i, None)) is not None:
                 answer, paths["teacher"] = ahead
             else:
@@ -362,7 +362,7 @@ class Prefetch:
 
     def _one(self, i: int) -> tuple[list[int], str]:
         _wait_for_room()
-        prompt = _render(self.tokenizer, self.samples[i].messages)
+        prompt = _render(self.tokenizer, self.samples[i].messages, self.samples[i].tools)
         return generate(self.teacher, prompt, i, self.samples[i].id)
 
     def result(self) -> Prefetched:
@@ -383,9 +383,13 @@ def load_tokenizer(model_dir: Path) -> Any:
     return AutoTokenizer.from_pretrained(model_dir)
 
 
-def _render(tokenizer: Any, messages: list[dict[str, Any]]) -> list[int]:
+def _render(
+    tokenizer: Any, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None
+) -> list[int]:
     """Prompt token ids with the teacher's chat template and its default thinking mode."""
-    text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    text = tokenizer.apply_chat_template(
+        messages, tools=tools, tokenize=False, add_generation_prompt=True
+    )
     return tokenizer.encode(text, add_special_tokens=False)
 
 
@@ -397,8 +401,9 @@ def fits(tokenizer: Any) -> Callable[[Sample], bool]:
 
     def check(sample: Sample) -> bool:
         size = sum(len(m["content"].encode()) for m in sample.messages)
-        return size + frame * len(sample.messages) <= limit or (
-            len(_render(tokenizer, sample.messages)) <= limit
+        # tool schemas and tool calls render outside the contents, so an agent sample is rendered
+        return (not sample.tools and size + frame * len(sample.messages) <= limit) or (
+            len(_render(tokenizer, sample.messages, sample.tools)) <= limit
         )
 
     return check

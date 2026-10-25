@@ -38,17 +38,22 @@ class Sample:
     domain: str = ""
     source: str = ""
     language: str = ""
+    tools: list[dict[str, Any]] | None = None  # an agent conversation's tool schemas
 
 
 @dataclass(frozen=True)
 class ParquetIndex:
     rows: dict[tuple[str, str], tuple[list[str], list[int], list[str]]]
     starts: list[int]  # the serial of each file's first row
-    prompts: list[Any]  # each file's user_prompt column, a pyarrow ChunkedArray
+    texts: list[Any]  # each file's user_prompt and conversation columns, a pyarrow Table
 
-    def prompt(self, serial: int) -> str:
+    def chat(self, serial: int) -> dict[str, Any]:
+        """The row's Sample messages, and tools: its conversation where it has one."""
         f = bisect.bisect_right(self.starts, serial) - 1
-        return self.prompts[f][serial - self.starts[f]].as_py()
+        row = self.texts[f].slice(serial - self.starts[f], 1).to_pylist()[0]
+        if row.get("conversation"):
+            return json.loads(row["conversation"])
+        return {"messages": [{"role": "user", "content": row["user_prompt"]}]}
 
 
 @dataclass(frozen=True)
@@ -83,6 +88,7 @@ def load(path: Path) -> Dataset:
             domain=row.get("domain", ""),
             source=row.get("source", ""),
             language=row.get("language", ""),
+            tools=row.get("tools"),
         )
         for row in rows
     ]
@@ -117,7 +123,7 @@ def fetch(spec: ChainSpec, local: Path) -> Dataset:
 def draw(
     samples: Sequence[Sample], seed: str, samples_per_domain: int, fits: Fits | None = None
 ) -> list[Sample]:
-    """Draw an equal count per domain and spread each count evenly over its languages."""
+    """Draw each domain's count and spread it evenly over its languages."""
     tree: dict[str, dict[str, list[Sample]]] = defaultdict(lambda: defaultdict(list))
     for sample in samples:
         tree[sample.domain][sample.language].append(sample)
@@ -131,7 +137,7 @@ def _draw_parquet(
 
 
 def load_index(files: tuple[Path, ...]) -> ParquetIndex:
-    """Reads the id columns and the prompts of every file into a ParquetIndex."""
+    """Reads the id columns and the prompts and conversations of every file into a ParquetIndex."""
     import pyarrow as pa
     import pyarrow.compute as pc
     import pyarrow.parquet as pq
@@ -140,13 +146,17 @@ def load_index(files: tuple[Path, ...]) -> ParquetIndex:
         lambda: ([], [], [])
     )
     starts = []
+    texts = []
     serial = 0
     for path in files:
         parquet = pq.ParquetFile(path)
-        missing = set(_PARQUET_COLUMNS) - set(parquet.schema_arrow.names)
+        names = parquet.schema_arrow.names
+        missing = set(_PARQUET_COLUMNS) - set(names)
         if missing:
             raise ValueError(f"{path} is missing Parquet columns: {sorted(missing)}")
         starts.append(serial)
+        # an agent row's conversation: JSON {"messages", "tools"}, the chat cut before an agent turn
+        texts.append([c for c in ("user_prompt", "conversation") if c in names])
         for batch in parquet.iter_batches(columns=_ID_COLUMNS, batch_size=16_384):
             # one string type for the join: shards hold string or large_string
             parts = [
@@ -168,10 +178,8 @@ def load_index(files: tuple[Path, ...]) -> ParquetIndex:
                 serial += 1
     # the prompt columns: tens of GB, read in parallel (pyarrow lets the threads run)
     with ThreadPoolExecutor(config.DRAW_THREADS) as pool:
-        prompts = list(
-            pool.map(lambda p: pq.read_table(p, columns=["user_prompt"])["user_prompt"], files)
-        )
-    return ParquetIndex(dict(rows), starts, prompts)
+        tables = list(pool.map(lambda p, c: pq.read_table(p, columns=c), files, texts))
+    return ParquetIndex(dict(rows), starts, tables)
 
 
 def _draw_index(
@@ -179,9 +187,9 @@ def _draw_index(
 ) -> list[Sample]:
     # Keeping the lowest seeded hashes makes the result independent of shard and row order.
     # Each key's rows are ranked in file order, as reading the files ranked them.
-    keep = samples_per_domain * (OVERDRAW if fits else 1)
     by_domain: dict[str, dict[str, list[Sample]]] = defaultdict(dict)
     for (domain, language), (ids, serials, sources) in index.rows.items():
+        keep = config.DOMAIN_SAMPLES.get(domain, samples_per_domain) * (OVERDRAW if fits else 1)
         reservoir: list[tuple[int, str, int, str]] = []
         for sample_id, serial, source in zip(ids, serials, sources, strict=True):
             rank = _rank(seed, sample_id)
@@ -191,11 +199,7 @@ def _draw_index(
                 heapq.heapreplace(reservoir, (-rank, sample_id, serial, source))
         by_domain[domain][language] = [
             Sample(
-                id=sample_id,
-                messages=[{"role": "user", "content": index.prompt(serial)}],
-                domain=domain,
-                source=source,
-                language=language,
+                id=sample_id, domain=domain, source=source, language=language, **index.chat(serial)
             )
             for _, sample_id, serial, source in reservoir
         ]
@@ -208,13 +212,15 @@ def _choose(
     samples_per_domain: int,
     fits: Fits | None,
 ) -> list[Sample]:
-    """An equal count per domain, spread evenly over its languages, each language's samples in
-    seeded rank order; what `fits` rejects is passed over, within OVERDRAW times the draw."""
-    keep = samples_per_domain * OVERDRAW
+    """`samples_per_domain` from each domain (DOMAIN_SAMPLES from those it names), spread evenly
+    over its languages, each language's samples in seeded rank order; what `fits` rejects is
+    passed over, within OVERDRAW times the draw."""
     chosen: list[Sample] = []
     # fits renders the long candidates through the tokenizer, which lets other threads run
     pool = ThreadPoolExecutor(config.DRAW_THREADS)
     for domain, languages in tree.items():
+        quota = config.DOMAIN_SAMPLES.get(domain, samples_per_domain)
+        keep = quota * OVERDRAW
         ranked: dict[str, list[Sample]] = {}
         for language, items in languages.items():
             ordered = sorted(items, key=lambda sample: (_rank(seed, sample.id), sample.id))[:keep]
@@ -222,7 +228,7 @@ def _choose(
             ranked[language] = [s for s, ok in zip(ordered, passes, strict=True) if ok]
         counts = _equal_shares(
             {language: len(items) for language, items in ranked.items()},
-            samples_per_domain,
+            quota,
             f"{seed}/{domain}",
         )
         for language, count in counts.items():

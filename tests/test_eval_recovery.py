@@ -52,7 +52,7 @@ def test_failed_samples_are_left_out_up_to_the_cap(monkeypatch):
 class Words:
     """A tokenizer whose tokens are words, with a two-token frame around the messages."""
 
-    def apply_chat_template(self, messages, tokenize, add_generation_prompt):
+    def apply_chat_template(self, messages, tools, tokenize, add_generation_prompt):
         return "<u> " + " ".join(m["content"] for m in messages) + " </u>"
 
     def encode(self, text, add_special_tokens):

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from eval_service import config
 from eval_service.dataset import Dataset, Sample, draw, load
 
 
@@ -142,3 +143,41 @@ def test_parquet_shards_are_sampled_and_mapped_to_chat_prompts(tmp_path: Path):
     filtered = data.draw("block-hash", 4, fits=lambda sample: "task-1" not in sample.id)
     assert collections.Counter(sample.domain for sample in filtered) == {"code": 4, "math": 4}
     assert all("task-1" not in sample.id for sample in filtered), "rejected rows are replaced"
+
+
+def test_agent_rows_draw_their_own_count_as_conversations(tmp_path: Path, monkeypatch):
+    pa = pytest.importorskip("pyarrow")
+    import pyarrow.parquet as pq
+
+    monkeypatch.setattr(config, "DOMAIN_SAMPLES", {"swe": 6})
+    call = {"type": "function", "function": {"name": "bash", "arguments": {"command": "ls"}}}
+    turn = {
+        "messages": [
+            {"role": "user", "content": "fix the bug"},
+            {"role": "assistant", "content": "", "tool_calls": [call]},
+            {"role": "tool", "content": "src tests"},
+        ],
+        "tools": [{"type": "function", "function": {"name": "bash", "parameters": {}}}],
+    }
+    rows = [
+        {
+            "dataset": "source",
+            "split": "train",
+            "entry_name": f"task-{i}",
+            "domain": domain,
+            "language": "en",
+            "user_prompt": f"prompt {i}",
+            "conversation": json.dumps(turn) if domain == "swe" else None,
+        }
+        for i, domain in enumerate(["swe", "math"] * 10)
+    ]
+    path = tmp_path / "chungus-0.parquet"
+    pq.write_table(pa.Table.from_pylist(rows), path)
+
+    chosen = Dataset([], "hash", (path,), len(rows)).draw("block-hash", 2)
+
+    assert collections.Counter(sample.domain for sample in chosen) == {"swe": 6, "math": 2}
+    swe = [sample for sample in chosen if sample.domain == "swe"]
+    assert all(s.messages == turn["messages"] and s.tools == turn["tools"] for s in swe)
+    math = [sample for sample in chosen if sample.domain == "math"]
+    assert all(s.tools is None and s.messages[0]["content"].startswith("prompt ") for s in math)
