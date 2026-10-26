@@ -13,7 +13,11 @@ const signed = (v, d) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(d)}`;
 const pct = (v) => (v == null ? "—" : `${(100 * v).toFixed(2)}%`);
 // lower is closer to the teacher, so the challenger's lead is king − challenger, as a share of the king
 const versus = (chal, king) => (chal === king ? "even" : `${Math.abs((100 * (king - chal)) / king).toFixed(2)}% ${chal < king ? "better" : "worse"}`);
-const scored = (samples) => samples.filter((s) => s.runs.challenger && s.runs.king);
+// a sample a model diverged on has no finite score (published as null) and is left out everywhere
+const finite = (run) => Number.isFinite(run?.kl) && Number.isFinite(run?.dist);
+const scored = (samples) => samples.filter((s) => finite(s.runs.challenger) && finite(s.runs.king));
+const diverged = (doc) => doc.samples.length - scored(doc.samples).length;
+const leftOut = (doc) => (diverged(doc) ? `${diverged(doc)} of ${doc.samples.length} samples diverged and are left out` : "");
 // what the layers chart and the samples table show: the picked group's samples, or every one
 const shown = (doc) => (picked ? groupSamples(scored(doc.samples)).groups.get(picked) : scored(doc.samples));
 // the three roles a sample record can hold, as the chart draws them
@@ -108,7 +112,8 @@ function renderDuel(doc) {
         el("th", { class: "r" }, "result"))),
       el("tbody", {}, rows))),
     el("p", { class: "note" },
-      `Lower is closer to the teacher. Noise floor, the teacher reading its own answers again: KL ${num(e.noise_kl)}, distance ${num(e.noise_dist, 4)}. `
+      (diverged(doc) ? `${diverged(doc)} of ${doc.samples.length} samples gave a model no finite score (it diverged); a diverged challenger loses. ` : "")
+      + `Lower is closer to the teacher. Noise floor, the teacher reading its own answers again: KL ${num(e.noise_kl)}, distance ${num(e.noise_dist, 4)}. `
       + `Run time: challenger ${secs(e.challenger_s)}, king ${secs(e.king_s)}. Seed ${e.seed}, dataset ${e.dataset_hash}.`));
 }
 
@@ -149,7 +154,7 @@ function totals(samples) {
 function renderDomains(doc) {
   const samples = scored(doc.samples);
   if (!samples.length) {
-    mount($("domains-wrap"), el("div", { class: "empty" }, "no sample records for this eval."));
+    mount($("domains-wrap"), el("div", { class: "empty" }, doc.samples.length ? "every sample diverged: no finite score to compare." : "no sample records for this eval."));
     return;
   }
   const { byDomain, groups } = groupSamples(samples);
@@ -163,7 +168,7 @@ function renderDomains(doc) {
     })
     .sort((a, b) => b.t.tokens - a.t.tokens);
   const widest = Math.max(...rows.map((r) => Math.abs(r.adds)));
-  $("domains-meta").textContent = byDomain ? "pick one to list its samples" : "by source dataset: these records predate domains";
+  $("domains-meta").textContent = [byDomain ? "pick one to list its samples" : "by source dataset: these records predate domains", leftOut(doc)].filter(Boolean).join(" · ");
   const trs = rows.map((r) => {
     const tr = el("tr", { class: "open", tabindex: "0", title: `list the ${r.name} samples` },
       el("td", { class: "domain" }, r.name),
@@ -282,10 +287,11 @@ function renderSamples(doc) {
     all.addEventListener("click", () => $("domains-wrap").querySelector("tr.picked")?.click());
     mount($("samples-meta"), el("b", {}, picked), ` · ${rows.length} of ${samples.length} samples · worst for the challenger first · `, all);
   } else {
-    $("samples-meta").textContent = rows.length ? `${rows.length} samples · worst for the challenger first` : "";
+    $("samples-meta").textContent = rows.length ? [`${rows.length} samples`, leftOut(doc), "worst for the challenger first"].filter(Boolean).join(" · ") : "";
   }
   if (!rows.length) {
-    const why = doc.artifacts.includes("samples.jsonl") ? "the sample artifact holds no records." : "no sample artifact for this eval.";
+    const why = doc.samples.length ? "every sample diverged: no finite score to compare."
+      : doc.artifacts.includes("samples.jsonl") ? "the sample artifact holds no records." : "no sample artifact for this eval.";
     mount($("samples-wrap"), el("div", { class: "empty" }, why));
     return;
   }
