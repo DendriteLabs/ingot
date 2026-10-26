@@ -18,7 +18,7 @@ coronation it is that quantization's genesis.
 | | |
 | --- | --- |
 | Teacher | `Qwen/Qwen3.8-27B` (BF16) |
-| Open quantization | `qwen38_27b:q2`: ternary, one GGUF file |
+| Open quantization | `qwen38_27b:q2`: ternary (1.75 bits per weight), one PQ2_0 GGUF file |
 | q2 genesis | `dendriteholdings/Ingot-genesis-27B-Q2`, file `Ingot-genesis-27B-Q2.gguf` (7,206,168,928 bytes; `Ternary-Bonsai-2-27B-PQ2_0.gguf` of `prism-ml/Ternary-Bonsai-2-27B-gguf`, unchanged) |
 | q2 runtime | the PrismML llama.cpp fork at `e3de715` (tag `prism-b10777-e3de715`), the `llama-prism` submodule |
 | Closed | `qwen38_27b:fp8`, genesis `dendriteholdings/Ingot-genesis-27B-FP8` (rules kept below) |
@@ -54,6 +54,14 @@ the weight bytes is genesis's, compared against genesis's header pinned in the r
 
 Your weight values are yours: retrain the ternary codes, re-fit the scales, tune the norm gains
 and the other unquantized values, fine-tune or distill from the teacher.
+
+**PQ2_0 and PTQ1_0 are the same model.** Prism's PTQ1_0 packs five ternary codes to a byte, 1.75
+bits per weight with the block scale; PQ2_0 spends two bits on each code, 2.125 with the scale.
+Both keep the codes and one fp16 scale per 128 weights, so one converts to the other without
+loss: Bonsai 2 ships one model as `Ternary-Bonsai-2-27B-PQ2_0.gguf` and `-PTQ1_0.gguf`, and
+`scripts/pq2_to_ptq1.py` turns the first into the second byte for byte. Ingot takes and scores
+PQ2_0, which needs more GPU memory but decodes a little faster in the fork's kernels; what a q2
+model holds is 1.75 bits per weight, as small as Bonsai 2.
 
 `ingot check-model --path ./model.gguf` (or `scripts/validate_model.py --path ./model.gguf`) runs
 every check locally and prints each one.
@@ -219,11 +227,13 @@ activate to ready on the same machine; `upload-auth.json` is removed at ready.
 ## A q2 king
 
 A crowned q2 king is published as `Ingot-<N>-27B-Q2` with its file renamed
-`Ingot-<N>-27B-Q2.gguf`, genesis's `LICENSE` and `NOTICE.txt`, and a card with its winning
-duel's scores, its gain over genesis, and how to run it: the fork at the commit Ingot scored it
-with (`llama-server -m Ingot-<N>-27B-Q2.gguf -ngl 99 -fa on --jinja`), and genesis's vision
-projector from `prism-ml/Ternary-Bonsai-2-27B-gguf` (`--mmproj Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf`) for image input, which Ingot does not
-score.
+`Ingot-<N>-27B-PQ2_0.gguf`, beside it `Ingot-<N>-27B-PTQ1_0.gguf`, the same weights repacked at
+1.75 bits per weight (`scripts/pq2_to_ptq1.py` makes it from any q2 file), genesis's `LICENSE` and
+`NOTICE.txt`, and a card with its winning duel's scores, its gain over genesis, and how to run it:
+the fork at the commit Ingot scored it with (`llama-server -m Ingot-<N>-27B-PQ2_0.gguf -ngl 99 -fa
+on --jinja`, or the PTQ1_0 file), and genesis's vision projector from
+`prism-ml/Ternary-Bonsai-2-27B-gguf` (`--mmproj Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf`) for image
+input, which Ingot does not score.
 
 ## The CLI
 

@@ -25,6 +25,9 @@ genesis_file = "Ingot-genesis-27B-Q2.gguf"
 upload_limit = 8_000_000_000
 weight_limit = 7_206_168_928        # genesis file size
 king_name = "27B-Q2"
+# a king's file in its mirror is named for its packing (Ingot-IV-27B-PQ2_0.gguf): Hugging Face's
+# quant list and llama.cpp tooling read the packing off the name
+king_packing = "PQ2_0"
 # "full": quantization-error fingerprints against the teacher;
 # "hash": identical weight files only.
 dedup = "hash"

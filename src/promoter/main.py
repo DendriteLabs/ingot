@@ -5,6 +5,7 @@ checked (verify_mirror_before_delete)."""
 from __future__ import annotations
 
 import shutil
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,11 +14,13 @@ from loguru import logger as log
 
 from common import db, models, reign, states
 from common.config import ChainSpec, Quant, Settings, chain_spec, settings
+from common.gguf import read_header
+from common.gguf.ptq1 import is_pq2, repack
 from common.loop import forever
 from promoter import config
 
 Fetch = Callable[[str, Path], Path]
-Publish = Callable[[Path, str, str, Quant], str]
+Publish = Callable[[Path, str, str, Quant, dict[str, Path]], str]
 Matches = Callable[[Path, str, Quant], bool]
 
 
@@ -60,7 +63,11 @@ def run_once(
         if not king["hf_repo"] and s.king_hf_namespace:
             repo_id = f"{s.king_hf_namespace}/{title}"
             model = fetch(row["model_uri"], s.model_cache_dir)
-            publish(model, repo_id, card(row, title, pair, lineage(conn, king["id"], pair)), pair)
+            with tempfile.TemporaryDirectory(dir=s.model_cache_dir) as tmp:
+                extra = repacked(model, Path(tmp), title)
+                steps = lineage(conn, king["id"], pair)
+                text = card(row, title, pair, steps, extra, base_model=spec.teacher_repo)
+                publish(model, repo_id, text, pair, extra)
             conn.execute("UPDATE kings SET hf_repo = %s WHERE id = %s", (repo_id, king["id"]))
         elif not king["hf_repo"]:
             log.warning("INGOT_KING_HF_NAMESPACE is empty; {} is not mirrored", title)
@@ -78,6 +85,18 @@ def run_once(
     log.info("crowned {} from submission {} (hotkey {})", title, row["id"], row["hotkey"])
     sweep(conn, s, spec, matches)
     return True
+
+
+def repacked(model_dir: Path, tmp: Path, title: str) -> dict[str, Path]:
+    """The king's 1.75 bpw PTQ1_0 file in tmp when its gguf is ternary PQ2_0, as every q2 king is:
+    Ingot-IV-27B-PTQ1_0.gguf beside Ingot-IV-27B-PQ2_0.gguf."""
+    gguf = next(iter(sorted(model_dir.rglob("*.gguf"))), None)
+    if gguf is None or not is_pq2(read_header(gguf)):
+        return {}
+    name = models.gguf_name(title, "PTQ1_0")
+    weights = repack(gguf, tmp / name)
+    log.info("repacked {} as {} ({:,} weights)", gguf.name, name, weights)
+    return {name: tmp / name}
 
 
 def sweep(conn: db.Conn, s: Settings, spec: ChainSpec, matches: Matches) -> None:
@@ -148,20 +167,67 @@ def lineage(conn: db.Conn, king_id: int, pair: Quant) -> list[Step]:
     ]
 
 
-def card(row: db.Row, title: str, pair: Quant, steps: list[Step]) -> str:
-    text = (
+def card(
+    row: db.Row,
+    title: str,
+    pair: Quant,
+    steps: list[Step],
+    extra: dict[str, Path] | None = None,
+    *,
+    base_model: str | None = None,
+) -> str:
+    gguf = models.gguf_name(title, pair.king_packing)
+    ptq1 = next(iter(extra or {}), None)
+    text = _front_matter(pair, base_model) + (
         f"# {title}\n\n"
         "A public mirror of a model that won on Ingot, a Bittensor subnet where miners quantize a "
         "fixed teacher model and the validator crowns the copy that stays closest to it.\n\n"
         f"- Submitted by miner hotkey `{row['hotkey']}` (uid {row['uid']})\n"
         f"- Crowned from submission `{row['id']}`\n\n"
-        "The weights are the miner's upload, byte for byte. Credit belongs to the miner.\n"
     )
+    if ptq1:
+        text += (
+            f"The weights are the miner's upload, byte for byte (`{gguf}`); `{ptq1}` repacks "
+            "them losslessly at 1.75 bits per weight. Credit belongs to the miner.\n"
+            + _files(gguf, ptq1, (extra or {})[ptq1].stat().st_size, pair.weight_limit)
+        )
+    else:
+        text += "The weights are the miner's upload, byte for byte. Credit belongs to the miner.\n"
     if steps:
         text += _scores(pair, steps)
     if pair.format == "gguf":
-        text += _gguf_card(title, pair)
+        text += _gguf_card(gguf, pair, ptq1)
     return text
+
+
+def _front_matter(pair: Quant, base_model: str | None) -> str:
+    """The card's YAML header: with it Hugging Face lists the mirror as a quantization of the
+    teacher."""
+    gguf = pair.format == "gguf"
+    lines = ["---"]
+    if base_model:
+        lines += [f"base_model: {base_model}", "base_model_relation: quantized"]
+    if gguf:
+        lines.append("library_name: llama.cpp")
+    lines += ["pipeline_tag: text-generation", "tags:"]
+    lines += [f"- {tag}" for tag in (["gguf"] if gguf else []) + ["ingot", "bittensor"]]
+    return "\n".join([*lines, "---", "", ""])
+
+
+def _files(gguf: str, ptq1: str, ptq1_bytes: int, q2_bytes: int | None) -> str:
+    """Both files of a q2 king; a q2 king is genesis's size exactly (pair.weight_limit)."""
+    return (
+        "\n## Files\n\n"
+        "| file | bits per weight | size |\n| --- | --- | --- |\n"
+        f"| `{ptq1}` | 1.75 | {_gb(ptq1_bytes)} |\n"
+        f"| `{gguf}` | 2.125 (the same ternary weights in a 2-bit container) "
+        f"| {_gb(q2_bytes)} |\n\n"
+        f"Both files hold the same ternary weights. `{ptq1}` is Ingot's lossless repack of the "
+        "miner's file into Prism's PTQ1_0 format: every 128-weight block keeps its codes and fp16 "
+        "scale, and every weight decodes to the same value. The same repack of Bonsai 2's PQ2_0 "
+        "file reproduces Prism's published PTQ1_0 file byte for byte. The 1.75 bpw file is "
+        "smaller; the 2-bit file decodes faster on GPUs.\n"
+    )
 
 
 def _scores(pair: Quant, steps: list[Step]) -> str:
@@ -190,7 +256,11 @@ def _gain(ratio: float) -> str:
     return f"{100 * (1 - ratio):.1f}%"
 
 
-def _gguf_card(title: str, pair: Quant) -> str:
+def _gb(n: int | None) -> str:
+    return "—" if n is None else f"{n / 1e9:.2f} GB"
+
+
+def _gguf_card(gguf: str, pair: Quant, ptq1: str | None = None) -> str:
     """How to run a gguf king: only the fork the eval scored it with runs these files; and the
     genesis vision projector, which the eval never scored, for image input."""
     from eval_service.config import LLAMA_CPP_COMMIT
@@ -199,16 +269,18 @@ def _gguf_card(title: str, pair: Quant) -> str:
     hub = f"https://huggingface.co/{pair.genesis_repo}"
     text = (
         "\n## Running it\n\n"
-        f"`{title}.gguf` is a gguf with the layout, tokenizer and Hadamard rotation of "
+        f"`{gguf}` is a gguf with the layout, tokenizer and Hadamard rotation of "
         f"[{pair.genesis_repo}]({hub}) (`{pair.genesis_file}`), its weights the miner's. Stock "
         "llama.cpp does not run it; the PrismML fork does, at the commit Ingot scored it with, "
         f"[`{LLAMA_CPP_COMMIT[:7]}`]({fork}/commit/{LLAMA_CPP_COMMIT}):\n\n"
         "```\n"
         f"git clone {fork} && cd llama.cpp && git checkout {LLAMA_CPP_COMMIT}\n"
         "cmake -B build -DGGML_CUDA=ON && cmake --build build -j\n"
-        f"build/bin/llama-server -m {title}.gguf -ngl 99 -fa on --jinja\n"
+        f"build/bin/llama-server -m {gguf} -ngl 99 -fa on --jinja\n"
         "```\n"
     )
+    if ptq1:
+        text += f"\nEither file runs the same way: pass `-m {ptq1}` for the 1.75 bpw one.\n"
     if pair.vision_files:
         first = pair.vision_files[0]
         vrepo, _, vrev = (pair.vision_repo or "").partition("@")
@@ -224,7 +296,7 @@ def _gguf_card(title: str, pair: Quant) -> str:
             "```\n"
             f"hf download {vrepo} {first} --revision {vrev}"
             " --local-dir .\n"
-            f"build/bin/llama-server -m {title}.gguf --mmproj {first} -ngl 99 -fa on --jinja\n"
+            f"build/bin/llama-server -m {gguf} --mmproj {first} -ngl 99 -fa on --jinja\n"
             "```\n"
         )
     return text

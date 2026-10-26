@@ -52,7 +52,7 @@ def test_a_gguf_king_is_its_file_and_its_quants_license(tmp_path, monkeypatch, s
     (model / "anything.gguf").write_bytes(b"GGUF")
     q2 = spec.pair("qwen38_27b", "q2")
     models.publish(model, "ns/Ingot-I-27B-Q2", "card", q2)
-    assert FakeApi.commits == [["Ingot-I-27B-Q2.gguf", "LICENSE", "NOTICE.txt", "README.md"]]
+    assert FakeApi.commits == [["Ingot-I-27B-PQ2_0.gguf", "LICENSE", "NOTICE.txt", "README.md"]]
     assert {repo for repo, _ in fetched} == {q2.genesis_repo}, "q2's genesis, not the open one's"
 
 
@@ -61,7 +61,7 @@ def test_the_card(spec):
     chains every duel as the dashboard does."""
     row = {"hotkey": "hk", "uid": 1, "id": "sub"}
     text = card(row, "Ingot-I-27B-Q2", spec.pair("qwen38_27b", "q2"), [])
-    assert LLAMA_CPP_COMMIT in text and "Ingot-I-27B-Q2.gguf" in text
+    assert LLAMA_CPP_COMMIT in text and "-m Ingot-I-27B-PQ2_0.gguf" in text
     assert "--mmproj Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf" in text
     assert (
         "hf download prism-ml/Ternary-Bonsai-2-27B-gguf Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf"

@@ -228,7 +228,7 @@ def test_challenger_beats_king_and_gets_paid(conn, s, spec):
 
     published: list[str] = []
 
-    def publish(_model_dir: Path, repo: str, _card: str, _pair: object) -> str:
+    def publish(_model_dir: Path, repo: str, _card: str, _pair: object, _extra: object) -> str:
         published.append(repo)
         return "url"
 
@@ -923,7 +923,7 @@ def test_the_first_q2_king_is_ingot_i_even_after_fp8_kings(conn, s, spec):
     crown_genesis(conn)
     fp8 = submit(conn, hotkey="hk-1", uid=7)
     conn.execute("UPDATE submissions SET state = 'WON' WHERE id = %s", (fp8,))
-    publish = lambda _d, repo, _c, _p: repo  # noqa: E731
+    publish = lambda _d, repo, _c, _p, _e: repo  # noqa: E731
     assert promoter.run_once(conn, worker=WORKER, s=s, spec=spec, fetch=fetch, publish=publish)
     q2 = submit(conn, hotkey="hk-2", uid=8)
     conn.execute("UPDATE submissions SET state = 'WON', quant = 'q2' WHERE id = %s", (q2,))

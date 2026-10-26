@@ -119,15 +119,19 @@ def hub_layout(repo: str, revision: str | None = None) -> dict[str, tuple[str, t
     }
 
 
-def publish(model_dir: Path, repo_id: str, card: str, pair: Quant) -> str:
+def publish(
+    model_dir: Path, repo_id: str, card: str, pair: Quant, extra: dict[str, Path] | None = None
+) -> str:
     """Mirror a king to a public Hugging Face repo, completed with the files of its quant's
-    genesis it was not allowed to ship (pair.publish_files): one commit after the repo's initial
-    one. A gguf king's one file is named after the repo. Returns the repo url."""
+    genesis it was not allowed to ship (pair.publish_files) and `extra` (name in the repo → local
+    file): one commit after the repo's initial one. A gguf king's one file is named after the
+    repo. Returns the repo url."""
     from huggingface_hub import CommitOperationAdd, HfApi
 
     files = {name: str(path) for name, path in _mirrored(model_dir, repo_id, pair).items()}
     for name in pair.publish_files:
         files[name] = str(hub_file(pair.genesis_repo, name, pair.genesis_revision))
+    files |= {name: str(path) for name, path in (extra or {}).items()}
     operations = [CommitOperationAdd(path_in_repo=n, path_or_fileobj=f) for n, f in files.items()]
     operations.append(CommitOperationAdd(path_in_repo="README.md", path_or_fileobj=card.encode()))
     api = HfApi(token=_token())
@@ -144,9 +148,15 @@ def _mirrored(model_dir: Path, repo_id: str, pair: Quant) -> dict[str, Path]:
         name = path.relative_to(model_dir).as_posix()
         if path.is_file() and not any(fnmatch(name, p) for p in _UPLOAD_IGNORE):
             if pair.format == "gguf" and name.endswith(".gguf"):
-                name = f"{repo_id.rsplit('/', 1)[-1]}.gguf"
+                name = gguf_name(repo_id.rsplit("/", 1)[-1], pair.king_packing)
             files[name] = path
     return files
+
+
+def gguf_name(repo_name: str, packing: str | None) -> str:
+    """A king's gguf in its mirror, named for its packing in place of the quant label
+    (Ingot-IV-27B-Q2 -> Ingot-IV-27B-PQ2_0.gguf); without one, for the repo."""
+    return f"{repo_name.rsplit('-', 1)[0]}-{packing}.gguf" if packing else f"{repo_name}.gguf"
 
 
 def mirror_matches(model_dir: Path, repo_id: str, pair: Quant) -> bool:

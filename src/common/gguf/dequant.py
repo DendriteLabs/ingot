@@ -35,16 +35,20 @@ def tensor(path: Path, g: Gguf, name: str) -> np.ndarray:
         d = blocks[:, :2].copy().view("<f2").astype(np.float32)
         out = (blocks[:, 2:].view(np.int8).astype(np.float32) * d).reshape(-1)
     elif t.ggml_type == PQ2_0:
-        # block_pq2_0: fp16 d, then 32 bytes of 2-bit codes, weight j at bits 2*(j%4) of byte
-        # j/4; value (code - 1) * d (ggml-quants.c dequantize_row_pq2_0)
+        # value (code - 1) * d (ggml-quants.c dequantize_row_pq2_0)
         blocks = raw.reshape(-1, 34)
         d = blocks[:, :2].copy().view("<f2").astype(np.float32)
-        qs = blocks[:, 2:]
-        codes = np.stack([(qs >> (2 * k)) & 3 for k in range(4)], axis=-1).reshape(-1, 128)
-        out = ((codes.astype(np.float32) - 1.0) * d).reshape(-1)
+        out = ((pq2_codes(blocks).astype(np.float32) - 1.0) * d).reshape(-1)
     else:
         raise ValueError(f"{name}: no dequantizer for {kind.name}")
     return out.reshape(tuple(reversed(t.shape))) if len(t.shape) > 1 else out
+
+
+def pq2_codes(blocks: np.ndarray) -> np.ndarray:
+    """[n, 128] 2-bit codes of [n, 34] block_pq2_0 rows (fp16 d, then 32 bytes of codes): weight
+    j at bits 2*(j%4) of byte j/4."""
+    qs = blocks[:, 2:]
+    return np.stack([(qs >> (2 * k)) & 3 for k in range(4)], axis=-1).reshape(-1, 128)
 
 
 def rotation(g: Gguf, name: str) -> tuple[int, np.ndarray] | None:

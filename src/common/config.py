@@ -113,6 +113,8 @@ class Quant:
     upload_limit: int
     weight_limit: int | None
     king_name: str
+    # the packing a gguf king's mirrored file is named for (Ingot-IV-27B-PQ2_0.gguf)
+    king_packing: str | None = None
     # genesis repo files a crowned king is published with (it was not allowed to ship them)
     publish_files: tuple[str, ...] = ()
     # files that run the vision tower beside a gguf king (llama.cpp --mmproj), in vision_repo
@@ -216,6 +218,8 @@ def _quants(raw: dict) -> dict[tuple[str, str], Quant]:
                 raise ValueError(f"{where} needs a genesis_file")
             if not isinstance(c.get("king_name"), str) or not _HF_NAME.fullmatch(c["king_name"]):
                 raise ValueError(f"{where} needs a king_name of letters, digits, . _ -")
+            if c.get("king_packing") is not None and not _HF_NAME.fullmatch(str(c["king_packing"])):
+                raise ValueError(f"{where} king_packing must be letters, digits, . _ -")
             if c.get("vision_repo") and "@" not in c["vision_repo"]:
                 raise ValueError(f"{where} vision_repo must be repo@revision")
             if c.get("dedup", "full") not in DEDUP_MODES:
@@ -232,6 +236,7 @@ def _quants(raw: dict) -> dict[tuple[str, str], Quant]:
                 upload_limit=c["upload_limit"],
                 weight_limit=c.get("weight_limit"),
                 king_name=c["king_name"],
+                king_packing=c.get("king_packing"),
                 vision_files=tuple(c.get("vision_files", [])),
                 vision_repo=c.get("vision_repo"),
                 dedup=c.get("dedup", "full"),
