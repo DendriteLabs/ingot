@@ -30,6 +30,8 @@ const hotkeyCell = (hotkey, cls = "hotkey") => el("td", { class: cls }, hotkey ?
 let state = null;
 let benchmarksLoading = false;
 let benchmarkDocument = null;
+// the selected round's benchmark runs (its protocol's), for the hero's best model; null until loaded
+let benchRuns = null;
 
 async function tick() {
   try {
@@ -94,20 +96,25 @@ function renderHero() {
   mount($("hero-teacher"), link(hubUrl(state.teacher), state.teacher));
   document.querySelectorAll(".stamp-tab").forEach((tab) => {
     tab.setAttribute("aria-selected", String(tab.dataset.tab === selectedRound));
-    tab.onclick = () => { selectedRound = tab.dataset.tab; render(); loadBenchmarks(); };
+    tab.onclick = () => { selectedRound = tab.dataset.tab; benchRuns = null; render(); loadBenchmarks(); };
   });
   const { open, genesis } = ROUNDS[selectedRound];
-  const king = kingGains().filter((k) => k.submission_id).at(-1);
+  // the round's best model by the external benchmarks once their feed is in (the benchmarks card's
+  // own default pick, a full suite only); until then, or without one, the reigning king
+  const best = benchRuns ? rankKings(benchRuns, BENCHMARKS).find((row) => row.done === BENCHMARKS.length) : null;
+  const king = best?.king ?? kingGains().filter((k) => k.submission_id).at(-1);
   const teacher = state.teacher.split("/").pop();
   const [name, repo] = king ? [king.name, king.hf_repo] : [genesis.name, genesis.repo];
   const url = repo ? hubUrl(repo) : null;
   $("stamp").classList.toggle("closed", !open);
-  mount($("hero-label"), open ? "Open round" : "Closed round");
+  mount($("hero-label"), `${open ? "Open round" : "Closed round"}${best ? " · best model" : ""}`);
   mount($("hero-king"), url ? link(url, name) : name);
   mount($("hero-repo"), url ? link(url, repo) : "");
-  mount($("hero-line"), ...(king
-    ? [el("b", {}, `${king.gain.toFixed(1)}%`), "closer to ", link(hubUrl(state.teacher), teacher), " than ", link(hubUrl(genesis.repo), genesis.versus)]
-    : []));
+  mount($("hero-line"), ...(best
+    ? [el("b", {}, `${best.ahead} of ${BENCHMARKS.length}`), "benchmarks at or above ", link(hubUrl(genesis.repo), genesis.versus)]
+    : king
+      ? [el("b", {}, `${king.gain.toFixed(1)}%`), "closer to ", link(hubUrl(state.teacher), teacher), " than ", link(hubUrl(genesis.repo), genesis.versus)]
+      : []));
 }
 
 // the kings in order with their chart value (`v`, the gain over genesis) and the step each took:
@@ -334,6 +341,7 @@ function rankKings(runs, benchmarks) {
     return {
       king, order,
       done: pairs.filter(([mine]) => mine != null).length,
+      ahead: pairs.filter(([mine, base]) => mine != null && base != null && mine >= base).length,
       sum: pairs.reduce((total, [mine, base]) => total + (mine != null && base != null ? mine - base : 0), 0),
     };
   }).sort((a, b) => (full(b) - full(a)) || (full(a) ? b.sum - a.sum : b.done - a.done || b.order - a.order));
@@ -387,6 +395,10 @@ function renderBenchmarkCharts(results, benchmarks) {
   const runs = results.filter((r) => r.protocol?.id === protocolOf(r.benchmark));
   const { genesis } = ROUNDS[selectedRound];
   const ranked = rankKings(runs, benchmarks);
+  if (benchRuns !== runs) {
+    benchRuns = runs;
+    renderHero();
+  }
   const pick = ranked.find((row) => row.king.name === chosenKing[selectedRound]) ?? ranked[0];
   if (pick) renderKingPicker(ranked, pick, () => renderBenchmarkCharts(results, benchmarks));
   else mount($("bench-picker"));
