@@ -66,8 +66,8 @@ function render() {
 
 const ROUNDS = {
   q2: {
-    label: "2-bit", open: true,
-    genesis: { label: "Bonsai 2 Q2", name: "Bonsai-2-27B-Q2", versus: "Bonsai-2-27B-Q2", about: "Prism's 2-bit quantization",
+    label: "1.75-bit", open: true,
+    genesis: { label: "Bonsai 2 Q2", name: "Bonsai-2-27B-Q2", versus: "Bonsai-2-27B-Q2", about: "Prism's ternary quantization (1.75 bpw)",
       repo: "dendriteholdings/Ingot-genesis-27B-Q2", run: "Ingot-genesis-27B-Q2" },
   },
   fp8: {
