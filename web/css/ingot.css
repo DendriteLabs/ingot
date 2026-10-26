@@ -383,12 +383,34 @@ table.data-table tr.open:focus-visible { outline: 1px solid var(--accent); outli
 .ev-sub { margin-top: 12px; font-size: 15px; color: var(--text-2); }
 .ev-sub a { color: var(--text); }
 .ev-sub a:hover { color: var(--accent-ink); }
-.note { margin: 12px 0 0; font-family: var(--mono); font-size: 12px; line-height: 1.7; color: var(--muted); }
+.note { margin: 12px 0 0; font-family: var(--mono); font-size: 12px; line-height: 1.7; color: var(--muted); overflow-wrap: anywhere; }
 .note .fail-code { margin-right: 10px; }
 table.data-table td.gain { color: var(--accent-ink); font-weight: 600; }
 table.data-table td.short { color: var(--text-2); }
 .duel-table td.measure, table.data-table td.holds { font-family: var(--sans); font-size: 14px; white-space: normal; }
-table.data-table td.sample, table.data-table td.end { color: var(--text-2); }
+/* fixed layout: the number columns keep their widths and the sample id gives way, cut short, so
+   the table never scrolls sideways; columns drop out as the page narrows */
+table.samples-table { table-layout: fixed; }
+.samples-table td.sample { overflow: hidden; text-overflow: ellipsis; color: var(--text-2); }
+.samples-table .c-prompt { width: 88px; }
+.samples-table .c-answer { width: 104px; }
+.samples-table .c-chal { width: 144px; }
+.samples-table .c-king { width: 100px; }
+.samples-table .c-lead { width: 104px; }
+.samples-table .c-top1 { width: 172px; }
+.samples-table .c-top1k { width: 124px; }
+.samples-table .cut { color: var(--muted); }
+.domains-table td.domain { white-space: normal; overflow-wrap: anywhere; }
+table.data-table tbody tr.picked td { background: var(--accent-wash); }
+table.data-table tbody tr.picked td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+/* a bar from the middle: right for ground won on the king, left for ground lost */
+.domains-table th.c-bar, .domains-table td.c-bar { width: 160px; }
+.lead-bar { position: relative; display: block; height: 8px; border-left: 1px solid var(--line-strong); margin-left: 50%; }
+.lead-bar i { position: absolute; top: 0; bottom: 0; }
+.lead-bar i.up { left: 0; background: var(--accent); }
+.lead-bar i.down { right: 100%; background: var(--text-2); }
+button.show-all { padding: 0; font: inherit; letter-spacing: inherit; text-transform: inherit; color: var(--accent-ink); }
+button.show-all:hover { color: var(--text); }
 table.data-table td.artifact { font-weight: 500; }
 table.data-table a.download { color: var(--accent-ink); }
 table.data-table a.download:hover { color: var(--text); }
@@ -420,6 +442,10 @@ button.zip:disabled { opacity: 0.6; cursor: wait; }
 .foot .row { height: 56px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 
 /* ---------- narrow ---------- */
+@media (max-width: 1100px) { .samples-table .c-top1, .samples-table .c-top1k { display: none; } }
+@media (max-width: 760px) {
+  .samples-table .c-prompt, .samples-table .c-king, .domains-table .c-bar, .domains-table .c-count { display: none; }
+}
 @media (max-width: 960px) {
   .benchmark-card, .benchmark-card:nth-child(n + 4) { grid-column: span 6; }
   .hero { grid-template-columns: minmax(0, 1fr); gap: 28px; }
@@ -434,6 +460,7 @@ button.zip:disabled { opacity: 0.6; cursor: wait; }
   .stamp-king { font-size: 30px; }
   .section .head { flex-direction: column; gap: 6px; }
   .section .head .meta { text-align: left; }
+  .samples-table .c-answer, .samples-table .c-chal, .domains-table .c-share, .domains-table .c-dist { display: none; }
   .links .llms { padding: 0 8px; letter-spacing: 0.1em; }
   .foot .row { flex-direction: column; justify-content: center; height: auto; padding-top: 16px; padding-bottom: 16px; gap: 6px; }
 }

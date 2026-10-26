@@ -315,6 +315,7 @@ class _Evaluation:
     ) -> dict[str, Any]:
         return {
             "sample_id": sample.id,
+            "domain": sample.domain,
             "prompt_tokens": len(prompt),
             "answer_tokens": len(answer),
             "ended_with_eos": answer[-1] in self.eos,

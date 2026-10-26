@@ -1,5 +1,6 @@
-// One eval's page: the duel with the king on both win measures, where in the network each model
-// drifts from the teacher, every sample, and the raw artifacts. Reads api/evals/<id>.json.
+// One eval's page: the duel with the king on both win measures, how each domain moved the lead,
+// where in the network each model drifts from the teacher, every sample, and the raw artifacts.
+// Reads api/evals/<id>.json.
 
 import { el, mount } from "./js/dom.js";
 import { fmtDateTime, fmtDuration, shortHotkey } from "./js/format.js";
@@ -10,12 +11,22 @@ const id = new URLSearchParams(location.search).get("id");
 const num = (v, d = 5) => (v == null ? "—" : Number(v).toFixed(d));
 const signed = (v, d) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(d)}`;
 const pct = (v) => (v == null ? "—" : `${(100 * v).toFixed(2)}%`);
+// lower is closer to the teacher, so the challenger's lead is king − challenger, as a share of the king
+const versus = (chal, king) => (chal === king ? "even" : `${Math.abs((100 * (king - chal)) / king).toFixed(2)}% ${chal < king ? "better" : "worse"}`);
+const scored = (samples) => samples.filter((s) => s.runs.challenger && s.runs.king);
+// what the layers chart and the samples table show: the picked group's samples, or every one
+const shown = (doc) => (picked ? groupSamples(scored(doc.samples)).groups.get(picked) : scored(doc.samples));
 // the three roles a sample record can hold, as the chart draws them
 const SERIES = [["challenger", "challenger"], ["king", "king"], ["teacher_rerun", "teacher reread"]];
 const WHAT = {
   "summary.json": "the eval's row: both scores, the margins, the noise floor, seed and timings",
   "samples.jsonl": "one record per sample: KL, top-1 agreement, distance and 1 − cos by layer for each model",
 };
+// records from before the evaluator wrote each sample's domain group by source dataset instead,
+// the datasets with fewer samples than this folded into one row
+const FOLD_BELOW = 8;
+// the group the samples table is narrowed to, null for every sample
+let picked = null;
 
 mountHeader();
 load();
@@ -25,7 +36,7 @@ async function load() {
   if (!res?.ok) {
     $("ev-title").textContent = "No such eval";
     $("ev-sub").textContent = id ? `nothing is recorded for eval ${id}.` : "open an eval from the history table.";
-    for (const box of ["duel-wrap", "samples-wrap"]) mount($(box), el("div", { class: "empty" }, "—"));
+    for (const box of ["duel-wrap", "domains-wrap", "samples-wrap"]) mount($(box), el("div", { class: "empty" }, "—"));
     return;
   }
   const doc = await res.json();
@@ -34,6 +45,7 @@ async function load() {
   $("foot-netuid").textContent = `Ingot · subnet ${doc.netuid}`;
   renderHead(doc);
   renderDuel(doc);
+  renderDomains(doc);
   renderSamples(doc);
   renderArtifacts(doc);
   let width = 0;
@@ -73,7 +85,7 @@ function renderDuel(doc) {
     const lead = chal == null || king == null ? null : king - chal;
     const share = (v) => (100 * v) / king;
     const pass = lead != null && need != null && lead >= need;
-    const vsKing = lead == null ? "—" : lead === 0 ? "even" : `${Math.abs(share(lead)).toFixed(2)}% ${lead > 0 ? "better" : "worse"}`;
+    const vsKing = lead == null ? "—" : versus(chal, king);
     const verdict = lead == null || need == null
       ? null
       : el("span", { class: `verdict-badge ${pass ? "crowned" : "lost"}` },
@@ -100,6 +112,97 @@ function renderDuel(doc) {
       + `Run time: challenger ${secs(e.challenger_s)}, king ${secs(e.king_s)}. Seed ${e.seed}, dataset ${e.dataset_hash}.`));
 }
 
+// the samples by domain; records from before domains by source dataset, with the rare datasets in
+// one row
+function groupSamples(samples) {
+  const byDomain = samples.some((s) => s.domain);
+  const groups = new Map();
+  for (const s of samples) {
+    const key = byDomain ? (s.domain || "—").replaceAll("_", " ") : s.sample_id.split("/")[0];
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(s);
+  }
+  const rare = byDomain ? [] : [...groups].filter(([, members]) => members.length < FOLD_BELOW);
+  if (rare.length > 1) {
+    for (const [key] of rare) groups.delete(key);
+    groups.set(`${rare.length} other sources`, rare.flatMap(([, members]) => members));
+  }
+  return { byDomain, groups };
+}
+
+// token-weighted sums as the evaluator forms its scores: KL over every answer token, the distance
+// over every answer token but the last
+function totals(samples) {
+  const t = { tokens: 0, klChal: 0, klKing: 0, states: 0, distChal: 0, distKing: 0 };
+  for (const s of samples) {
+    const n = s.answer_tokens;
+    t.tokens += n;
+    t.klChal += s.runs.challenger.kl * n;
+    t.klKing += s.runs.king.kl * n;
+    t.states += n - 1;
+    t.distChal += s.runs.challenger.dist * (n - 1);
+    t.distKing += s.runs.king.dist * (n - 1);
+  }
+  return t;
+}
+
+function renderDomains(doc) {
+  const samples = scored(doc.samples);
+  if (!samples.length) {
+    mount($("domains-wrap"), el("div", { class: "empty" }, "no sample records for this eval."));
+    return;
+  }
+  const { byDomain, groups } = groupSamples(samples);
+  const all = totals(samples);
+  // what a group adds to the challenger's KL lead, in points of the king's KL: the rows add up to
+  // the duel's KL "vs king", so a row below zero is ground the challenger lost there
+  const rows = [...groups]
+    .map(([name, members]) => {
+      const t = totals(members);
+      return { name, count: members.length, t, adds: (100 * (t.klKing - t.klChal)) / all.klKing };
+    })
+    .sort((a, b) => b.t.tokens - a.t.tokens);
+  const widest = Math.max(...rows.map((r) => Math.abs(r.adds)));
+  $("domains-meta").textContent = byDomain ? "pick one to list its samples" : "by source dataset: these records predate domains";
+  const trs = rows.map((r) => {
+    const tr = el("tr", { class: "open", tabindex: "0", title: `list the ${r.name} samples` },
+      el("td", { class: "domain" }, r.name),
+      el("td", { class: "r c-count" }, String(r.count)),
+      el("td", { class: "r c-share" }, pct(r.t.tokens / all.tokens)),
+      el("td", { class: `r ${r.t.klChal <= r.t.klKing ? "gain" : "short"}`, title: `KL challenger ${num(r.t.klChal / r.t.tokens)}, king ${num(r.t.klKing / r.t.tokens)}` },
+        versus(r.t.klChal, r.t.klKing)),
+      el("td", { class: `r c-dist ${r.t.distChal <= r.t.distKing ? "gain" : "short"}`, title: `distance challenger ${num(r.t.distChal / r.t.states, 4)}, king ${num(r.t.distKing / r.t.states, 4)}` },
+        versus(r.t.distChal, r.t.distKing)),
+      el("td", { class: "c-bar" }, el("span", { class: "lead-bar" },
+        el("i", { class: r.adds >= 0 ? "up" : "down", style: `width: ${widest ? (100 * Math.abs(r.adds)) / widest : 0}%` }))),
+      el("td", { class: `r ${r.adds >= 0 ? "gain" : "short"}` }, `${signed(r.adds, 2)} pp`));
+    tr.dataset.group = r.name;
+    const pick = () => {
+      picked = picked === r.name ? null : r.name;
+      for (const row of trs) row.classList.toggle("picked", row.dataset.group === picked);
+      renderLayers(doc);
+      renderSamples(doc);
+    };
+    tr.addEventListener("click", pick);
+    tr.addEventListener("keydown", (ev) => ev.key === "Enter" && pick());
+    return tr;
+  });
+  mount($("domains-wrap"),
+    el("div", { class: "data-table-wrap" }, el("table", { class: "data-table domains-table" },
+      el("thead", {}, el("tr", {},
+        el("th", {}, byDomain ? "domain" : "source"),
+        el("th", { class: "r c-count" }, "samples"),
+        el("th", { class: "r c-share", title: "its answer tokens as a share of all of them: the scores weigh every answer token the same" }, "weight"),
+        el("th", { class: "r", title: "the challenger's KL against the king's on these samples; lower is closer to the teacher" }, "KL vs king"),
+        el("th", { class: "r c-dist", title: "the challenger's hidden-state distance against the king's on these samples" }, "distance vs king"),
+        el("th", { class: "c-bar" }, ""),
+        el("th", { class: "r", title: "what these samples add to the challenger's KL lead, in points of the king's KL; the rows add up to the duel's KL vs king" }, "KL lead"))),
+      el("tbody", {}, trs))),
+    el("p", { class: "note" },
+      "KL lead: what each row adds to the challenger's lead at the output, in percentage points of the king's KL. "
+      + "The rows add up to the duel's KL result, so a row below zero is where the challenger lost ground to the king."));
+}
+
 // mean 1 − cos per layer, weighted by answer tokens as the evaluator weighs its means; hidden
 // states cover every answer token but the last
 function layerMeans(samples, role) {
@@ -117,8 +220,8 @@ function layerMeans(samples, role) {
 
 function renderLayers(doc) {
   const box = $("layers-chart");
-  const series = SERIES.map(([role, label]) => ({ role, label, points: layerMeans(doc.samples, role) })).filter((s) => s.points.length);
-  mount($("layers-meta"), ...series.map((s) => el("span", { class: `legend ${s.role}` }, el("i"), s.label)));
+  const series = SERIES.map(([role, label]) => ({ role, label, points: layerMeans(shown(doc), role) })).filter((s) => s.points.length);
+  mount($("layers-meta"), picked ? el("b", {}, picked) : null, ...series.map((s) => el("span", { class: `legend ${s.role}` }, el("i"), s.label)));
   if (!series.length) {
     mount(box, el("div", { class: "empty" }, "no per-layer records for this eval."));
     return;
@@ -169,34 +272,43 @@ function renderLayers(doc) {
 }
 
 function renderSamples(doc) {
+  const samples = scored(doc.samples);
   // worst for the challenger first: the samples where the king stayed closest to the teacher
-  const rows = doc.samples
-    .filter((s) => s.runs.challenger && s.runs.king)
+  const rows = shown(doc)
     .map((s) => ({ ...s, lead: s.runs.king.kl - s.runs.challenger.kl }))
     .sort((a, b) => a.lead - b.lead);
-  $("samples-meta").textContent = rows.length ? `${rows.length} samples · worst for the challenger first` : "";
+  if (picked) {
+    const all = el("button", { type: "button", class: "show-all" }, "show all");
+    all.addEventListener("click", () => $("domains-wrap").querySelector("tr.picked")?.click());
+    mount($("samples-meta"), el("b", {}, picked), ` · ${rows.length} of ${samples.length} samples · worst for the challenger first · `, all);
+  } else {
+    $("samples-meta").textContent = rows.length ? `${rows.length} samples · worst for the challenger first` : "";
+  }
   if (!rows.length) {
     const why = doc.artifacts.includes("samples.jsonl") ? "the sample artifact holds no records." : "no sample artifact for this eval.";
     mount($("samples-wrap"), el("div", { class: "empty" }, why));
     return;
   }
   const body = rows.map((s) => el("tr", {},
-    el("td", { class: "sample" }, s.sample_id),
-    el("td", { class: "r" }, String(s.prompt_tokens)),
-    el("td", { class: "r" }, String(s.answer_tokens)),
-    el("td", { class: "end", title: s.ended_with_eos ? "the teacher ended its answer" : "the answer hit the token limit" }, s.ended_with_eos ? "eos" : "cut"),
-    el("td", { class: "r" }, num(s.runs.challenger.kl)),
-    el("td", { class: "r" }, num(s.runs.king.kl)),
-    el("td", { class: `r ${s.lead >= 0 ? "gain" : "short"}` }, signed(s.lead, 5)),
-    el("td", { class: "r" }, pct(s.runs.challenger.top1_agreement)),
-    el("td", { class: "r" }, pct(s.runs.king.top1_agreement))));
-  mount($("samples-wrap"), el("table", { class: "data-table" },
+    el("td", { class: "sample", title: s.sample_id }, s.sample_id),
+    el("td", { class: "r c-prompt" }, String(s.prompt_tokens)),
+    el("td", { class: "r c-answer" }, String(s.answer_tokens),
+      s.ended_with_eos ? null : el("span", { class: "cut", title: "the answer hit the token limit" }, " cut")),
+    el("td", { class: "r c-chal" }, num(s.runs.challenger.kl)),
+    el("td", { class: "r c-king" }, num(s.runs.king.kl)),
+    el("td", { class: `r c-lead ${s.lead >= 0 ? "gain" : "short"}` }, signed(s.lead, 5)),
+    el("td", { class: "r c-top1" }, pct(s.runs.challenger.top1_agreement)),
+    el("td", { class: "r c-top1k" }, pct(s.runs.king.top1_agreement))));
+  mount($("samples-wrap"), el("table", { class: "data-table samples-table" },
     el("thead", {}, el("tr", {},
-      el("th", {}, "sample"), el("th", { class: "r" }, "prompt"), el("th", { class: "r" }, "answer"), el("th", {}, "end"),
-      el("th", { class: "r" }, "KL challenger"), el("th", { class: "r" }, "KL king"),
-      el("th", { class: "r", title: "KL king − KL challenger" }, "lead"),
-      el("th", { class: "r", title: "how often the model's top token is the teacher's" }, "top-1 challenger"),
-      el("th", { class: "r" }, "top-1 king"))),
+      el("th", {}, "sample"),
+      el("th", { class: "r c-prompt" }, "prompt"),
+      el("th", { class: "r c-answer", title: "answer tokens; cut: the answer hit the token limit" }, "answer"),
+      el("th", { class: "r c-chal" }, "KL challenger"),
+      el("th", { class: "r c-king" }, "KL king"),
+      el("th", { class: "r c-lead", title: "KL king − KL challenger" }, "lead"),
+      el("th", { class: "r c-top1", title: "how often the model's top token is the teacher's" }, "top-1 challenger"),
+      el("th", { class: "r c-top1k" }, "top-1 king"))),
     el("tbody", {}, body)));
 }
 
