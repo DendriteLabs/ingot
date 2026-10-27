@@ -49,8 +49,6 @@ async function tick() {
 function render() {
   $("link-github").href = state.links.github;
   $("link-miner").href = state.links.github;
-  $("link-dataset").hidden = !state.links.dataset;
-  if (state.links.dataset) $("link-dataset").href = state.links.dataset;
   $("foot-netuid").textContent = `Ingot · subnet ${state.netuid}`;
   renderHero();
   renderKingsChart();

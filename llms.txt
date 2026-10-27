@@ -118,14 +118,23 @@ with a little noise does not pay: it passes this check and loses its duel.
 ## How a submission is judged
 
 The evaluation dataset is the Hugging Face Parquet dataset and split named in `chain.toml`
-`[dataset]`. The evaluator draws `SAMPLES_PER_DOMAIN` (40) prompts from every domain and
+`[dataset]`, plus `[dataset.extra]`: public Terminal-Bench-Science leaderboard runs that may be
+used but not redistributed, which every validator converts into rows itself before drawing
+(`eval_service/dataset.py`, `common/agent_traces.py`); each eval records the revision of both it
+used. The evaluator draws `SAMPLES_PER_DOMAIN` (40) prompts from every domain and
 `DOMAIN_SAMPLES` (150) from each agent domain, swe and terminal, seeded by the block hash of your
 `r2ready` commitment. Inside a domain it spreads the draw as evenly as possible over the languages
 available there, then picks rows at random from each language; the seed makes the same draw
-reproducible on every validator (`eval_service/dataset.py`). An agent domain's row is a whole
-agent trajectory, and the draw cuts it before a seeded random assistant turn after the first, one
-whose prompt leaves room for the answer in `MAX_MODEL_LEN` (36864) tokens: the prompt is the task,
-the tool schemas, and the agent's earlier tool calls and their output. The teacher answers each
+reproducible on every validator. An agent domain's row is a whole agent trajectory in
+mini-swe-agent's format, the harness of the Terminal-Bench and SWE-bench runs we compare kings
+against: swe holds Qwen3.8-27B's mini-swe-agent runs from `nvidia/Open-SWE-Traces`, its language
+the repository's; terminal holds three equal shares, Long-Horizon Terminal-Bench 2.0 leaderboard
+runs (`lhtb`), the Terminal-Bench-Science runs (`tbsci`) and Qwen3.8-27B's and Nemotron-Pivot's
+Terminus-2 runs rewritten to the format (`broad`), successes and failures alike
+(`scripts/build_agent_corpus.py`). Runs on a SWE-bench Multilingual repository or a Terminal-Bench
+2.1 task are left out. The draw cuts a trajectory before a seeded random assistant turn after the
+first, one whose prompt leaves room for the answer in `MAX_MODEL_LEN` (36864) tokens: the prompt
+is the task, the tool schemas, and the agent's earlier tool calls and their output. The teacher answers each
 prompt in vLLM (temperature 1.0, top_p 0.95, top_k 20, at most `MAX_TOKENS` tokens); the
 king and your model then read exactly the teacher's prompt and answer. Only the answer tokens are
 scored. For each model, per answer token:

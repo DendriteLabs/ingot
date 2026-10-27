@@ -177,6 +177,7 @@ class Sums:
             "kl": _g7(self.kl / p),
             "top1_agreement": _g7(self.top1 / p),
             "dist": _g7(self.layer_mean_dist / a),
+            "dist_by_layer": {name: _g7(v / a) for name, v in zip(names, self.dist, strict=True)},
             "one_minus_cos_by_layer": {
                 name: _g7(v / a) for name, v in zip(names, self.cos_dist, strict=True)
             },

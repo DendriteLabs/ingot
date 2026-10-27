@@ -24,7 +24,7 @@ const shown = (doc) => (picked ? groupSamples(scored(doc.samples)).groups.get(pi
 const SERIES = [["challenger", "challenger"], ["king", "king"], ["teacher_rerun", "teacher reread"]];
 const WHAT = {
   "summary.json": "the eval's row: both scores, the margins, the noise floor, seed and timings",
-  "samples.jsonl": "one record per sample: KL, top-1 agreement, distance and 1 − cos by layer for each model",
+  "samples.jsonl": "one record per sample: KL, top-1 agreement, 1 − cos and distance by layer for each model",
 };
 // records from before the evaluator wrote each sample's domain group by source dataset instead,
 // the datasets with fewer samples than this folded into one row
@@ -54,7 +54,7 @@ async function load() {
   renderArtifacts(doc);
   let width = 0;
   new ResizeObserver(() => {
-    // width only: the chart sets its own height
+    // width only: the charts set their own height
     if ($("layers-chart").clientWidth === width) return;
     width = $("layers-chart").clientWidth;
     renderLayers(doc);
@@ -208,32 +208,43 @@ function renderDomains(doc) {
       + "The rows add up to the duel's KL result, so a row below zero is where the challenger lost ground to the king."));
 }
 
-// mean 1 − cos per layer, weighted by answer tokens as the evaluator weighs its means; hidden
+// the two per-layer measures a sample record holds, with the tooltip's name for each; records from
+// before the evaluator wrote the distance by layer draw only the first
+const LAYER_CHARTS = [
+  ["layers", "one_minus_cos_by_layer", "1 − cos to the teacher", "1 − cos"],
+  ["distance", "dist_by_layer", "|h − h_teacher| / |h_teacher|", "the distance"],
+];
+
+// a measure's mean per layer, weighted by answer tokens as the evaluator weighs its means; hidden
 // states cover every answer token but the last
-function layerMeans(samples, role) {
+function layerMeans(samples, role, field) {
   const sums = new Map();
   let weight = 0;
   for (const s of samples) {
     const run = s.runs[role];
-    if (!run) continue;
+    if (!run?.[field]) continue;
     const w = Math.max(s.answer_tokens - 1, 1);
     weight += w;
-    for (const [layer, v] of Object.entries(run.one_minus_cos_by_layer)) sums.set(layer, (sums.get(layer) ?? 0) + v * w);
+    for (const [layer, v] of Object.entries(run[field])) sums.set(layer, (sums.get(layer) ?? 0) + v * w);
   }
   return weight ? [...sums].map(([layer, v]) => ({ layer, v: v / weight })) : [];
 }
 
 function renderLayers(doc) {
-  const box = $("layers-chart");
-  const series = SERIES.map(([role, label]) => ({ role, label, points: layerMeans(shown(doc), role) })).filter((s) => s.points.length);
-  mount($("layers-meta"), picked ? el("b", {}, picked) : null, ...series.map((s) => el("span", { class: `legend ${s.role}` }, el("i"), s.label)));
+  for (const [name, field, what, noun] of LAYER_CHARTS) renderLayerChart(doc, name, field, what, noun);
+}
+
+function renderLayerChart(doc, name, field, what, noun) {
+  const box = $(`${name}-chart`);
+  const series = SERIES.map(([role, label]) => ({ role, label, points: layerMeans(shown(doc), role, field) })).filter((s) => s.points.length);
+  mount($(`${name}-meta`), picked ? el("b", {}, picked) : null, ...series.map((s) => el("span", { class: `legend ${s.role}` }, el("i"), s.label)));
   if (!series.length) {
-    mount(box, el("div", { class: "empty" }, "no per-layer records for this eval."));
+    mount(box, el("div", { class: "empty" }, `${noun} by layer is not in this eval's records.`));
     return;
   }
   const layers = series[0].points.map((p) => p.layer);
   const PAD = { top: 20, right: 24, bottom: 28, left: 64 };
-  const HEIGHT = 260;
+  const HEIGHT = 340;
   const width = Math.max(box.clientWidth || 0, 320);
   const w = width - PAD.left - PAD.right;
   const h = HEIGHT - PAD.top - PAD.bottom;
@@ -265,7 +276,7 @@ function renderLayers(doc) {
     crosshair.setAttribute("x2", x(i) + 0.5);
     crosshair.removeAttribute("visibility");
     mount(tip,
-      el("div", { class: "hero-chart-tip-row" }, el("b", {}, `layer ${layers[i].slice(1)}`), el("span", { class: "lbl" }, "1 − cos to the teacher")),
+      el("div", { class: "hero-chart-tip-row" }, el("b", {}, `layer ${layers[i].slice(1)}`), el("span", { class: "lbl" }, what)),
       ...series.map((s) => el("div", { class: "hero-chart-tip-meta" }, `${s.label} ${s.points[i].v.toFixed(6)}`)));
     placeTip(tip, svg, width, x(i), PAD.top);
   });

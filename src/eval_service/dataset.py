@@ -99,7 +99,8 @@ def load(path: Path) -> Dataset:
 
 
 def fetch(spec: ChainSpec, local: Path) -> Dataset:
-    """Download the configured Parquet split, or load local JSONL when no repo is configured."""
+    """Download the configured Parquet split, plus the extra source's rows built here, or load
+    local JSONL when no repo is configured."""
     if not spec.dataset_repo:
         return load(local)
     pattern = f"data/{spec.dataset_split}-*.parquet"
@@ -112,13 +113,50 @@ def fetch(spec: ChainSpec, local: Path) -> Dataset:
     files = tuple(sorted(root.glob(pattern)))
     if not files:
         raise ValueError(f"{spec.dataset_repo}@{spec.dataset_revision} has no {pattern}")
+    identity = f"{spec.dataset_repo}@{root.name}:{spec.dataset_split}"
+    if spec.dataset_extra_repo:
+        extra, extra_identity = _extra(spec)
+        files += (extra,)
+        identity += f"+{extra_identity}"
     rows = _parquet_row_count(files)
-    digest = hashlib.sha256(
-        f"{spec.dataset_repo}@{root.name}:{spec.dataset_split}".encode()
-    ).hexdigest()
+    digest = hashlib.sha256(identity.encode()).hexdigest()
     return Dataset(
         samples=[], sha256=digest, parquet_files=files, parquet_rows=rows, index=load_index(files)
     )
+
+
+def _extra(spec: ChainSpec) -> tuple[Path, str]:
+    """The extra source (chain.toml [dataset.extra]: runs that may be used but not redistributed)
+    as one Parquet file of corpus rows, built once per revision in the HF cache, and its
+    repo@revision for the dataset's identity."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from common.agent_traces import COLUMNS, terminal_bench_science
+    from common.config import settings
+
+    root = models.snapshot(
+        spec.dataset_extra_repo,
+        spec.dataset_extra_revision,
+        repo_type="dataset",
+        allow_patterns=[f"trajectories/models/{m}/*/*.jsonl.gz" for m in spec.dataset_extra_models],
+    )
+    out = (
+        settings().eval_work_dir
+        / "corpus-extra"
+        / root.name
+        / f"{spec.dataset_split}-extra.parquet"
+    )
+    if not out.exists():
+        rows = list(terminal_bench_science(root, spec.dataset_extra_models))
+        out.parent.mkdir(parents=True, exist_ok=True)
+        schema = pa.schema([(c, pa.large_string()) for c in COLUMNS])
+        partial = out.with_suffix(".tmp")
+        pq.write_table(
+            pa.Table.from_pylist(rows, schema), partial, compression="zstd", row_group_size=500
+        )
+        partial.replace(out)  # a crash mid-write must not leave a file that passes the exists check
+    return out, f"{spec.dataset_extra_repo}@{root.name}"
 
 
 def draw(

@@ -139,6 +139,9 @@ class ChainSpec:
     mailbox_url: str
     required_files: tuple[str, ...]
     quants: dict[tuple[str, str], Quant]
+    dataset_extra_repo: str = ""
+    dataset_extra_revision: str = ""
+    dataset_extra_models: tuple[str, ...] = ()
 
     def allows_file(self, name: str, fmt: str) -> bool:
         """A name that may exist in a submission's bucket folder. safetensors: the required files
@@ -200,6 +203,9 @@ def chain_spec(path: Path = REPO_ROOT / "chain.toml") -> ChainSpec:
         mailbox_url=raw["private_store"]["mailbox_url"],
         required_files=tuple(files["required"]),
         quants=_quants(raw),
+        dataset_extra_repo=raw["dataset"].get("extra", {}).get("repo", ""),
+        dataset_extra_revision=raw["dataset"].get("extra", {}).get("revision", ""),
+        dataset_extra_models=tuple(raw["dataset"].get("extra", {}).get("models", ())),
     )
 
 

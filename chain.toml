@@ -47,6 +47,11 @@ repo = "dendriteholdings/ingot_corpus"
 revision = "main"
 split = "chungus"
 
+[dataset.extra]
+repo = "yangjunxiao2021/terminal-bench-science-trajectories"
+revision = "b6673399aaf008168eb51891951082d3b60a9ba7"
+models = ["glm-5.3-8802b14b", "grok-4.6-4e2ddcfc", "grok-4.7-0848fce8", "kimi-k3-cacf6b25", "opus-4.8-8f934681", "gpt-5.6-sol-4c15583f"]
+
 [private_store]
 chain_generation = "ingot-mainnet-2"
 mailbox_url = "https://pub-e6aba013d13549e5a737273de761280f.r2.dev"
