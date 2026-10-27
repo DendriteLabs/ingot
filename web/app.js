@@ -3,6 +3,7 @@
 import { el, mount, link } from "./js/dom.js";
 import { fmtDateTime, fmtDuration, fmtRelative, shortHotkey } from "./js/format.js";
 import { $, minerLink, mountHeader, placeTip, svgEl } from "./js/page.js";
+import { BENCHMARKS, TEACHER_RUN, complete, protocolOf, rankKings as rank, roundRuns } from "./js/benchmarks.js";
 
 const POLL_MS = 5000;
 const STAGES = {
@@ -48,7 +49,6 @@ async function tick() {
 
 function render() {
   $("link-github").href = state.links.github;
-  $("link-miner").href = state.links.github;
   $("foot-netuid").textContent = `Ingot · subnet ${state.netuid}`;
   renderHero();
   renderKingsChart();
@@ -90,30 +90,29 @@ function kingGains() {
   });
 }
 
+// the dashboard's head: the round tabs, and the round's best model (by the external benchmarks once
+// their feed is in, a full suite only; until then the reigning king)
 function renderHero() {
-  mount($("hero-teacher"), link(hubUrl(state.teacher), state.teacher));
   document.querySelectorAll(".stamp-tab").forEach((tab) => {
     tab.setAttribute("aria-selected", String(tab.dataset.tab === selectedRound));
     tab.onclick = () => { selectedRound = tab.dataset.tab; benchRuns = null; render(); loadBenchmarks(); };
   });
   const { open, genesis } = ROUNDS[selectedRound];
-  // the round's best model by the external benchmarks once their feed is in (the benchmarks card's
-  // own default pick, a full suite only); until then, or without one, the reigning king
   const best = benchRuns ? rankKings(benchRuns, BENCHMARKS).find((row) => row.done === BENCHMARKS.length) : null;
   const king = best?.king ?? kingGains().filter((k) => k.submission_id).at(-1);
   const teacher = state.teacher.split("/").pop();
   const [name, repo] = king ? [king.name, king.hf_repo] : [genesis.name, genesis.repo];
   const url = repo ? hubUrl(repo) : null;
-  $("stamp").classList.toggle("closed", !open);
-  mount($("hero-label"), `${open ? "Open round" : "Closed round"}${best ? " · best model" : ""}`);
+  $("hero-label").textContent = `${open ? "Open round" : "Closed round"}${best ? " · best model" : " · reigning king"}`;
   mount($("hero-king"), url ? link(url, name) : name);
-  mount($("hero-repo"), url ? link(url, repo) : "");
   mount($("hero-line"), ...(best
     ? [el("b", {}, `${best.ahead} of ${BENCHMARKS.length}`), "benchmarks at or above ", link(hubUrl(genesis.repo), genesis.versus)]
     : king
       ? [el("b", {}, `${king.gain.toFixed(1)}%`), "closer to ", link(hubUrl(state.teacher), teacher), " than ", link(hubUrl(genesis.repo), genesis.versus)]
       : []));
 }
+
+const rankKings = (runs, benchmarks) => rank(runs, benchmarks, state ? kingGains().filter((k) => k.submission_id) : [], ROUNDS[selectedRound].genesis.run);
 
 // the kings in order with their chart value (`v`, the gain over genesis) and the step each took:
 // how much lower its KL was than the king it beat, in that duel
@@ -259,7 +258,8 @@ function renderKingsChart() {
 }
 
 async function loadBenchmarks() {
-  if (benchmarksLoading) return;
+  // the cards name the teacher and the kings from the state: nothing to draw before it is here
+  if (benchmarksLoading || !state) return;
   benchmarksLoading = true;
   const box = $("benchmark-charts");
   try {
@@ -306,44 +306,8 @@ function gradient(id, tone = "fill-gold") {
   return defs;
 }
 
-const BENCHMARKS = [
-  ["SWE-bench Multilingual", "coding"], ["Terminal-Bench 2.1", "terminal"], ["AutomationBench", "automation"],
-  ["GPQA Diamond", "science"], ["MATH-500", "math"], ["τ³-bench Banking", "tool use"], ["MMMU", "vision"],
-];
-const PROTOCOL = "sampled-16k-150-v1";
-// The 2-bit round's Terminal-Bench is on v2 (agent budget x24, verifier x2.0) so a task ends at the
-// 150-step limit, not on the clock; the closed 8-bit round keeps its v1 runs
-const PROTOCOLS = { q2: { "Terminal-Bench 2.1": "sampled-16k-150-v2" } };
-const protocolOf = (benchmark) => PROTOCOLS[selectedRound]?.[benchmark] ?? PROTOCOL;
-const TEACHER_RUN = "Qwen3.8-27B-BF16";
-const complete = (r) => r.status === "complete" && typeof r.score === "number" && Number.isFinite(r.score);
 // the king a visitor picked, per round; unset (every page load) means the best overall
 const chosenKing = {};
-
-// the round's kings, best first by the sum of their points over genesis: the +/- figures on the cards,
-// added up. Each benchmark counts the points it moves, so MATH-500, where every model sits near 96,
-// barely counts; a plain mean ranks the same but reads near 59% only because of it. A per-benchmark
-// share of the gap to the teacher lets MATH's 1.4-point gap and its noise dominate. A king's benchmark
-// run is named after it (2-bit and 8-bit kings share numerals, never names); a king still running
-// ranks after every finished one, most done first.
-function rankKings(runs, benchmarks) {
-  const { genesis } = ROUNDS[selectedRound];
-  const scoreOf = (model, name) => {
-    const run = runs.find((r) => r.benchmark === name && r.model === model);
-    return run && complete(run) ? run.score : null;
-  };
-  const kings = state ? kingGains().filter((k) => k.submission_id) : [];
-  const full = (row) => row.done === benchmarks.length;
-  return kings.map((king, order) => {
-    const pairs = benchmarks.map(([name]) => [scoreOf(king.name, name), scoreOf(genesis.run, name)]);
-    return {
-      king, order,
-      done: pairs.filter(([mine]) => mine != null).length,
-      ahead: pairs.filter(([mine, base]) => mine != null && base != null && mine >= base).length,
-      sum: pairs.reduce((total, [mine, base]) => total + (mine != null && base != null ? mine - base : 0), 0),
-    };
-  }).sort((a, b) => (full(b) - full(a)) || (full(a) ? b.sum - a.sum : b.done - a.done || b.order - a.order));
-}
 
 // the chosen king's name in the section head; it opens the ranked kings as a listbox, by mouse or keyboard
 function renderKingPicker(ranked, pick, redraw) {
@@ -390,7 +354,7 @@ document.addEventListener("click", (ev) => {
 });
 
 function renderBenchmarkCharts(results, benchmarks) {
-  const runs = results.filter((r) => r.protocol?.id === protocolOf(r.benchmark));
+  const runs = roundRuns(results, selectedRound);
   const { genesis } = ROUNDS[selectedRound];
   const ranked = rankKings(runs, benchmarks);
   if (benchRuns !== runs) {

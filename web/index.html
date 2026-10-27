@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>INGOT</title>
+<meta name="description" content="Qwen3.8-27B in 5.95 GB: ternary models made by competing miners, assayed against the original.">
 <link rel="icon" href="favicon.ico" sizes="32x32">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="favicon-512.png">
@@ -17,22 +18,17 @@
 
 <header class="top" id="top"></header>
 
-<main>
+<main class="landing">
 
 <section class="hero">
   <div>
-    <div class="eyebrow">Refined. Assayed. Stamped.</div>
-    <h1>Open models,<br><em>cast small.</em></h1>
-    <p class="lede">Miners quantize <span id="hero-teacher">the teacher</span> to ternary, 1.75 bits per weight, the size of Bonsai 2. Every copy is assayed against the original, token by token and layer by layer. The closest one is stamped king and earns.</p>
+    <h1><span id="m-teacher-short">Qwen3.8-27B</span><br>in <em id="m-size">5.95 GB.</em></h1>
+    <p class="lede">A 27B model cast to ternary weights by miners competing to stay closest to the original.</p>
     <div class="actions">
-      <a class="btn" id="link-miner" href="#" target="_blank" rel="noopener">Run a miner</a>
+      <a class="btn" id="m-download" href="https://huggingface.co/dendriteholdings" target="_blank" rel="noopener">Download on Hugging Face</a>
     </div>
   </div>
-  <aside class="stamp" id="stamp" aria-label="The competitions">
-    <div class="stamp-tabs" role="tablist" aria-label="Competition">
-      <button class="stamp-tab" role="tab" data-tab="q2" aria-selected="true">1.75-bit <small class="open">open</small></button>
-      <button class="stamp-tab" role="tab" data-tab="fp8" aria-selected="false">8-bit <small>closed</small></button>
-    </div>
+  <aside class="stamp" aria-label="The best model">
     <svg class="pixels" viewBox="0 0 160 120" shape-rendering="crispEdges" aria-hidden="true">
       <rect x="132" y="8" width="16" height="16" class="p1"/><rect x="112" y="20" width="10" height="10" class="p2"/>
       <rect x="146" y="34" width="8" height="8" class="p3"/><rect x="122" y="40" width="14" height="14" class="p1"/>
@@ -41,59 +37,63 @@
       <rect x="118" y="70" width="6" height="6" class="p3"/><rect x="152" y="84" width="6" height="6" class="p4"/>
       <rect x="92" y="58" width="4" height="4" class="p4"/>
     </svg>
-    <div class="stamp-label" id="hero-label">Current competition</div>
-    <div class="stamp-king" id="hero-king">—</div>
-    <div class="stamp-repo" id="hero-repo"></div>
-    <div class="stamp-line" id="hero-line"></div>
+    <div class="stamp-label" id="m-label">Best model</div>
+    <div class="stamp-king" id="m-name">—</div>
+    <div class="stamp-repo" id="m-repo"></div>
+    <div class="stamp-line" id="m-line"></div>
   </aside>
 </section>
 
-<section class="section">
-  <div class="head"><span class="label"><b></b>Kings</span><span class="meta" id="kings-meta"></span></div>
-  <div class="kings">
-    <div class="chart" id="kings-chart"></div>
-    <div class="lineage" id="lineage"></div>
-  </div>
+<section class="stats" id="stats" aria-label="Headline figures">
+  <div class="stat"><b id="s-size">5.95 GB</b><span>one file, 1.75 bits per weight</span></div>
+  <div class="stat"><b id="s-index">—</b><span>Ingot Index, 100 = the teacher</span></div>
+  <div class="stat"><b id="s-ahead">—</b><span>benchmarks at or above Bonsai 2</span></div>
+  <div class="stat"><b id="s-density">—</b><span>intelligence density, per GB</span></div>
 </section>
 
 <section class="section" id="benchmarks">
-  <div class="head"><span class="label"><b></b>Benchmarks<span class="bench-picker" id="bench-picker"></span></span><span class="meta" id="benchmarks-meta"></span></div>
-  <div class="benchmark-charts" id="benchmark-charts" tabindex="0" role="region" aria-label="Benchmark scores of the teacher, genesis and the chosen king"><div class="empty">loading…</div></div>
+  <div class="head"><span class="label"><b></b>Benchmarks</span></div>
+  <div class="figures" id="panel-figures">
+    <figure><figcaption><h3>Ingot Index</h3><p>share of the teacher's benchmark scores kept · 100 = the teacher</p></figcaption><div class="vbars" id="index-chart"></div></figure>
+    <figure><figcaption><h3>Intelligence density</h3><p>negative log of the error rate divided by the model size</p></figcaption><div class="vbars" id="density-chart"></div></figure>
+  </div>
 </section>
 
-<div class="pair">
-<section class="section">
-  <div class="head"><span class="label"><b></b>Weight holders</span><span class="meta" id="reign-meta"></span></div>
-  <div id="reign-wrap"><div class="empty">loading…</div></div>
+<section class="section" id="size">
+  <div class="head"><span class="label"><b></b>Size</span><span class="meta">the same 27B model, file sizes on Hugging Face</span></div>
+  <div class="sizes" id="size-chart"></div>
 </section>
 
-<section class="section">
-  <div class="head"><span class="label"><b></b>Registration</span><span class="meta" id="registration-meta"></span></div>
-  <div class="chart" id="registration-chart"></div>
-</section>
-</div>
-
-<section class="section" id="queue">
-  <div class="head"><span class="label"><b></b>Queue</span><span class="meta" id="pipeline-meta"></span></div>
-  <div id="pipeline-wrap"><div class="empty">loading…</div></div>
+<section class="section" id="run">
+  <div class="head"><span class="label"><b></b>Run it</span><span class="meta" id="run-meta">5.95 GB · one file</span></div>
+  <pre class="cmd" id="run-cmd">hf download dendriteholdings/Ingot-IV-27B-Q2 Ingot-IV-27B-PTQ1_0.gguf --local-dir .
+llama-server -m Ingot-IV-27B-PTQ1_0.gguf -ngl 99 -fa on --jinja</pre>
+  <p class="run-note"><code>llama-server</code> from <a href="https://github.com/DendriteLabs/llama.cpp/tree/dendrite" target="_blank" rel="noopener">our llama.cpp fork</a>.</p>
 </section>
 
-<section class="section">
-  <div class="head"><span class="label"><b></b>History</span><span class="meta" id="history-meta"></span></div>
-  <div class="data-table-wrap scroll" id="history-wrap"><div class="empty">loading…</div></div>
+<section class="section" id="scores">
+  <div class="head"><span class="label"><b></b>Scores</span><span class="meta">the teacher, Bonsai 2 and the king, same harness</span></div>
+  <div class="benchmark-charts" id="benchmark-charts"><div class="empty">loading…</div></div>
 </section>
 
-<section class="section">
-  <div class="head"><span class="label"><b></b>Fails</span><span class="meta" id="fails-meta"></span></div>
-  <div class="data-table-wrap scroll" id="fails-wrap"><div class="empty">loading…</div></div>
+<section class="section" id="kings">
+  <div class="head"><span class="label"><b></b>The kings</span><span class="meta" id="kings-meta"></span></div>
+  <div class="king-cards" id="king-cards"><div class="empty">loading…</div></div>
+</section>
+
+<section class="section" id="how">
+  <div class="head"><span class="label"><b></b>How it is made</span><span class="meta"><a id="link-llms" href="llms.txt">llms.txt</a> has the rules</span></div>
+  <div class="steps">
+    <div class="step"><i>1</i><h3>Submit</h3><p>Miners upload a ternary GGUF with the teacher's exact layout: every weight −1, 0 or +1 times a block scale, the file capped at Bonsai 2's size. The weight values are theirs.</p></div>
+    <div class="step"><i>2</i><h3>Assay</h3><p>The validator reads every submission against the unquantized teacher on the same prompts: the divergence of its next-token distribution, token by token, and the distance of its hidden states, layer by layer.</p></div>
+    <div class="step"><i>3</i><h3>Crown</h3><p>A submission measurably closer than the reigning king becomes king, earns the subnet's emission, and is mirrored to Hugging Face with its 1.75-bit file. <a href="dashboard.html">Watch the queue</a>.</p></div>
+  </div>
 </section>
 
 </main>
 
-<footer class="foot">
-  <div class="row"><span id="foot-netuid">Ingot</span><span>Refined. Assayed. Stamped.</span></div>
-</footer>
+<footer class="foot" id="foot"></footer>
 
-<script type="module" src="app.js"></script>
+<script type="module" src="landing.js"></script>
 </body>
 </html>
