@@ -509,9 +509,14 @@ button.zip:disabled { opacity: 0.6; cursor: wait; }
 .vbars-svg .vcap.king { fill: var(--accent); }
 .vbars-svg .vcap.genesis { fill: var(--text-2); }
 .vbars-svg .vbar.teacher { fill: none; stroke: var(--muted); stroke-dasharray: 3 3; }
+.vbars-svg .vbar.other { stroke: var(--line-strong); stroke-width: 1; }
+.vbars-svg .vcap.other { fill: var(--muted); }
+/* an estimate, not a measurement: a dashed outline over a fainter body */
+.vbars-svg .vbar.est { stroke-dasharray: 4 3; fill-opacity: 0.55; }
 .vbars-svg .vval { fill: var(--text); font-family: var(--mono); font-size: 13px; font-weight: 600; }
 .vbars-svg .vval.king { fill: var(--accent-ink); font-size: 15px; }
 .vbars-svg .vname { fill: var(--muted); font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+.vbars-svg .vname.tight { font-size: 9.5px; letter-spacing: 0.02em; }
 .vbars-svg a:hover .vcap.king, .vbars-svg a:hover .vval.king { fill: var(--text); }
 
 .cmd { margin: 0; padding: 16px 18px; border: 1px solid var(--line); background: var(--stamp-bg); color: var(--stamp-fg); font-family: var(--mono); font-size: 13px; line-height: 1.6; overflow-x: auto; white-space: pre; }
@@ -519,6 +524,8 @@ button.zip:disabled { opacity: 0.6; cursor: wait; }
 .run-note code { font-family: var(--mono); font-size: 13px; color: var(--text); }
 .run-note a { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
 .run-note a:hover { color: var(--accent-ink); }
+/* a fine-print note: its link stays in the note's grey */
+.run-note.quiet a { color: inherit; }
 
 .steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .step { border: 1px solid var(--line); background: var(--panel); padding: 20px 22px; }

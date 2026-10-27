@@ -4,7 +4,7 @@
 import { el, mount, link } from "./js/dom.js";
 import { fmtRelative } from "./js/format.js";
 import { $, mountHeader, svgEl } from "./js/page.js";
-import { BENCHMARKS, SIZES_GB, TEACHER_RUN, density, ingotIndex, rankKings, roundRuns, scoreOf } from "./js/benchmarks.js";
+import { AA, BENCHMARKS, SIZES_GB, TEACHER_RUN, aaEstimate, density, rankKings, roundRuns, scoreOf } from "./js/benchmarks.js";
 
 const ROUND = "q2";
 // the genesis run is Bonsai 2's own file; the links go to Prism's repo, not our mirror of it
@@ -66,7 +66,7 @@ function render() {
   const best = bestKing();
   if (!best) return;
   const { king, ahead, benchmarked } = best;
-  const index = runs ? ingotIndex(runs, king.name) : null;
+  const aa = runs ? aaEstimate(runs, king.name) : null;
   const dens = runs ? density(runs, king.name, SIZES_GB[ROUND]) : null;
 
   $("m-download").href = hubUrl(king.hf_repo);
@@ -76,7 +76,7 @@ function render() {
   mount($("m-line"), ...(ahead != null ? [el("b", {}, `${ahead} of ${BENCHMARKS.length}`), "benchmarks at or above ", link(hubUrl(GENESIS.repo), GENESIS.label)] : []));
   $("run-cmd").textContent = $("run-cmd").textContent.replaceAll(/dendriteholdings\/[A-Za-z0-9-]+/g, king.hf_repo).replaceAll(/Ingot-[A-Z]+-27B-PTQ1_0/g, `${king.name.replace(/-Q2$/, "")}-PTQ1_0`);
 
-  $("s-index").textContent = index ? index.index.toFixed(1) : "—";
+  $("s-index").textContent = aa ? `≈${Math.round(aa.aa)}` : "—";
   $("s-ahead").textContent = ahead != null ? `${ahead} of ${BENCHMARKS.length}` : "—";
   $("s-density").textContent = dens ? dens.density.toFixed(3) : "—";
 
@@ -89,9 +89,15 @@ function render() {
     { tone: "king latest", label: `King ${king.name.split("-")[1]}`, name: king.name, repo: king.hf_repo, size: SIZES_GB[ROUND] },
   ];
   renderScores(models);
-  const indexed = models.map((m) => ({ ...m, v: ingotIndex(runs, m.name) })).filter((m) => m.v);
-  renderBars($("index-chart"), indexed, (m) => m.v.index, (m) => m.v.index.toFixed(1), 100,
-    (m) => Object.entries(m.v.categories).map(([c, v]) => `${c} ${v.toFixed(0)}`).join(" · "), indexed.find((m) => m.tone === "teacher"));
+  // the AA index: the teacher's published score as the line on top, the king and Bonsai 2 estimated
+  // (dashed, ≈), the Mac-class models as AA publishes them
+  const teacher = { ...models[0], label: "Qwen3.8 27B", aa: AA.teacher, href: "https://artificialanalysis.ai/models/qwen3-8-27b" };
+  const estimated = models.slice(1).map((m) => ({ ...m, est: aaEstimate(runs, m.name) })).filter((m) => m.est)
+    .map((m) => ({ ...m, aa: m.est.aa, estimate: "ours" }));
+  const aaRows = [teacher, ...estimated.reverse(), ...AA.published.map((m) => ({ ...m, tone: "other", name: m.label, estimate: m.estimate ? "AA" : null }))];
+  renderBars($("index-chart"), aaRows, (m) => m.aa, (m) => (m.estimate === "ours" ? `≈${Math.round(m.aa)}` : `${m.aa}`), 40,
+    (m) => (m.estimate === "ours" ? `our estimate: ${(100 * m.est.share).toFixed(0)}% of the teacher's scores kept on four shared benchmarks`
+      : m.estimate ? "Artificial Analysis's own estimate" : `Artificial Analysis Intelligence Index ${AA.version}`), teacher);
   renderBars($("density-chart"), models.map((m) => ({ ...m, v: density(runs, m.name, m.size) })).filter((m) => m.v), (m) => m.v.density, (m) => m.v.density.toFixed(3), null,
     (m) => `mean ${m.v.mean.toFixed(1)}% · ${m.size} GB`);
 }
@@ -123,15 +129,15 @@ function renderKings(best) {
   const scored = runs ? rankKings(runs, BENCHMARKS, kings, GENESIS.run).filter((row) => row.done === BENCHMARKS.length) : [];
   const shown = scored.length ? scored.slice(0, 4).map((row) => row.king) : kings.slice(-4).reverse();
   mount($("king-cards"), ...shown.map((k) => {
-    const index = runs ? ingotIndex(runs, k.name) : null;
-    const full = index && index.coverage === BENCHMARKS.length;
-    const pending = index ? "benchmarking" : "queued";
+    const aa = runs ? aaEstimate(runs, k.name) : null;
+    const full = aa && scored.some((row) => row.king === k);
+    const pending = aa ? "benchmarking" : "queued";
     return el("a", { class: `king-card${k === shown[0] && scored.length ? " best" : ""}`, href: hubUrl(k.hf_repo), target: "_blank", rel: "noopener" },
       el("span", { class: "kc-numeral" }, k.name.split("-")[1]),
       el("span", { class: "kc-name" }, k.name),
       el("span", { class: "kc-meta" }, `crowned ${fmtRelative(k.crowned_at)}`),
       el("span", { class: "kc-stats" },
-        el("span", {}, el("b", {}, full ? index.index.toFixed(1) : "—"), full ? "Index" : pending),
+        el("span", {}, el("b", {}, full ? `≈${Math.round(aa.aa)}` : "—"), full ? "AA index, est." : pending),
         el("span", {}, el("b", {}, downloads?.[k.hf_repo] != null ? downloads[k.hf_repo].toLocaleString("en-US") : "—"), "downloads")),
       k === shown[0] && scored.length ? el("span", { class: "kc-badge" }, "best") : null);
   }));
@@ -173,14 +179,17 @@ function renderScores(models) {
 // value above and the name below. With `ceiling`, the teacher is the dashed line the bars are
 // measured against instead of a bar of its own.
 function renderBars(box, items, value, label, max, note, ceiling) {
-  const HEIGHT = 260;
   const PAD = { top: 28, bottom: 30, left: 40, right: 12 };
   const width = Math.max(box.clientWidth || 0, 240);
   const bars = ceiling ? items.filter((m) => m.tone !== "teacher") : items;
+  const slot = (width - PAD.left - PAD.right) / bars.length;
+  // names wider than their slot (11px mono capitals, about 7.6px each) break onto two lines
+  const wrap = bars.some((m) => m.label.length * 7.6 > slot - 6);
+  PAD.bottom = wrap ? 44 : 30;
+  const HEIGHT = 260 + PAD.bottom - 30;
   const top = max ?? Math.max(...items.map(value)) * 1.12;
   const plotH = HEIGHT - PAD.top - PAD.bottom;
   const y = (v) => Math.round(PAD.top + (1 - v / top) * plotH);
-  const slot = (width - PAD.left - PAD.right) / bars.length;
   const bar = Math.round(Math.min(96, slot * 0.5));
   const svg = svgEl("svg", { width, height: HEIGHT, viewBox: `0 0 ${width} ${HEIGHT}`, role: "img", class: "vbars-svg" });
   const defs = svgEl("defs");
@@ -190,32 +199,42 @@ function renderBars(box, items, value, label, max, note, ceiling) {
     defs.append(g);
   }
   svg.append(defs);
-  // faint grid lines at round steps; the ceiling, when there is one, is the top line
+  // faint grid lines at round steps; the ceiling, when there is one, a dashed line at its value
   const step = max ? max / 4 : [1, 2, 5].map((m) => m * 10 ** Math.floor(Math.log10(top / 4))).reduce((best, c) => (Math.abs(c - top / 4) < Math.abs(best - top / 4) ? c : best));
   for (let v = step; v <= top + 1e-9; v += step) {
-    const isCeiling = ceiling && Math.abs(v - top) < 1e-9;
-    svg.append(svgEl("line", { x1: PAD.left, y1: y(v) + 0.5, x2: width - PAD.right, y2: y(v) + 0.5, class: isCeiling ? "ceiling" : "grid" }));
+    svg.append(svgEl("line", { x1: PAD.left, y1: y(v) + 0.5, x2: width - PAD.right, y2: y(v) + 0.5, class: "grid" }));
     svg.append(svgEl("text", { x: PAD.left - 8, y: y(v), class: "tick", "text-anchor": "end", "dominant-baseline": "middle" }, max ? String(Math.round(v)) : v.toFixed(2)));
   }
   svg.append(svgEl("line", { x1: PAD.left, y1: HEIGHT - PAD.bottom + 0.5, x2: width - PAD.right, y2: HEIGHT - PAD.bottom + 0.5, class: "axis" }));
   if (ceiling) {
-    svg.append(svgEl("text", { x: width - PAD.right, y: y(top) - 8, class: "vname", "text-anchor": "end" }, `${ceiling.label} · ${label(ceiling)}`));
+    const yc = y(value(ceiling));
+    svg.append(svgEl("line", { x1: PAD.left, y1: yc + 0.5, x2: width - PAD.right, y2: yc + 0.5, class: "ceiling" }));
+    svg.append(svgEl("text", { x: width - PAD.right, y: yc - 8, class: "vname", "text-anchor": "end" }, `${ceiling.label} · ${label(ceiling)}`));
   }
   bars.forEach((m, i) => {
     const cx = Math.round(PAD.left + slot * (i + 0.5));
     const x0 = cx - Math.floor(bar / 2);
     const yTop = y(value(m));
     const tone = m.tone.split(" ")[0];
-    const group = svgEl("a", { href: hubUrl(m.repo), target: "_blank", rel: "noopener" });
+    const group = svgEl("a", { href: m.href ?? hubUrl(m.repo), target: "_blank", rel: "noopener" });
     group.append(svgEl("title", {}, `${m.name}: ${label(m)} · ${note(m)}`));
     if (tone === "teacher") {
       group.append(svgEl("rect", { x: x0, y: yTop, width: bar, height: Math.max(HEIGHT - PAD.bottom - yTop, 1), class: "vbar teacher" }));
     } else {
-      group.append(svgEl("rect", { x: x0, y: yTop, width: bar, height: Math.max(HEIGHT - PAD.bottom - yTop, 1), class: `vbar ${tone}`, fill: `url(#vbar-${tone === "king" ? "gold" : "grey"})` }));
+      group.append(svgEl("rect", { x: x0, y: yTop, width: bar, height: Math.max(HEIGHT - PAD.bottom - yTop, 1), class: `vbar ${tone}${m.estimate === "ours" ? " est" : ""}`, fill: `url(#vbar-${tone === "king" ? "gold" : "grey"})` }));
       group.append(svgEl("rect", { x: x0, y: yTop, width: bar, height: 3, class: `vcap ${tone}` }));
     }
     group.append(svgEl("text", { x: cx, y: yTop - 9, class: `vval ${tone}`, "text-anchor": "middle" }, label(m)));
-    group.append(svgEl("text", { x: cx, y: HEIGHT - 10, class: "vname", "text-anchor": "middle" }, m.label));
+    // break at the first space, else after the last hyphen ("gpt-oss-" / "20b"), in a tighter face
+    const space = m.label.indexOf(" ");
+    const cut = space > 0 ? space : m.label.lastIndexOf("-");
+    if (wrap && cut > 0) {
+      const name = svgEl("text", { x: cx, y: HEIGHT - 24, class: "vname tight", "text-anchor": "middle" });
+      name.append(svgEl("tspan", { x: cx }, m.label.slice(0, space > 0 ? cut : cut + 1)), svgEl("tspan", { x: cx, dy: 13 }, m.label.slice(cut + 1)));
+      group.append(name);
+    } else {
+      group.append(svgEl("text", { x: cx, y: HEIGHT - 10, class: "vname", "text-anchor": "middle" }, m.label));
+    }
     svg.append(group);
   });
   mount(box, svg);

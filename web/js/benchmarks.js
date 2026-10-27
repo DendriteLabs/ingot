@@ -54,6 +54,38 @@ export function ingotIndex(runs, model) {
   return { index: values.reduce((a, b) => a + b, 0) / values.length, categories, coverage: covered, total: BENCHMARKS.length };
 }
 
+// Artificial Analysis Intelligence Index (artificialanalysis.ai, v4.3.2, read 2026-10-27): ten
+// evaluations Artificial Analysis runs itself, several with private test sets, so it cannot be run
+// here. AA lists the teacher and the Mac-class models; it has not evaluated Bonsai 2 or any king.
+export const AA = {
+  version: "v4.3.2",
+  url: "https://artificialanalysis.ai/methodology/intelligence-benchmarking",
+  teacher: 34, // Qwen3.8 27B, reasoning (xhigh)
+  // published scores; `estimate` marks the ones AA itself flags as estimates
+  published: [
+    { label: "Gemma 4 12B", aa: 14, estimate: true, href: "https://artificialanalysis.ai/models/releases/comparisons/gemma-4-12b-vs-qwen3-5-9b" },
+    { label: "Qwen3.5 9B", aa: 11, href: "https://artificialanalysis.ai/models/qwen3-5-9b" },
+    { label: "gpt-oss-20b", aa: 9, href: "https://artificialanalysis.ai/models/comparisons/qwen3-5-9b-vs-gpt-oss-20b" },
+  ],
+  // the estimate for a model AA has not run: the share of the teacher's scores it keeps on the four
+  // benchmarks the Mac-class models also ran here (the Ingot Index rule on those four), raised to the
+  // power that maps Qwen3.5 9B's and gpt-oss-20b's shares (0.55, 0.57) onto their AA scores (11, 9):
+  // AA's harder suite falls off about with the square of the share
+  shared: { coding: ["SWE-bench Multilingual", "Terminal-Bench 2.1"], reasoning: ["GPQA Diamond", "MATH-500"] },
+  exponent: 2.1,
+};
+export function aaEstimate(runs, model) {
+  const values = [];
+  for (const names of Object.values(AA.shared)) {
+    const shares = names.map((name) => [scoreOf(runs, model, name), scoreOf(runs, TEACHER_RUN, name)])
+      .filter(([mine, teacher]) => mine != null && teacher > 0).map(([mine, teacher]) => Math.min(mine / teacher, 1));
+    if (shares.length !== names.length) return null;
+    values.push(shares.reduce((a, b) => a + b, 0) / shares.length);
+  }
+  const share = values.reduce((a, b) => a + b, 0) / values.length;
+  return { aa: AA.teacher * share ** AA.exponent, share };
+}
+
 // Intelligence density, Prism's figure: -log2(error rate) per GB, the error rate being one minus the
 // mean benchmark score. Sizes are the files people download, in decimal GB.
 export const SIZES_GB = { q2: 5.95, fp8: 28.6, teacher: 54.4 };
