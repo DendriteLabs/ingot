@@ -11,8 +11,9 @@ Sources (chosen by their teacher-forced KL against real benchmark runs, duels of
   swe       nvidia/Open-SWE-Traces, mini-swe-agent runs by Qwen3.8-27B (CC-BY-4.0); language = the
             repository's, so the draw spreads swe over languages as SWE-bench Multilingual does
   terminal  IntelligenceLab/LHTB-leaderboard, Terminus-2 runs on the 77 Long-Horizon Terminal-Bench
-            2.0 tasks (Apache-2.0) as language "lhtb"; ukisai/Qwen3.8-27B-multi-turn-agent-sft
-            (Apache-2.0) and nvidia/Nemotron-RL-Agentic-Terminal-Pivot-v1 (CC-BY-4.0) as "broad".
+            2.0 tasks by the entries in LHTB_ENTRIES (Apache-2.0) as language "lhtb";
+            ukisai/Qwen3.8-27B-multi-turn-agent-sft (Apache-2.0) and
+            nvidia/Nemotron-RL-Agentic-Terminal-Pivot-v1 (CC-BY-4.0) as "broad".
             Terminal-Bench-Science runs are not redistributable: eval_service.dataset.fetch adds
             them at draw time (chain.toml [dataset.extra]) as "tbsci".
 Runs on a SWE-bench Multilingual repository or a Terminal-Bench 2.1 task are left out; the lists
@@ -44,6 +45,16 @@ from common.agent_traces import (
 )
 
 AGENT_FILE_ROWS = 5_000
+LHTB_ENTRIES = (
+    "terminus-2__gpt-6-astra-3h",
+    "terminus-2__claude-opus-5-6h",
+    "terminus-2__qwen-3.8-max-3h",
+    "terminus-2__gpt-5.6-sol-3h",
+    "terminus-2__glm-5.3-3h",
+    "terminus-2__claude-opus-5-3h",
+    "terminus-2__grok-4.6-3h",
+    "terminus-2__hunyuan-hy4-3h",
+)
 MULTILINGUAL = ("SWE-bench/SWE-bench_Multilingual", "846e647b9f33c0b51b739d005d13d85493c9af09")
 TERMINAL_BENCH = ("harborframework/terminal-bench-2.1", "3e235dff6880252a587fa479c09bcb1e16edf2eb")
 
@@ -103,12 +114,14 @@ def swe_rows(root: Path, repos: set[str]) -> Iterator[dict | None]:
 
 
 def lhtb_rows(root: Path) -> Iterator[dict | None]:
-    """Every LHTB 2.0 leaderboard entry's trials (Terminus-2 as ATIF)."""
+    """The trials of the LHTB 2.0 leaderboard entries in LHTB_ENTRIES (Terminus-2 as ATIF)."""
     from common.agent_traces import from_atif
 
     pattern = "submissions/longer-horizon-terminal-bench-2.0/*/*/*/*/agent/trajectory.json"
     for f in sorted(root.glob(pattern)):
         entry, trial = f.parts[-5], f.parts[-3]
+        if entry not in LHTB_ENTRIES:
+            continue
         try:
             messages = from_atif(json.loads(f.read_text()).get("steps") or [])
         except (StopIteration, KeyError, TypeError, ValueError):
