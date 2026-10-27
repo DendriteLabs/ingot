@@ -11,7 +11,7 @@ copy that stays closest to it. Kings are published; the newest kings share the e
 ## Develop
 
 ```bash
-git submodule update --init   # llama-prism: the PrismML llama.cpp fork that runs q2 models
+git submodule update --init   # llama-prism: the Dendrite llama.cpp fork (PrismML's plus our changes) that runs q2 models
 uv run pre-commit install     # ruff + ty on every commit
 ```
 

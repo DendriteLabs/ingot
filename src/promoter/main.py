@@ -265,13 +265,14 @@ def _gguf_card(gguf: str, pair: Quant, ptq1: str | None = None) -> str:
     genesis vision projector, which the eval never scored, for image input."""
     from eval_service.config import LLAMA_CPP_COMMIT
 
-    fork = "https://github.com/PrismML-Eng/llama.cpp"
+    fork = "https://github.com/DendriteLabs/llama.cpp"
     hub = f"https://huggingface.co/{pair.genesis_repo}"
     text = (
         "\n## Running it\n\n"
         f"`{gguf}` is a gguf with the layout, tokenizer and Hadamard rotation of "
         f"[{pair.genesis_repo}]({hub}) (`{pair.genesis_file}`), its weights the miner's. Stock "
-        "llama.cpp does not run it; the PrismML fork does, at the commit Ingot scored it with, "
+        "llama.cpp does not run it; the Dendrite fork of PrismML's llama.cpp does, at the commit "
+        "Ingot scored it with, "
         f"[`{LLAMA_CPP_COMMIT[:7]}`]({fork}/commit/{LLAMA_CPP_COMMIT}):\n\n"
         "```\n"
         f"git clone {fork} && cd llama.cpp && git checkout {LLAMA_CPP_COMMIT}\n"

@@ -134,7 +134,8 @@ def main() -> None:
 
     def rewrite(i: int) -> int:
         table = pq.read_table(old[i])
-        table = table.filter(pc.invert(pc.is_in(table["domain"], pa.array(["swe", "terminal"]))))
+        # pyarrow.compute builds its functions at import time, so ty cannot see them
+        table = table.filter(pc.invert(pc.is_in(table["domain"], pa.array(["swe", "terminal"]))))  # ty: ignore[unresolved-attribute]
         table = table.append_column("conversation", pa.nulls(len(table), pa.large_string()))
         pq.write_table(table.cast(schema), name(i), compression="zstd", row_group_size=10_000)
         return len(table)

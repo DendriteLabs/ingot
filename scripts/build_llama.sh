@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the pinned PrismML llama.cpp fork (llama-prism) with CUDA: the only runtime for
+# Build the pinned Dendrite llama.cpp fork (llama-prism) with CUDA: the only runtime for
 # q2 (PQ2_0) models; stock llama.cpp rejects or garbles them. Binaries land in its build/bin/,
 # and the eval's llama-states (src/eval_service/llama_states) in build/llama_states/.
 #   bash scripts/build_llama.sh

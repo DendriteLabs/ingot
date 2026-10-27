@@ -1,4 +1,4 @@
 [submodule "llama-prism"]
 	path = llama-prism
-	url = https://github.com/PrismML-Eng/llama.cpp
-	branch = prism
+	url = https://github.com/DendriteLabs/llama.cpp
+	branch = dendrite
