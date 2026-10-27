@@ -43,6 +43,7 @@ MAX_TOKENS = 4096
 # 65536 a teacher GPU's KV cache held 87k tokens, one or two agent prompts: 5 requests in flight
 # and a 70-minute duel (eval 158). 32k of prompt keeps most of an agent run's depth.
 MAX_MODEL_LEN = 36864
+MAX_BYTES_PER_TOKEN = 8
 SAMPLING = {"temperature": 1.0, "top_p": 0.95, "top_k": 20}
 # Every Nth sample the teacher reads its own answer again: the noise floor batching adds.
 RERUN_EVERY = 10

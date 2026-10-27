@@ -402,6 +402,8 @@ def fits(tokenizer: Any) -> Callable[[Sample], bool]:
 
     def check(sample: Sample) -> bool:
         size = sum(len(m["content"].encode()) for m in sample.messages)
+        if size > limit * config.MAX_BYTES_PER_TOKEN:
+            return False
         # tool schemas and tool calls render outside the contents, so an agent sample is rendered
         return (not sample.tools and size + frame * len(sample.messages) <= limit) or (
             len(_render(tokenizer, sample.messages, sample.tools)) <= limit

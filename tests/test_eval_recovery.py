@@ -66,6 +66,10 @@ def test_fits_keeps_the_whole_answer_budget(monkeypatch):
     assert check(Sample("rendered", [{"role": "user", "content": "a b c"}])), "5 tokens"
     assert not check(Sample("long", [{"role": "user", "content": "a b c d e"}])), "7 tokens"
     assert check(Sample("short in bytes", [{"role": "user", "content": "abcd"}]))
+    monkeypatch.setattr(config, "MAX_BYTES_PER_TOKEN", 1)
+    assert not check(Sample("long in bytes", [{"role": "user", "content": "abcdefg"}])), (
+        "more bytes than the budget allows is passed over without rendering"
+    )
 
 
 def test_sweep_removes_abandoned_state_files_only(tmp_path: Path, monkeypatch):
