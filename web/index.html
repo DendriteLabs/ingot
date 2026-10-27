@@ -55,12 +55,19 @@
   <div class="head"><span class="label"><b></b>Benchmarks</span></div>
   <div class="figures" id="panel-figures">
     <figure><figcaption><h3>Artificial Analysis Intelligence Index</h3><p>v4.3.2</p></figcaption><div class="vbars" id="index-chart"></div></figure>
-    <figure><figcaption><h3>Intelligence density</h3><p>negative log of the error rate divided by the model size</p></figcaption><div class="vbars" id="density-chart"></div></figure>
+    <figure><figcaption><h3>Intelligence density</h3><p>negative log of the error rate per GB · the four benchmarks below</p></figcaption><div class="vbars" id="density-chart"></div></figure>
   </div>
   <p class="run-note quiet">Artificial Analysis has not evaluated our models or Bonsai 2, so their bars (≈) are estimates: the
     share of the teacher's scores each keeps on GPQA Diamond, MATH-500, SWE-bench Multilingual and Terminal-Bench 2.1,
     put on Artificial Analysis's scale with the curve that fits Qwen3.5 9B's and gpt-oss-20b's
     <a href="https://artificialanalysis.ai/methodology/intelligence-benchmarking" target="_blank" rel="noopener">published scores</a>; Gemma 4 12B's is their estimate.</p>
+</section>
+
+<section class="section" id="macbook">
+  <div class="head"><span class="label"><b></b>On a MacBook</span><span class="meta">models that fit a 16 GB MacBook, same harness</span></div>
+  <div class="mac-board" id="mac-board"></div>
+  <p class="run-note quiet">Our runs, the same harness and settings for every model.<br>
+    Gemma 4 12B's GPQA and MATH-500 with its thinking capped at 12k tokens, its better run: uncapped, it overthinks.</p>
 </section>
 
 <section class="section" id="size">

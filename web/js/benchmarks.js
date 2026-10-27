@@ -86,6 +86,32 @@ export function aaEstimate(runs, model) {
   return { aa: AA.teacher * share ** AA.exponent, share };
 }
 
+// Models that fit a 16 GB MacBook, run by us on 2026-10-27 with the kings' harness and settings (private
+// runs, not in the feed): the 2-bit king against Bonsai 2 and three popular local models. SWE-bench
+// Multilingual on a fixed 100-instance subset (the king scores 61.0 on all 300); Gemma 4 12B's GPQA and
+// MATH-500 from its run with thinking capped at 12k tokens, its better run. Sizes are the files a Mac
+// runs, decimal GB.
+export const MAC_BOARD = {
+  columns: [
+    { kind: "Coding", name: "SWE-bench Multilingual" }, { kind: "Terminal", name: "Terminal-Bench 2.1" },
+    { kind: "Science", name: "GPQA Diamond" }, { kind: "Math", name: "MATH-500" },
+  ],
+  rows: [
+    { label: "Ingot-IV-27B-Q2", repo: "dendriteholdings/Ingot-IV-27B-Q2", gb: 5.95, king: true, scores: [63, 46.1, 77.3, 96.6] },
+    { label: "Bonsai 2", repo: "prism-ml/Ternary-Bonsai-2-27B-gguf", gb: 5.95, scores: [57, 34.8, 71.7, 96.0] },
+    { label: "gpt-oss-20b", repo: "openai/gpt-oss-20b", gb: 12.1, scores: [23, 19.1, 62.1, 89.2] },
+    { label: "Qwen3.5 9B", repo: "Qwen/Qwen3.5-9B", gb: 5.7, scores: [29, 22.5, 57.1, 79.2] },
+    { label: "Gemma 4 12B", repo: "google/gemma-4-12B-it-qat-q4_0-gguf", gb: 7.0, scores: [8, 10.1, 40.4, 95.2] },
+  ],
+  // the teacher on the same four (SWE-bench Multilingual on the same subset: 76; 73.7 on all 300)
+  teacher: { label: "Qwen BF16", repo: "Qwen/Qwen3.8-27B", gb: 54.4, scores: [76, 64.0, 81.3, 97.4] },
+};
+// intelligence density on the four benchmarks every model on the board ran
+export function boardDensity(row) {
+  const mean = row.scores.reduce((a, b) => a + b, 0) / row.scores.length;
+  return { density: -Math.log2(1 - mean / 100) / row.gb, mean };
+}
+
 // Intelligence density, Prism's figure: -log2(error rate) per GB, the error rate being one minus the
 // mean benchmark score. Sizes are the files people download, in decimal GB.
 export const SIZES_GB = { q2: 5.95, fp8: 28.6, teacher: 54.4 };

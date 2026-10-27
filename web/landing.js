@@ -4,7 +4,7 @@
 import { el, mount, link } from "./js/dom.js";
 import { fmtRelative } from "./js/format.js";
 import { $, mountHeader, svgEl } from "./js/page.js";
-import { AA, BENCHMARKS, SIZES_GB, TEACHER_RUN, aaEstimate, density, rankKings, roundRuns, scoreOf } from "./js/benchmarks.js";
+import { AA, BENCHMARKS, MAC_BOARD, SIZES_GB, TEACHER_RUN, aaEstimate, boardDensity, rankKings, roundRuns, scoreOf } from "./js/benchmarks.js";
 
 const ROUND = "q2";
 // the genesis run is Bonsai 2's own file; the links go to Prism's repo, not our mirror of it
@@ -67,7 +67,8 @@ function render() {
   if (!best) return;
   const { king, ahead, benchmarked } = best;
   const aa = runs ? aaEstimate(runs, king.name) : null;
-  const dens = runs ? density(runs, king.name, SIZES_GB[ROUND]) : null;
+  // the headline density is the chart's: the board's king on the four shared benchmarks
+  const dens = boardDensity(MAC_BOARD.rows.find((r) => r.king));
 
   $("m-download").href = hubUrl(king.hf_repo);
   $("m-label").textContent = benchmarked ? "Best model" : "Reigning king";
@@ -98,8 +99,13 @@ function render() {
   renderBars($("index-chart"), aaRows, (m) => m.aa, (m) => (m.estimate === "ours" ? `≈${Math.round(m.aa)}` : `${m.aa}`), 40,
     (m) => (m.estimate === "ours" ? `our estimate: ${(100 * m.est.share).toFixed(0)}% of the teacher's scores kept on four shared benchmarks`
       : m.estimate ? "Artificial Analysis's own estimate" : `Artificial Analysis Intelligence Index ${AA.version}`), teacher);
-  renderBars($("density-chart"), models.map((m) => ({ ...m, v: density(runs, m.name, m.size) })).filter((m) => m.v), (m) => m.v.density, (m) => m.v.density.toFixed(3), null,
-    (m) => `mean ${m.v.mean.toFixed(1)}% · ${m.size} GB`);
+  // density on the four benchmarks every board model ran: the board's models, best first, the teacher last
+  const short = { "Ingot-IV-27B-Q2": "King IV", "Qwen3.5 9B": "Qwen3.5", "Gemma 4 12B": "Gemma 4", "gpt-oss-20b": "gpt-oss" };
+  const dRows = [...MAC_BOARD.rows.map((r) => ({ ...r, tone: r.king ? "king latest" : r.label === GENESIS.label ? "genesis" : "other" })),
+    { ...MAC_BOARD.teacher, tone: "teacher" }]
+    .map((r) => ({ ...r, name: r.label, label: short[r.label] ?? r.label, size: r.gb, v: boardDensity(r) }));
+  dRows.sort((a, b) => (a.tone === "teacher") - (b.tone === "teacher") || b.v.density - a.v.density);
+  renderBars($("density-chart"), dRows, (m) => m.v.density, (m) => m.v.density.toFixed(3), null, (m) => `mean ${m.v.mean.toFixed(1)}% · ${m.size} GB`);
 }
 
 // horizontal bars of file size, ours last, with the line a 16 GB MacBook draws
@@ -232,6 +238,9 @@ function renderBars(box, items, value, label, max, note, ceiling) {
       const name = svgEl("text", { x: cx, y: HEIGHT - 24, class: "vname tight", "text-anchor": "middle" });
       name.append(svgEl("tspan", { x: cx }, m.label.slice(0, space > 0 ? cut : cut + 1)), svgEl("tspan", { x: cx, dy: 13 }, m.label.slice(cut + 1)));
       group.append(name);
+    } else if (wrap) {
+      // one word with nowhere to break: the wrapped names' face, on their first line
+      group.append(svgEl("text", { x: cx, y: HEIGHT - 24, class: "vname tight", "text-anchor": "middle" }, m.label));
     } else {
       group.append(svgEl("text", { x: cx, y: HEIGHT - 10, class: "vname", "text-anchor": "middle" }, m.label));
     }
@@ -240,7 +249,21 @@ function renderBars(box, items, value, label, max, note, ceiling) {
   mount(box, svg);
 }
 
+// the MacBook board: models as rows, a category per column, each score over a thin bar on 0-100
+function renderMacBoard() {
+  const whole = MAC_BOARD.columns.map((_, i) => MAC_BOARD.rows.every((r) => Number.isInteger(r.scores[i])));
+  mount($("mac-board"),
+    el("div", { class: "mac-row mac-head" }, el("span"),
+      ...MAC_BOARD.columns.map((c) => el("span", { class: "c" }, el("b", {}, c.kind), el("span", {}, c.name)))),
+    ...MAC_BOARD.rows.map((r) => el("div", { class: `mac-row${r.king ? " king" : ""}` },
+      el("span", { class: "m" }, link(hubUrl(r.repo), r.label), el("small", {}, `${r.gb.toFixed(r.gb < 10 ? 2 : 1)} GB`)),
+      ...r.scores.map((v, i) => el("span", { class: "v" },
+        el("b", {}, v == null ? "—" : whole[i] ? String(v) : v.toFixed(1)),
+        v == null ? null : el("i", { style: `width: ${v}%` }))))));
+}
+
 mountHeader();
+renderMacBoard();
 loadDownloads();
 setInterval(loadDownloads, 600000);
 new ResizeObserver(() => runs && render()).observe($("panel-figures"));

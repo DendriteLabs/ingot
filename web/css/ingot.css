@@ -519,6 +519,37 @@ button.zip:disabled { opacity: 0.6; cursor: wait; }
 .vbars-svg .vname.tight { font-size: 9.5px; letter-spacing: 0.02em; }
 .vbars-svg a:hover .vcap.king, .vbars-svg a:hover .vval.king { fill: var(--text); }
 
+/* the MacBook board: models as rows, Coding / Terminal / Science / Math as columns */
+/* compact: the size on the name's line, each bar beside its number */
+.mac-board { border: 1px solid var(--line); background: var(--panel); padding: 2px 20px; }
+.mac-row { display: grid; grid-template-columns: minmax(190px, 1.3fr) repeat(4, minmax(0, 1fr)); column-gap: 24px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.mac-row:last-child { border-bottom: 0; }
+.mac-head { align-items: end; padding: 10px 0 8px; }
+.mac-head .c b { display: block; font-family: var(--display); font-weight: 700; font-size: 18px; letter-spacing: -0.01em; color: var(--text); }
+.mac-head .c span { display: block; margin-top: 1px; font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mac-row .m { display: flex; align-items: baseline; gap: 10px; font-weight: 600; font-size: 17px; color: var(--text-2); min-width: 0; white-space: nowrap; }
+.mac-row .m a { color: inherit; }
+.mac-row .m a:hover { color: var(--text); }
+.mac-row .m small { font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--muted); }
+.mac-row .v { display: grid; grid-template-columns: 3.2em minmax(0, 1fr); align-items: center; column-gap: 10px; }
+.mac-row .v b { font-family: var(--mono); font-weight: 600; font-size: 17px; color: var(--text); }
+.mac-row .v i { display: block; height: 4px; background: var(--loser); }
+.mac-row.king { margin: 0 -20px; padding-left: 20px; padding-right: 20px; background: var(--accent-wash); box-shadow: inset 3px 0 0 var(--accent); }
+.mac-row.king .m, .mac-row.king .m a, .mac-row.king .v b { color: var(--accent-ink); font-weight: 700; }
+.mac-row.king .v i { background: var(--accent); }
+@media (max-width: 640px) {
+  .mac-board { padding: 2px 12px; }
+  .mac-row { grid-template-columns: 104px repeat(4, minmax(0, 1fr)); column-gap: 8px; }
+  .mac-row.king { margin: 0 -12px; padding-left: 12px; padding-right: 12px; }
+  .mac-head .c b { font-size: 15px; }
+  .mac-head .c span { display: none; }
+  .mac-row .m { display: block; font-size: 14px; white-space: normal; }
+  .mac-row .m small { display: block; margin-top: 2px; }
+  .mac-row .v { display: block; }
+  .mac-row .v b { font-size: 15px; }
+  .mac-row .v i { margin-top: 5px; }
+}
+
 .cmd { margin: 0; padding: 16px 18px; border: 1px solid var(--line); background: var(--stamp-bg); color: var(--stamp-fg); font-family: var(--mono); font-size: 13px; line-height: 1.6; overflow-x: auto; white-space: pre; }
 .run-note { margin: 14px 0 0; max-width: 760px; font-size: 14px; line-height: 1.55; color: var(--text-2); }
 .run-note code { font-family: var(--mono); font-size: 13px; color: var(--text); }
