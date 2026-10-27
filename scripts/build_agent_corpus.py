@@ -84,7 +84,8 @@ def swe_rows(root: Path, repos: set[str]) -> Iterator[dict | None]:
         for group in range(parquet.num_row_groups):
             columns = ["trajectory_id", "repo", "language", "messages", "tools"]
             for row in parquet.read_row_group(group, columns=columns).to_pylist():
-                if row["repo"] in repos:
+                if row["repo"] in repos:  # a SWE-bench Multilingual repository: left out
+                    yield None
                     continue
                 try:
                     messages, tools = from_mini_swe(row["messages"], row["tools"])
@@ -162,7 +163,7 @@ def pivot_rows(path: Path, texts: list[str]) -> Iterator[dict | None]:
 def _terminus_row(dataset: str, key: str, messages: list[dict[str, str]]) -> dict | None:
     try:
         converted = from_terminus(messages)
-    except (ValueError, KeyError, IndexError, TypeError, json.JSONDecodeError):
+    except (ValueError, KeyError, IndexError, TypeError, AttributeError, json.JSONDecodeError):
         return None
     return corpus_row("terminal", dataset, key, "broad", converted, BASH_TOOL)
 

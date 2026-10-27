@@ -125,6 +125,8 @@ def from_terminus(messages: list[dict[str, str]]) -> list[dict[str, Any]]:
 def _terminus_command(action: dict[str, Any]) -> str:
     lines, wait = [], 0.0
     for c in action.get("commands") or []:
+        if not isinstance(c, dict):  # a model's malformed action, kept as the screen shows it
+            continue
         keys = str(c.get("keystrokes") or "")
         wait += float(c.get("duration") or 0)
         if keys.strip() and not keys.strip().startswith(_TMUX_KEYS):
