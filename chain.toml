@@ -44,9 +44,9 @@ revision = "main"
 [dataset]
 # Hugging Face Parquet dataset and split. Empty repo = the local JSONL at INGOT_DATASET_PATH.
 repo = "dendriteholdings/ingot_corpus"
-# the agent-run corpus of 2026-10-27 (branch v2): swe from Open-SWE-Traces, terminal from LHTB 2.0,
-# ukisai and Nemotron Pivot, all in mini-swe-agent's format
-revision = "cddb2249ea6b56b78df05f84f605e7b57ddc2110"
+# the agent-run corpus of 2026-10-27 (branch v3): swe from Open-SWE-Traces, terminal from eight LHTB
+# 2.0 entries, ukisai and Nemotron Pivot, all in mini-swe-agent's format
+revision = "027dc1d65bcbbd329f9e48ec7c83ab21e0124add"
 split = "chungus"
 
 [dataset.extra]
