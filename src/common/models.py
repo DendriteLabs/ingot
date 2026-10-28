@@ -141,6 +141,39 @@ def publish(
     return f"https://huggingface.co/{repo_id}"
 
 
+def publish_dir(pack_dir: Path, repo_id: str, card: str, pair: Quant) -> str:
+    """publish() for a directory that is the whole upload, a king's MLX pack: every file of
+    pack_dir, the genesis files of pair.publish_files and the card, in one commit."""
+    from huggingface_hub import CommitOperationAdd, HfApi
+
+    files = {name: str(path) for name, path in _mirrored(pack_dir, repo_id, pair).items()}
+    for name in pair.publish_files:
+        files[name] = str(hub_file(pair.genesis_repo, name, pair.genesis_revision))
+    operations = [CommitOperationAdd(path_in_repo=n, path_or_fileobj=f) for n, f in files.items()]
+    operations.append(CommitOperationAdd(path_in_repo="README.md", path_or_fileobj=card.encode()))
+    api = HfApi(token=_token())
+    api.create_repo(repo_id=repo_id, repo_type="model", private=False, exist_ok=True)
+    api.create_commit(repo_id=repo_id, operations=operations, commit_message="Mirror Ingot king")
+    log.info("published {} to {} ({} files)", pack_dir, repo_id, len(operations))
+    return f"https://huggingface.co/{repo_id}"
+
+
+def update_card(repo_id: str, line: str) -> None:
+    """Append `line` to a mirror's README.md unless it is there already: one commit of that file."""
+    from huggingface_hub import CommitOperationAdd, HfApi
+
+    text = hub_file(repo_id, "README.md").read_text()
+    if line.strip() in text:
+        return
+    operations = [
+        CommitOperationAdd(path_in_repo="README.md", path_or_fileobj=(text + line).encode())
+    ]
+    HfApi(token=_token()).create_commit(
+        repo_id=repo_id, operations=operations, commit_message="Link the MLX pack"
+    )
+    log.info("linked the MLX pack from the card of {}", repo_id)
+
+
 def _mirrored(model_dir: Path, repo_id: str, pair: Quant) -> dict[str, Path]:
     """name in the mirror → local file, for the files of the king's own upload."""
     files: dict[str, Path] = {}
@@ -157,6 +190,12 @@ def gguf_name(repo_name: str, packing: str | None) -> str:
     """A king's gguf in its mirror, named for its packing in place of the quant label
     (Ingot-IV-27B-Q2 -> Ingot-IV-27B-PQ2_0.gguf); without one, for the repo."""
     return f"{repo_name.rsplit('-', 1)[0]}-{packing}.gguf" if packing else f"{repo_name}.gguf"
+
+
+def mlx_repo_name(repo_name: str) -> str:
+    """A king's MLX pack repo, named beside its gguf repo (Ingot-IV-27B-Q2 ->
+    Ingot-IV-27B-MLX-2bit)."""
+    return f"{repo_name.rsplit('-', 1)[0]}-MLX-2bit"
 
 
 def mirror_matches(model_dir: Path, repo_id: str, pair: Quant) -> bool:

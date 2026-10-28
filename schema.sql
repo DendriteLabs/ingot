@@ -126,6 +126,12 @@ ALTER TABLE kings ADD COLUMN IF NOT EXISTS family TEXT;
 ALTER TABLE kings ADD COLUMN IF NOT EXISTS quant TEXT;
 UPDATE kings SET family = 'qwen38_27b', quant = 'fp8' WHERE quant IS NULL;
 
+-- a gguf king's MLX pack, mirrored beside its gguf repo after the coronation; attempts count
+-- its failures, and past the promoter's limit the king is left to an operator
+ALTER TABLE kings ADD COLUMN IF NOT EXISTS hf_repo_mlx TEXT;
+ALTER TABLE kings ADD COLUMN IF NOT EXISTS mlx_attempts INT NOT NULL DEFAULT 0;
+ALTER TABLE kings ADD COLUMN IF NOT EXISTS mlx_error TEXT;
+
 CREATE TABLE IF NOT EXISTS evals (
     id BIGSERIAL PRIMARY KEY,
     submission_id UUID NOT NULL REFERENCES submissions(id),

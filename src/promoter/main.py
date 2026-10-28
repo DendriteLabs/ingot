@@ -1,6 +1,10 @@
 """The kings row lands first, so the next eval already faces the new king while the upload
 runs. After each coronation the older kings' downloads are deleted, each once its mirror is
-checked (verify_mirror_before_delete)."""
+checked (verify_mirror_before_delete). A gguf king is mirrored twice: its gguf repo at the
+coronation, then, when nothing waits to be crowned, an MLX pack of the same weights in a repo
+beside it (mlx_once). The pack never delays or fails a coronation: a king whose pack failed
+MAX_ATTEMPTS times keeps its download and is left alone until an operator resets
+kings.mlx_attempts."""
 
 from __future__ import annotations
 
@@ -14,14 +18,17 @@ from loguru import logger as log
 
 from common import db, models, reign, states
 from common.config import ChainSpec, Quant, Settings, chain_spec, settings
-from common.gguf import read_header
+from common.gguf import mlx, read_header
 from common.gguf.ptq1 import is_pq2, repack
 from common.loop import forever
-from promoter import config
+from promoter import config, speed
 
 Fetch = Callable[[str, Path], Path]
 Publish = Callable[[Path, str, str, Quant, dict[str, Path]], str]
 Matches = Callable[[Path, str, Quant], bool]
+PublishDir = Callable[[Path, str, str, Quant], str]
+Snapshot = Callable[..., Path]
+UpdateCard = Callable[[str, str], None]
 
 
 def run_once(
@@ -87,6 +94,78 @@ def run_once(
     return True
 
 
+def mlx_once(
+    conn: db.Conn,
+    *,
+    s: Settings,
+    spec: ChainSpec,
+    fetch: Fetch = models.fetch,
+    publish_dir: PublishDir = models.publish_dir,
+    snapshot: Snapshot = models.snapshot,
+    update_card: UpdateCard = models.update_card,
+) -> bool:
+    """Mirrors the MLX pack of the oldest gguf king that has none yet: the pack is built from the
+    king's gguf in a temporary directory, published beside the gguf repo, recorded, and the gguf
+    card gets a link to it. A failure counts an attempt on the king and leaves everything else
+    as it was. Returns whether there was a king to do."""
+    if not s.king_hf_namespace:
+        return False
+    rows = conn.execute(
+        "SELECT id, submission_id, hotkey, uid, model_uri, hf_repo, family, quant FROM kings"
+        " WHERE submission_id IS NOT NULL AND hf_repo IS NOT NULL AND hf_repo_mlx IS NULL"
+        " AND mlx_attempts < %s ORDER BY id",
+        (config.MAX_ATTEMPTS,),
+    ).fetchall()
+    king = next((r for r in rows if spec.pair(r["family"], r["quant"]).format == "gguf"), None)
+    if king is None:
+        return False
+    try:
+        pair = spec.pair(king["family"], king["quant"])
+        ordinal = db.one(
+            conn,
+            "SELECT count(*) AS n FROM kings"
+            " WHERE submission_id IS NOT NULL AND family = %s AND quant = %s AND id <= %s",
+            (king["family"], king["quant"], king["id"]),
+        )["n"]
+        title = reign.name(ordinal, pair.king_name)
+        repo_mlx = f"{s.king_hf_namespace}/{models.mlx_repo_name(title)}"
+        try:
+            model = fetch(king["model_uri"], s.model_cache_dir)
+        except Exception:
+            # the upload is gone (an expired private store); the mirror holds the same file
+            log.exception("fetching {} failed; taking the gguf from {}", title, king["hf_repo"])
+            model = snapshot(king["hf_repo"], allow_patterns=f"*-{pair.king_packing}.gguf")
+        row = {"hotkey": king["hotkey"], "uid": king["uid"], "id": king["submission_id"]}
+        with tempfile.TemporaryDirectory(dir=s.model_cache_dir) as tmp:
+            pack = mlx_pack(model, Path(tmp), title, snapshot=snapshot)
+            if pack is None:
+                raise ValueError(f"{title}: its gguf is not ternary PQ2_0")
+            text = card_mlx(
+                row,
+                title,
+                pair,
+                lineage(conn, king["id"], pair),
+                (pack / mlx.WEIGHTS).stat().st_size,
+                gguf_repo=king["hf_repo"],
+                base_model=spec.teacher_repo,
+            )
+            publish_dir(pack, repo_mlx, text, pair)
+        conn.execute(
+            "UPDATE kings SET hf_repo_mlx = %s, mlx_error = NULL WHERE id = %s",
+            (repo_mlx, king["id"]),
+        )
+        update_card(king["hf_repo"], _mlx_link(repo_mlx))
+    except Exception as exc:
+        log.exception("the MLX pack of king {} failed", king["id"])
+        conn.execute(
+            "UPDATE kings SET mlx_attempts = mlx_attempts + 1, mlx_error = %s WHERE id = %s",
+            (str(exc), king["id"]),
+        )
+        return True
+    log.info("mirrored the MLX pack of {} at {}", title, repo_mlx)
+    return True
+
+
 def repacked(model_dir: Path, tmp: Path, title: str) -> dict[str, Path]:
     """The king's 1.75 bpw PTQ1_0 file in tmp when its gguf is ternary PQ2_0, as every q2 king is:
     Ingot-IV-27B-PTQ1_0.gguf beside Ingot-IV-27B-PQ2_0.gguf."""
@@ -99,12 +178,29 @@ def repacked(model_dir: Path, tmp: Path, title: str) -> dict[str, Path]:
     return {name: tmp / name}
 
 
+def mlx_pack(
+    model_dir: Path, tmp: Path, title: str, *, snapshot: Snapshot = models.snapshot
+) -> Path | None:
+    """The king's MLX pack in tmp/mlx when its gguf is ternary PQ2_0: its weights converted
+    without loss, the rest from Prism's template (common.gguf.mlx), every tensor checked."""
+    gguf = next(iter(sorted(model_dir.rglob("*.gguf"))), None)
+    if gguf is None or not is_pq2(read_header(gguf)):
+        return None
+    template = snapshot(mlx.TEMPLATE_REPO, mlx.TEMPLATE_REVISION)
+    out = tmp / "mlx"
+    weights = mlx.convert(gguf, template, out)
+    mlx.verify(out, gguf, template)
+    log.info("converted {} to the MLX pack of {} ({:,} weights)", gguf.name, title, weights)
+    return out
+
+
 def sweep(conn: db.Conn, s: Settings, spec: ChainSpec, matches: Matches) -> None:
     """Deletes the downloads of every king but each pair's newest KEEP_KINGS. With
     verify_mirror_before_delete one is deleted only once its mirror matches it; one that does not
-    stays, and is checked again after the next coronation."""
+    stays, and is checked again after the next coronation. A gguf king stays until its MLX pack
+    is mirrored too, however many attempts that took: the pack is built from the gguf."""
     rows = conn.execute(
-        "SELECT k.family, k.quant, k.hf_repo, s.model_hash,"
+        "SELECT k.family, k.quant, k.hf_repo, k.hf_repo_mlx, s.model_hash,"
         " row_number() OVER (PARTITION BY k.family, k.quant ORDER BY k.id DESC) AS rank"
         " FROM kings k JOIN submissions s ON s.id = k.submission_id"
     ).fetchall()
@@ -114,6 +210,9 @@ def sweep(conn: db.Conn, s: Settings, spec: ChainSpec, matches: Matches) -> None
         dest = s.model_cache_dir / digest
         marker = s.model_cache_dir / f"{digest}.verified"
         if digest in newest or not marker.exists():
+            continue
+        if spec.pair(r["family"], r["quant"]).format == "gguf" and not r["hf_repo_mlx"]:
+            log.warning("king {} kept: its MLX pack is not mirrored yet", digest)
             continue
         if s.verify_mirror_before_delete:
             try:
@@ -175,6 +274,7 @@ def card(
     extra: dict[str, Path] | None = None,
     *,
     base_model: str | None = None,
+    mlx_repo: str | None = None,
 ) -> str:
     gguf = models.gguf_name(title, pair.king_packing)
     ptq1 = next(iter(extra or {}), None)
@@ -193,11 +293,74 @@ def card(
         )
     else:
         text += "The weights are the miner's upload, byte for byte. Credit belongs to the miner.\n"
+    if mlx_repo:
+        text += _mlx_link(mlx_repo)
     if steps:
         text += _scores(pair, steps)
     if pair.format == "gguf":
-        text += _gguf_card(gguf, pair, ptq1)
+        text += speed.gguf_section(gguf, ptq1, mlx_repo) + _gguf_card(gguf, pair, ptq1)
     return text
+
+
+def card_mlx(
+    row: db.Row,
+    title: str,
+    pair: Quant,
+    steps: list[Step],
+    weights_bytes: int,
+    *,
+    gguf_repo: str,
+    base_model: str | None = None,
+) -> str:
+    """The MLX pack's card: the gguf king's weights converted without loss, the rest Prism's.
+    `title` is the gguf king's; the pack's repo is named from it."""
+    lines = ["---"]
+    if base_model:
+        lines += [f"base_model: {base_model}", "base_model_relation: quantized"]
+    lines += ["library_name: mlx", "pipeline_tag: text-generation", "tags:"]
+    lines += [f"- {t}" for t in ("mlx", "apple-silicon", "2-bit", "ternary", "ingot", "bittensor")]
+    gguf_hub = f"https://huggingface.co/{gguf_repo}"
+    template = mlx.TEMPLATE_REPO
+    text = "\n".join([*lines, "---", "", ""]) + (
+        f"# {models.mlx_repo_name(title)}\n\n"
+        "A public mirror of a model that won on Ingot, a Bittensor subnet where miners quantize a "
+        "fixed teacher model and the validator crowns the copy that stays closest to it. This is "
+        f"the MLX pack of [{gguf_repo}]({gguf_hub}): the same ternary weights, written for Apple "
+        "Silicon.\n\n"
+        f"- Submitted by miner hotkey `{row['hotkey']}` (uid {row['uid']})\n"
+        f"- Crowned from submission `{row['id']}`\n\n"
+        "The weights are the miner's upload converted without loss: every 128-weight block keeps "
+        "its ternary codes and fp16 scale as MLX affine 2-bit values (scale d, bias −d), and "
+        "every weight decodes to the same number the gguf kernel uses. Credit belongs to the "
+        "miner. The vision tower, config, tokenizer and Hadamard sign vectors are Prism's "
+        f"[{template}](https://huggingface.co/{template}), which the competition does not "
+        "change.\n"
+        "\n## Files\n\n"
+        "| file | bits per weight | size |\n| --- | --- | --- |\n"
+        f"| `{mlx.WEIGHTS}` | 2.25 (2-bit codes, fp16 scale and bias per 128 weights) "
+        f"| {_gb(weights_bytes)} |\n"
+    )
+    if steps:
+        text += _scores(pair, steps)
+    text += speed.mlx_section(gguf_repo) + (
+        "\n## Running it\n\n"
+        "```\n"
+        "pip install mlx-lm\n"
+        f"mlx_lm.generate --model {gguf_repo.rsplit('/', 1)[0]}/{models.mlx_repo_name(title)}"
+        ' --prompt "Hello"\n'
+        "```\n\n"
+        "The pack loads in any runtime that reads Prism's `prism_hadamard_qwen35` layout, MTPLX "
+        f"among them. The gguf twin runs in Prism's llama.cpp fork; see [its card]({gguf_hub}).\n"
+    )
+    return text
+
+
+def _mlx_link(mlx_repo: str) -> str:
+    """The line the gguf card gets once the MLX pack is mirrored (models.update_card)."""
+    return (
+        "\nThe same weights as an MLX pack for Apple Silicon: "
+        f"[{mlx_repo}](https://huggingface.co/{mlx_repo}).\n"
+    )
 
 
 def _front_matter(pair: Quant, base_model: str | None) -> str:
@@ -309,7 +472,10 @@ def main() -> None:
     worker = db.register_worker(link.conn(), "promoter")
     log.info("promoter started — mirroring kings to {}", s.king_hf_namespace or "(nowhere)")
     forever(
-        lambda: run_once(link.conn(), worker=worker, s=s, spec=chain_spec()),
+        lambda: (
+            run_once(link.conn(), worker=worker, s=s, spec=chain_spec())
+            or mlx_once(link.conn(), s=s, spec=chain_spec())
+        ),
         idle_s=config.IDLE_S,
         on_stop=lambda: db.offline_quietly(link, worker),
     )
