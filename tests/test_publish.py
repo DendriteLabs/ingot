@@ -57,8 +57,8 @@ def test_a_gguf_king_is_its_file_and_its_quants_license(tmp_path, monkeypatch, s
 
 
 def test_the_card(spec):
-    """A gguf king's card pins the fork and links the vision projector; the gain over genesis
-    chains every duel as the dashboard does."""
+    """A gguf king's card pins the fork and links the vision projector, and shows its winning
+    duel only: no gain over genesis chained along the reign."""
     row = {"hotkey": "hk", "uid": 1, "id": "sub"}
     text = card(row, "Ingot-I-27B-Q2", spec.pair("qwen38_27b", "q2"), [])
     assert LLAMA_CPP_COMMIT in text and "-m Ingot-I-27B-PQ2_0.gguf" in text
@@ -74,4 +74,18 @@ def test_the_card(spec):
     text = card(row, "Ingot-II-27B-Q2", spec.pair("qwen38_27b", "q2"), steps)
     assert "| this model, in its winning eval | 0.06480 | 0.4050 |" in text
     assert "| the king it beat, same eval | 0.07200 | 0.4500 |" in text
-    assert "| 19.0% | 19.0% |" in text
+    assert "closer than genesis" not in text and "19.0%" not in text
+
+
+def test_a_q2_card_credits_bonsai_2(spec):
+    """Genesis copies Prism's Bonsai 2: the card lists it as the base, and says the codes are
+    Bonsai 2's only when none changed."""
+    row = {"hotkey": "hk", "uid": 1, "id": "sub"}
+    q2 = spec.pair("qwen38_27b", "q2")
+    kept = card(row, "Ingot-I-27B-Q2", q2, [], base_model="Qwen/Qwen3.8-27B", codes=(0, 1280))
+    assert kept.startswith("---\nbase_model: prism-ml/Ternary-Bonsai-2-27B-gguf\n")
+    assert "refined: the same ternary codes" in kept
+    assert "Credit belongs to the miner, and to Prism ML for Bonsai 2." in kept
+    changed = card(row, "Ingot-I-27B-Q2", q2, [], base_model="Qwen/Qwen3.8-27B", codes=(5, 1000))
+    assert "the miner changed 0.50% of its ternary codes" in changed
+    assert "same ternary codes" not in changed

@@ -28,6 +28,7 @@ def q2_upload(conn, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(promoter, "read_header", lambda _p: None)
     monkeypatch.setattr(promoter, "is_pq2", lambda _g: True)
     monkeypatch.setattr(promoter, "repacked", lambda *_: {})
+    monkeypatch.setattr(promoter, "ternary_changes", lambda *_: (0, 128))
     converted: list[tuple[Path, Path, Path]] = []
 
     def convert(src: Path, template: Path, out: Path) -> int:
@@ -185,7 +186,8 @@ def test_the_mlx_card_and_the_link_from_the_gguf_card(spec):
     text = card_mlx(
         row, "Ingot-I-27B-Q2", q2, [], 8_595_478_424, gguf_repo="ns/Ingot-I-27B-Q2", base_model="t"
     )
-    assert text.startswith("---\nbase_model: t\n") and "library_name: mlx" in text
+    assert text.startswith(f"---\nbase_model: {mlx.TEMPLATE_REPO}\nbase_model_relation: finetune\n")
+    assert "library_name: mlx" in text and "Credit belongs to the miner, and to Prism ML" in text
     assert "# Ingot-I-27B-MLX-2bit" in text
     assert (
         "| `model.safetensors` | 2.25 (2-bit codes, fp16 scale and bias per 128 weights) |" in text

@@ -36,6 +36,7 @@ publish_files = ["LICENSE", "NOTICE.txt"]
 # the vision projector a king's card links to (the eval scores the text model only): upstream's
 vision_repo = "prism-ml/Ternary-Bonsai-2-27B-gguf@b072e1d3b35a0a630cece372c2127528e0994386"
 vision_files = ["Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf", "Ternary-Bonsai-2-27B-mmproj-BF16.gguf"]
+upstream = { repo = "prism-ml/Ternary-Bonsai-2-27B-gguf", author = "Prism ML", name = "Ternary Bonsai 2 27B", short = "Bonsai 2" }
 
 [teacher]
 repo = "Qwen/Qwen3.8-27B"

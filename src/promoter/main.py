@@ -19,6 +19,7 @@ from loguru import logger as log
 from common import db, models, reign, states
 from common.config import ChainSpec, Quant, Settings, chain_spec, settings
 from common.gguf import mlx, read_header
+from common.gguf.codes import code_changes
 from common.gguf.ptq1 import is_pq2, repack
 from common.loop import forever
 from promoter import config, speed
@@ -73,7 +74,15 @@ def run_once(
             with tempfile.TemporaryDirectory(dir=s.model_cache_dir) as tmp:
                 extra = repacked(model, Path(tmp), title)
                 steps = lineage(conn, king["id"], pair)
-                text = card(row, title, pair, steps, extra, base_model=spec.teacher_repo)
+                text = card(
+                    row,
+                    title,
+                    pair,
+                    steps,
+                    extra,
+                    base_model=spec.teacher_repo,
+                    codes=ternary_changes(model, pair),
+                )
                 publish(model, repo_id, text, pair, extra)
             conn.execute("UPDATE kings SET hf_repo = %s WHERE id = %s", (repo_id, king["id"]))
         elif not king["hf_repo"]:
@@ -148,6 +157,7 @@ def mlx_once(
                 (pack / mlx.WEIGHTS).stat().st_size,
                 gguf_repo=king["hf_repo"],
                 base_model=spec.teacher_repo,
+                codes=ternary_changes(model, pair),
             )
             publish_dir(pack, repo_mlx, text, pair)
         conn.execute(
@@ -176,6 +186,26 @@ def repacked(model_dir: Path, tmp: Path, title: str) -> dict[str, Path]:
     weights = repack(gguf, tmp / name)
     log.info("repacked {} as {} ({:,} weights)", gguf.name, name, weights)
     return {name: tmp / name}
+
+
+def ternary_changes(model_dir: Path, pair: Quant) -> tuple[int, int] | None:
+    """(codes changed, codes compared) of the king's PQ2_0 gguf against genesis's, for a pair
+    whose genesis copies someone else's model (pair.upstream), so its card can say how much of
+    that model it keeps. None when there is nothing to compare or the comparison failed: the
+    card then credits the upstream without the claim."""
+    if pair.upstream is None or pair.format != "gguf" or not pair.genesis_file:
+        return None
+    gguf = next(iter(sorted(model_dir.rglob("*.gguf"))), None)
+    try:
+        if gguf is None or not is_pq2(read_header(gguf)):
+            return None
+        genesis = models.hub_file(pair.genesis_repo, pair.genesis_file, pair.genesis_revision)
+        changed, total = code_changes(gguf, genesis)
+    except Exception:
+        log.exception("comparing {} with genesis's codes failed", gguf)
+        return None
+    log.info("{} changed {:,} of genesis's {:,} ternary codes", gguf.name, changed, total)
+    return changed, total
 
 
 def mlx_pack(
@@ -275,30 +305,35 @@ def card(
     *,
     base_model: str | None = None,
     mlx_repo: str | None = None,
+    codes: tuple[int, int] | None = None,
 ) -> str:
+    """A king's card. base_model is the teacher's repo, the card's base unless genesis copies
+    someone else's model (pair.upstream); codes is (changed, compared) against genesis's
+    ternary codes (ternary_changes)."""
     gguf = models.gguf_name(title, pair.king_packing)
     ptq1 = next(iter(extra or {}), None)
     text = _front_matter(pair, base_model) + (
         f"# {title}\n\n"
         "A public mirror of a model that won on Ingot, a Bittensor subnet where miners quantize a "
         "fixed teacher model and the validator crowns the copy that stays closest to it.\n\n"
-        f"- Submitted by miner hotkey `{row['hotkey']}` (uid {row['uid']})\n"
+        + _upstream(pair, codes, base_model)
+        + f"- Submitted by miner hotkey `{row['hotkey']}` (uid {row['uid']})\n"
         f"- Crowned from submission `{row['id']}`\n\n"
     )
     if ptq1:
         text += (
             f"The weights are the miner's upload, byte for byte (`{gguf}`); `{ptq1}` repacks "
-            "them losslessly at 1.75 bits per weight. Credit belongs to the miner.\n"
+            f"them losslessly at 1.75 bits per weight. {_credit(pair)}\n"
             + _files(gguf, ptq1, (extra or {})[ptq1].stat().st_size, pair.weight_limit)
         )
     else:
-        text += "The weights are the miner's upload, byte for byte. Credit belongs to the miner.\n"
+        text += f"The weights are the miner's upload, byte for byte. {_credit(pair)}\n"
     if mlx_repo:
         text += _mlx_link(mlx_repo)
     if steps:
-        text += _scores(pair, steps)
+        text += _scores(steps)
     if pair.format == "gguf":
-        text += speed.gguf_section(gguf, ptq1, mlx_repo) + _gguf_card(gguf, pair, ptq1)
+        text += speed.gguf_section(gguf, ptq1, mlx_repo) + _gguf_card(gguf, pair, ptq1, codes)
     return text
 
 
@@ -311,11 +346,15 @@ def card_mlx(
     *,
     gguf_repo: str,
     base_model: str | None = None,
+    codes: tuple[int, int] | None = None,
 ) -> str:
     """The MLX pack's card: the gguf king's weights converted without loss, the rest Prism's.
-    `title` is the gguf king's; the pack's repo is named from it."""
+    `title` is the gguf king's; the pack's repo is named from it. With an upstream the base is
+    Prism's own MLX pack of it (mlx.TEMPLATE_REPO)."""
     lines = ["---"]
-    if base_model:
+    if pair.upstream:
+        lines += [f"base_model: {mlx.TEMPLATE_REPO}", "base_model_relation: finetune"]
+    elif base_model:
         lines += [f"base_model: {base_model}", "base_model_relation: quantized"]
     lines += ["library_name: mlx", "pipeline_tag: text-generation", "tags:"]
     lines += [f"- {t}" for t in ("mlx", "apple-silicon", "2-bit", "ternary", "ingot", "bittensor")]
@@ -327,12 +366,13 @@ def card_mlx(
         "fixed teacher model and the validator crowns the copy that stays closest to it. This is "
         f"the MLX pack of [{gguf_repo}]({gguf_hub}): the same ternary weights, written for Apple "
         "Silicon.\n\n"
-        f"- Submitted by miner hotkey `{row['hotkey']}` (uid {row['uid']})\n"
+        + _upstream(pair, codes, base_model)
+        + f"- Submitted by miner hotkey `{row['hotkey']}` (uid {row['uid']})\n"
         f"- Crowned from submission `{row['id']}`\n\n"
         "The weights are the miner's upload converted without loss: every 128-weight block keeps "
         "its ternary codes and fp16 scale as MLX affine 2-bit values (scale d, bias −d), and "
-        "every weight decodes to the same number the gguf kernel uses. Credit belongs to the "
-        "miner. The vision tower, config, tokenizer and Hadamard sign vectors are Prism's "
+        f"every weight decodes to the same number the gguf kernel uses. {_credit(pair)} The "
+        "vision tower, config, tokenizer and Hadamard sign vectors are Prism's "
         f"[{template}](https://huggingface.co/{template}), which the competition does not "
         "change.\n"
         "\n## Files\n\n"
@@ -341,7 +381,7 @@ def card_mlx(
         f"| {_gb(weights_bytes)} |\n"
     )
     if steps:
-        text += _scores(pair, steps)
+        text += _scores(steps)
     text += speed.mlx_section(gguf_repo) + (
         "\n## Running it\n\n"
         "```\n"
@@ -364,17 +404,54 @@ def _mlx_link(mlx_repo: str) -> str:
 
 
 def _front_matter(pair: Quant, base_model: str | None) -> str:
-    """The card's YAML header: with it Hugging Face lists the mirror as a quantization of the
-    teacher."""
+    """The card's YAML header: with it Hugging Face lists the mirror as a fine-tune of the
+    upstream model genesis copies, or else as a quantization of the teacher."""
     gguf = pair.format == "gguf"
     lines = ["---"]
-    if base_model:
+    if pair.upstream:
+        lines += [f"base_model: {pair.upstream.repo}", "base_model_relation: finetune"]
+    elif base_model:
         lines += [f"base_model: {base_model}", "base_model_relation: quantized"]
     if gguf:
         lines.append("library_name: llama.cpp")
     lines += ["pipeline_tag: text-generation", "tags:"]
     lines += [f"- {tag}" for tag in (["gguf"] if gguf else []) + ["ingot", "bittensor"]]
     return "\n".join([*lines, "---", "", ""])
+
+
+def _upstream(pair: Quant, codes: tuple[int, int] | None, teacher: str | None) -> str:
+    """The paragraph crediting the model genesis copies, with what the miner changed of it: its
+    ternary codes kept or the share changed; without a measurement only where the competition
+    started."""
+    up = pair.upstream
+    if up is None:
+        return ""
+    model = f"[{up.name}](https://huggingface.co/{up.repo})"
+    closer = f" to bring it closer to {teacher.rsplit('/', 1)[-1]}" if teacher else ""
+    if codes is None:
+        return f"Genesis, where the competition started, is {up.author}'s {model}.\n\n"
+    changed, total = codes
+    if changed == 0:
+        return (
+            f"It is {up.author}'s {model}, refined: the same ternary codes, with the rest of its "
+            f"weights re-tuned by the miner{closer}.\n\n"
+        )
+    return (
+        f"It starts from {up.author}'s {model}: the miner changed {_share(changed, total)} of its "
+        f"ternary codes and re-tuned the rest of its weights{closer}.\n\n"
+    )
+
+
+def _share(changed: int, total: int) -> str:
+    pct = 100 * changed / total
+    return "under 0.01%" if pct < 0.01 else f"{pct:.2f}%"
+
+
+def _credit(pair: Quant) -> str:
+    up = pair.upstream
+    if up is None:
+        return "Credit belongs to the miner."
+    return f"Credit belongs to the miner, and to {up.author} for {up.short}."
 
 
 def _files(gguf: str, ptq1: str, ptq1_bytes: int, q2_bytes: int | None) -> str:
@@ -393,16 +470,11 @@ def _files(gguf: str, ptq1: str, ptq1_bytes: int, q2_bytes: int | None) -> str:
     )
 
 
-def _scores(pair: Quant, steps: list[Step]) -> str:
-    """Its winning duel, and the gain over genesis chained as the dashboard chains it: each eval
-    scores its own samples, so a king's ratio to genesis is the product of every challenger /
-    king ratio along the way."""
+def _scores(steps: list[Step]) -> str:
+    """Its winning duel, against the king it beat on the same samples. No gain over genesis: each
+    eval scores its own samples, and chaining the ratios along the reign overstated the direct
+    gap about threefold when we measured it head to head (2026-10-26)."""
     last = steps[-1]
-    kl = dist = 1.0
-    for step in steps:
-        kl *= step.kl / step.kl_king
-        dist *= step.dist / step.dist_king
-    genesis = f"[{pair.genesis_repo}](https://huggingface.co/{pair.genesis_repo})"
     return (
         "\n## How close it is to the teacher\n\n"
         "Per answer token, against the BF16 teacher reading the same answer: KL(teacher ‖ model) "
@@ -411,29 +483,31 @@ def _scores(pair: Quant, steps: list[Step]) -> str:
         "| | KL | hidden-state distance |\n| --- | --- | --- |\n"
         f"| this model, in its winning eval | {last.kl:.5f} | {last.dist:.4f} |\n"
         f"| the king it beat, same eval | {last.kl_king:.5f} | {last.dist_king:.4f} |\n"
-        f"| closer than genesis {genesis} | {_gain(kl)} | {_gain(dist)} |\n"
     )
-
-
-def _gain(ratio: float) -> str:
-    return f"{100 * (1 - ratio):.1f}%"
 
 
 def _gb(n: int | None) -> str:
     return "—" if n is None else f"{n / 1e9:.2f} GB"
 
 
-def _gguf_card(gguf: str, pair: Quant, ptq1: str | None = None) -> str:
+def _gguf_card(
+    gguf: str, pair: Quant, ptq1: str | None = None, codes: tuple[int, int] | None = None
+) -> str:
     """How to run a gguf king: only the fork the eval scored it with runs these files; and the
     genesis vision projector, which the eval never scored, for image input."""
     from eval_service.config import LLAMA_CPP_COMMIT
 
     fork = "https://github.com/DendriteLabs/llama.cpp"
     hub = f"https://huggingface.co/{pair.genesis_repo}"
+    weights = (
+        f"its ternary codes {pair.upstream.short}'s and the rest of its weights the miner's"
+        if pair.upstream and codes and codes[0] == 0
+        else "its weights the miner's"
+    )
     text = (
         "\n## Running it\n\n"
         f"`{gguf}` is a gguf with the layout, tokenizer and Hadamard rotation of "
-        f"[{pair.genesis_repo}]({hub}) (`{pair.genesis_file}`), its weights the miner's. Stock "
+        f"[{pair.genesis_repo}]({hub}) (`{pair.genesis_file}`), {weights}. Stock "
         "llama.cpp does not run it; the Dendrite fork of PrismML's llama.cpp does, at the commit "
         "Ingot scored it with, "
         f"[`{LLAMA_CPP_COMMIT[:7]}`]({fork}/commit/{LLAMA_CPP_COMMIT}):\n\n"

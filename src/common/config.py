@@ -99,6 +99,14 @@ _HF_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
 @dataclass(frozen=True)
+class Upstream:
+    repo: str
+    author: str
+    name: str
+    short: str
+
+
+@dataclass(frozen=True)
 class Quant:
     """One competition of a family: a quantization with its format, genesis, limits and king
     name."""
@@ -123,6 +131,8 @@ class Quant:
     vision_repo: str | None = None
     # "full": error fingerprints against the teacher (GPU); "hash": identical weight files only
     dedup: str = "full"
+    # the model genesis copies, when it is someone else's (None: genesis is ours, from the teacher)
+    upstream: Upstream | None = None
 
 
 @dataclass(frozen=True)
@@ -232,6 +242,13 @@ def _quants(raw: dict) -> dict[tuple[str, str], Quant]:
                 raise ValueError(f"{where} dedup must be one of {', '.join(DEDUP_MODES)}")
             if not c.get("genesis_repo") or not c.get("genesis_revision"):
                 raise ValueError(f"{where} needs genesis_repo and genesis_revision")
+            upstream = c.get("upstream")
+            if upstream is not None and (
+                not isinstance(upstream, dict)
+                or sorted(upstream) != ["author", "name", "repo", "short"]
+                or not all(isinstance(v, str) and v for v in upstream.values())
+            ):
+                raise ValueError(f"{where} upstream needs exactly repo, author, name and short")
             out[(family, quant)] = Quant(
                 family=family,
                 name=quant,
@@ -246,6 +263,7 @@ def _quants(raw: dict) -> dict[tuple[str, str], Quant]:
                 vision_files=tuple(c.get("vision_files", [])),
                 vision_repo=c.get("vision_repo"),
                 dedup=c.get("dedup", "full"),
+                upstream=Upstream(**upstream) if upstream else None,
                 publish_files=tuple(
                     c.get(
                         "publish_files",

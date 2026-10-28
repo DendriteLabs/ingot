@@ -53,9 +53,10 @@ def test_packing_is_the_c_reference_and_unpacks_to_its_source() -> None:
     assert (pq2_codes(pq2_blocks(codes, scale)) == codes).all()
 
 
-def q2_file(path: Path, codes: np.ndarray) -> Path:
-    """A q2-like file: a F32 tensor, then PQ2_0 blocks of `codes`, MOSTLY_PQ2_0."""
-    rng = np.random.default_rng(1)
+def q2_file(path: Path, codes: np.ndarray, seed: int = 1) -> Path:
+    """A q2-like file: a F32 tensor, then PQ2_0 blocks of `codes`, MOSTLY_PQ2_0; the F32 values
+    and the block scales drawn from `seed`."""
+    rng = np.random.default_rng(seed)
     f32 = rng.standard_normal(8).astype("<f4").tobytes()
     blocks = pq2_blocks(codes, rng.integers(0, 60, (len(codes), 2)).astype(np.uint8)).tobytes()
     data = f32 + bytes(32 - len(f32)) + blocks + bytes(-len(blocks) % 32)
