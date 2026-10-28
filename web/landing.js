@@ -102,7 +102,7 @@ function render() {
     (m) => (m.estimate === "ours" ? `our estimate: ${(100 * m.est.share).toFixed(0)}% of the teacher's scores kept on four shared benchmarks`
       : m.estimate ? "Artificial Analysis's own estimate" : `Artificial Analysis Intelligence Index ${AA.version}`), teacher);
   // density on the four benchmarks every board model ran: the board's models, best first, the teacher last
-  const short = { "Ingot-IV-27B-Q2": "King IV", "Qwen3.5 9B": "Qwen3.5", "Gemma 4 12B": "Gemma 4", "gpt-oss-20b": "gpt-oss" };
+  const short = { "Ingot-IV-27B-Q2": "King IV", "Qwen3.8 27B IQ2_XXS": "IQ2_XXS", "Qwen3.5 9B": "Qwen3.5", "Gemma 4 12B": "Gemma 4", "gpt-oss-20b": "gpt-oss" };
   const dRows = [...MAC_BOARD.rows.map((r) => ({ ...r, tone: r.king ? "king latest" : r.label === GENESIS.label ? "genesis" : "other" })),
     { ...MAC_BOARD.teacher, tone: "teacher" }]
     .map((r) => ({ ...r, name: r.label, label: short[r.label] ?? r.label, size: r.gb, v: boardDensity(r) }));
@@ -124,8 +124,7 @@ function renderSizes(king) {
       el("i", { class: "size-line", style: `left: ${at(MACBOOK_GB)}` }, el("span", {}, "16 GB MacBook"))), el("span")),
     ...rows.map((r) => el("div", { class: `size-row ${r.tone}${r.gb > MACBOOK_GB ? " over" : ""}` },
       el("span", { class: "size-label" }, link(hubUrl(r.repo), r.label), el("small", {}, r.note)),
-      el("span", { class: "size-track" }, el("i", { style: `width: ${at(r.gb)}` }),
-        r.tone === "king" ? el("em", { class: "size-gain", style: `left: calc(${at(r.gb)} + 12px)` }, `${(top / r.gb).toFixed(1)}× smaller`) : null),
+      el("span", { class: "size-track" }, el("i", { style: `width: ${at(r.gb)}` })),
       el("span", { class: "size-value" }, `${r.gb.toFixed(r.gb < 10 ? 2 : 1)} GB`))));
 }
 

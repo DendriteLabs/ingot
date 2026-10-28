@@ -1,6 +1,6 @@
 // The external benchmark feed (/api/benchmarks.json) as both pages read it: the suite, each round's
-// protocol, the teacher's run, and the two figures built on the scores: the Ingot Index and the
-// intelligence density.
+// protocol, the teacher's run, and the figures built on the scores: the Artificial Analysis estimate
+// and the intelligence density.
 
 export const BENCHMARKS = [
   ["SWE-bench Multilingual", "coding"], ["Terminal-Bench 2.1", "terminal"], ["AutomationBench", "automation"],
@@ -22,38 +22,6 @@ export const scoreOf = (runs, model, benchmark) => {
   return run && complete(run) ? run.score : null;
 };
 
-// Ingot Index: how much of the teacher a model keeps, 100 = the teacher everywhere. Each benchmark's
-// retention is the model's score over the teacher's, capped at 100% (a win on one benchmark cannot
-// pay for a loss on another); a benchmark where the teacher scores under 10% counts in proportion;
-// benchmarks weigh equally inside a category and the categories a third each. The same rule as the
-// benchmark controller's `index` command without its KL penalty; a model missing benchmarks is
-// scored on the ones it has, and `coverage` says how many.
-const INDEX_CATEGORIES = {
-  coding: ["SWE-bench Multilingual", "Terminal-Bench 2.1"],
-  reasoning: ["GPQA Diamond", "MATH-500", "MMMU"],
-  "tool use": ["τ³-bench Banking", "AutomationBench"],
-};
-export function ingotIndex(runs, model) {
-  const categories = {};
-  let covered = 0;
-  for (const [category, names] of Object.entries(INDEX_CATEGORIES)) {
-    let weight = 0, retained = 0;
-    for (const name of names) {
-      const mine = scoreOf(runs, model, name);
-      const teacher = scoreOf(runs, TEACHER_RUN, name);
-      if (mine == null || teacher == null || teacher <= 0) continue;
-      const w = Math.min(1, teacher / 10);
-      weight += w;
-      retained += w * Math.min(mine / teacher, 1);
-      covered++;
-    }
-    if (weight) categories[category] = (100 * retained) / weight;
-  }
-  const values = Object.values(categories);
-  if (!values.length) return null;
-  return { index: values.reduce((a, b) => a + b, 0) / values.length, categories, coverage: covered, total: BENCHMARKS.length };
-}
-
 // Artificial Analysis Intelligence Index (artificialanalysis.ai, v4.3.2, read 2026-10-27): ten
 // evaluations Artificial Analysis runs itself, several with private test sets, so it cannot be run
 // here. AA lists the teacher and the Mac-class models; it has not evaluated Bonsai 2 or any king.
@@ -68,7 +36,8 @@ export const AA = {
     { label: "gpt-oss-20b", aa: 9, href: "https://artificialanalysis.ai/models/comparisons/qwen3-5-9b-vs-gpt-oss-20b" },
   ],
   // the estimate for a model AA has not run: the share of the teacher's scores it keeps on the four
-  // benchmarks the Mac-class models also ran here (the Ingot Index rule on those four), raised to the
+  // benchmarks the Mac-class models also ran here (each capped at the teacher's, averaged within coding and
+  // within reasoning, then over the two), raised to the
   // power that maps Qwen3.5 9B's and gpt-oss-20b's shares (0.55, 0.57) onto their AA scores (11, 9):
   // AA's harder suite falls off about with the square of the share
   shared: { coding: ["SWE-bench Multilingual", "Terminal-Bench 2.1"], reasoning: ["GPQA Diamond", "MATH-500"] },
@@ -86,26 +55,23 @@ export function aaEstimate(runs, model) {
   return { aa: AA.teacher * share ** AA.exponent, share };
 }
 
-// Models that fit a 16 GB MacBook, run by us on 2026-10-27 with the kings' harness and settings (private
-// runs, not in the feed): the 2-bit king against Bonsai 2 and three popular local models. SWE-bench
-// Multilingual on a fixed 100-instance subset (the king scores 61.0 on all 300); Gemma 4 12B's GPQA and
-// MATH-500 from its run with thinking capped at 12k tokens, its better run. Sizes are the files a Mac
-// runs, decimal GB.
 export const MAC_BOARD = {
   columns: [
     { kind: "Coding", name: "SWE-bench Multilingual" }, { kind: "Terminal", name: "Terminal-Bench 2.1" },
     { kind: "Science", name: "GPQA Diamond" }, { kind: "Math", name: "MATH-500" },
   ],
   rows: [
-    { label: "Ingot-IV-27B-Q2", repo: "dendriteholdings/Ingot-IV-27B-Q2", gb: 5.95, king: true, scores: [63, 46.1, 77.3, 96.6] },
+    { label: "Ingot-IV-27B-Q2", repo: "dendriteholdings/Ingot-IV-27B-Q2", gb: 5.95, king: true, scores: [61.0, 46.1, 77.3, 96.6] },
     // Bonsai 2 is the genesis run (its own file, the king's protocols), as everywhere on the site; the feed's
-    { label: "Bonsai 2", repo: "prism-ml/Ternary-Bonsai-2-27B-gguf", gb: 5.95, scores: [57, 46.1, 69.7, 96.0] },
+    { label: "Bonsai 2", repo: "prism-ml/Ternary-Bonsai-2-27B-gguf", gb: 5.95, scores: [58.3, 46.1, 69.7, 96.0] },
+    // the usual 2-bit quant of the same teacher (Unsloth's UD-IQ2_XXS), on our pods
+    { label: "Qwen3.8 27B IQ2_XXS", repo: "unsloth/Qwen3.8-27B-GGUF", gb: 7.27, scores: [19, 32.6, 54.5, 85.4] },
     { label: "gpt-oss-20b", repo: "openai/gpt-oss-20b", gb: 12.1, scores: [23, 19.1, 62.1, 89.2] },
     { label: "Qwen3.5 9B", repo: "Qwen/Qwen3.5-9B", gb: 5.7, scores: [29, 22.5, 57.1, 79.2] },
     { label: "Gemma 4 12B", repo: "google/gemma-4-12B-it-qat-q4_0-gguf", gb: 7.0, scores: [8, 10.1, 40.4, 95.2] },
   ],
-  // the teacher on the same four (SWE-bench Multilingual on the same subset: 76; 73.7 on all 300)
-  teacher: { label: "Qwen BF16", repo: "Qwen/Qwen3.8-27B", gb: 54.4, scores: [76, 64.0, 81.3, 97.4] },
+  // the teacher on the same four, its feed scores (SWE-bench Multilingual on all 300; 76 on the subset)
+  teacher: { label: "Qwen BF16", repo: "Qwen/Qwen3.8-27B", gb: 54.4, scores: [73.7, 64.0, 81.3, 97.4] },
 };
 // intelligence density on the four benchmarks every model on the board ran
 export function boardDensity(row) {

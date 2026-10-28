@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>INGOT</title>
-<meta name="description" content="Qwen3.8-27B in 5.95 GB: ternary models made by competing miners, assayed against the original.">
+<meta name="description" content="Qwen3.8-27B in 5.95 GB: Prism ML's ternary Bonsai 2, refined by competing miners and assayed against the original.">
 <link rel="icon" href="favicon.ico" sizes="32x32">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="favicon-512.png">
@@ -23,7 +23,7 @@
 <section class="hero">
   <div>
     <h1><span id="m-teacher-short">Qwen3.8-27B</span><br>in <em id="m-size">5.95 GB.</em></h1>
-    <p class="lede">A 27B model cast to ternary weights by miners competing to stay closest to the original.</p>
+    <p class="lede">Prism ML's ternary <a href="https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf" target="_blank" rel="noopener">Bonsai 2</a>, refined by miners competing to bring it closer to the original.</p>
     <div class="actions">
       <a class="btn" id="m-download" href="https://huggingface.co/dendriteholdings" target="_blank" rel="noopener">Download on Hugging Face</a>
     </div>
@@ -57,16 +57,17 @@
     <figure><figcaption><h3>Artificial Analysis Intelligence Index</h3><p>v4.3.2</p></figcaption><div class="vbars" id="index-chart"></div></figure>
     <figure><figcaption><h3>Intelligence density</h3><p>negative log of the error rate per GB · the four benchmarks below</p></figcaption><div class="vbars" id="density-chart"></div></figure>
   </div>
-  <p class="run-note quiet">Artificial Analysis has not evaluated our models or Bonsai 2, so their bars (≈) are estimates: the
-    share of the teacher's scores each keeps on GPQA Diamond, MATH-500, SWE-bench Multilingual and Terminal-Bench 2.1,
-    put on Artificial Analysis's scale with the curve that fits Qwen3.5 9B's and gpt-oss-20b's
-    <a href="https://artificialanalysis.ai/methodology/intelligence-benchmarking" target="_blank" rel="noopener">published scores</a>; Gemma 4 12B's is their estimate.</p>
+  <p class="run-note quiet wide">Artificial Analysis has not evaluated our models or Bonsai 2, so their bars (≈) are estimates: how much of
+    the teacher's score each keeps on the four benchmarks below, scaled to match Qwen3.5 9B's and gpt-oss-20b's
+    <a href="https://artificialanalysis.ai/methodology/intelligence-benchmarking" target="_blank" rel="noopener">published scores</a>.
+    Our scores come from runs with replies capped at 16k tokens, keeping Ingot-IV at ~7 GB of memory; uncapped, the models may score higher.
+    Gemma 4 12B's score is Artificial Analysis's own estimate.</p>
 </section>
 
 <section class="section" id="macbook">
   <div class="head"><span class="label"><b></b>On a MacBook</span><span class="meta">models that fit a 16 GB MacBook</span></div>
   <div class="mac-board" id="mac-board"></div>
-  <p class="run-note quiet">Our runs, the same harness and settings for every model.<br>
+  <p class="run-note quiet wide">Our runs, every model with replies capped at 16k tokens; at a 16k context Ingot-IV takes about 7 GB of memory.<br>
     Gemma 4 12B's GPQA and MATH-500 with its thinking capped at 12k tokens, its better run: uncapped, it overthinks.</p>
 </section>
 
@@ -95,7 +96,7 @@ llama-server -m Ingot-IV-27B-PTQ1_0.gguf -ngl 99 -fa on --jinja</pre>
 <section class="section" id="how">
   <div class="head"><span class="label"><b></b>How it is made</span></div>
   <div class="steps">
-    <div class="step"><i>1</i><h3>Submit</h3><p>Miners upload a ternary GGUF with the teacher's exact layout: every weight −1, 0 or +1 times a block scale, the file capped at Bonsai 2's size. The weight values are theirs.</p></div>
+    <div class="step"><i>1</i><h3>Submit</h3><p>Miners upload a ternary GGUF with the teacher's exact layout: every weight −1, 0 or +1 times a block scale, the file capped at Bonsai 2's size. The codes and scales are theirs to set.</p></div>
     <div class="step"><i>2</i><h3>Assay</h3><p>The validator reads every submission against the unquantized teacher on the same prompts: the divergence of its next-token distribution, token by token, and the distance of its hidden states, layer by layer.</p></div>
     <div class="step"><i>3</i><h3>Crown</h3><p>A submission measurably closer than the reigning king becomes king, earns the subnet's emission, and is mirrored to Hugging Face with its 1.75-bit file. <a href="dashboard.html">Watch the queue</a>.</p></div>
   </div>

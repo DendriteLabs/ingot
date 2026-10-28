@@ -557,6 +557,8 @@ button.zip:disabled { opacity: 0.6; cursor: wait; }
 .run-note a:hover { color: var(--accent-ink); }
 /* a fine-print note: its link stays in the note's grey */
 .run-note.quiet a { color: inherit; }
+/* a note under a full-width figure row spans it */
+.run-note.wide { max-width: none; }
 
 .steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .step { border: 1px solid var(--line); background: var(--panel); padding: 20px 22px; }
@@ -619,8 +621,6 @@ button.zip:disabled { opacity: 0.6; cursor: wait; }
   background: linear-gradient(90deg, color-mix(in srgb, var(--ink) 3%, transparent), color-mix(in srgb, var(--ink) var(--to), transparent));
   border: 1px solid var(--loser); border-left: 0; border-right-width: 2px; }
 .size-row.king .size-track i { --ink: var(--brass); --to: 100%; border-color: var(--accent-ink); }
-/* the king's saving, after its bar */
-.size-gain { position: absolute; top: 50%; transform: translateY(-50%); white-space: nowrap; font-family: var(--mono); font-style: normal; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent-ink); }
 /* past the MacBook line: a faint tint, the files that do not fit */
 .size-zone { position: absolute; top: 18px; bottom: 0; right: 0; background: color-mix(in srgb, var(--muted) 6%, transparent); }
 .size-row.king .size-label { color: var(--accent-ink); }
@@ -655,7 +655,6 @@ button.zip:disabled { opacity: 0.6; cursor: wait; }
 }
 @media (max-width: 600px) {
   .size-row { grid-template-columns: 110px minmax(0, 1fr) 70px; gap: 10px; }
-  .size-gain { font-size: 10px; letter-spacing: 0.04em; }
   .size-overlay { grid-template-columns: 110px minmax(0, 1fr) 70px; gap: 10px; }
   .king-cards, .foot-cols { grid-template-columns: minmax(0, 1fr); }
 }
