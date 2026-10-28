@@ -28,12 +28,14 @@ async function loadDownloads() {
   }
 }
 
-// the teacher's common files and ours; GGUF sizes from unsloth/Qwen3.8-27B-GGUF, decimal GB
+// the teacher's common files and ours; GGUF sizes from unsloth/Qwen3.8-27B-GGUF, decimal GB. Each label
+// links to its repo; the BF16 row's is the teacher's, from the state feed (null here)
+const GGUF_REPO = "unsloth/Qwen3.8-27B-GGUF";
 const SIZES = [
-  { label: "BF16", gb: 54.66, note: "the original" },
-  { label: "Q8_0", gb: 29.05, note: "8-bit" },
-  { label: "Q4_K_M", gb: 16.46, note: "the usual local pick" },
-  { label: "IQ2_XXS", gb: 7.27, note: "standard 2-bit" },
+  { label: "BF16", gb: 54.66, note: "the original", repo: null },
+  { label: "Q8_0", gb: 29.05, note: "8-bit", repo: GGUF_REPO },
+  { label: "Q4_K_M", gb: 16.46, note: "the usual local pick", repo: GGUF_REPO },
+  { label: "IQ2_XXS", gb: 7.27, note: "standard 2-bit", repo: GGUF_REPO },
 ];
 const MACBOOK_GB = 16;
 
@@ -110,17 +112,20 @@ function render() {
 
 // horizontal bars of file size, ours last, with the line a 16 GB MacBook draws
 function renderSizes(king) {
-  const rows = [...SIZES.map((r) => ({ ...r, tone: "other" })),
-    { label: king.name.replace(/-Q2$/, ""), gb: SIZES_GB[ROUND], note: "1.75 bits per weight", tone: "king" }];
+  const rows = [...SIZES.map((r) => ({ ...r, repo: r.repo ?? state.teacher, tone: "other" })),
+    { label: GENESIS.label, gb: SIZES_GB[ROUND], note: "Prism, 1.75-bit", repo: GENESIS.repo, tone: "other" },
+    { label: king.name.replace(/-Q2$/, ""), gb: SIZES_GB[ROUND], note: "1.75 bits per weight", repo: king.hf_repo, tone: "king" }];
   const top = rows[0].gb;
   const at = (gb) => `${(100 * gb) / top}%`;
   mount($("size-chart"),
     // an overlay on the same columns as the rows, so the line lands on the tracks' scale
     el("div", { class: "size-overlay" }, el("span"), el("span", { class: "size-line-wrap" },
+      el("i", { class: "size-zone", style: `left: ${at(MACBOOK_GB)}` }),
       el("i", { class: "size-line", style: `left: ${at(MACBOOK_GB)}` }, el("span", {}, "16 GB MacBook"))), el("span")),
     ...rows.map((r) => el("div", { class: `size-row ${r.tone}${r.gb > MACBOOK_GB ? " over" : ""}` },
-      el("span", { class: "size-label" }, r.label, el("small", {}, r.note)),
-      el("span", { class: "size-track" }, el("i", { style: `width: ${at(r.gb)}` })),
+      el("span", { class: "size-label" }, link(hubUrl(r.repo), r.label), el("small", {}, r.note)),
+      el("span", { class: "size-track" }, el("i", { style: `width: ${at(r.gb)}` }),
+        r.tone === "king" ? el("em", { class: "size-gain", style: `left: calc(${at(r.gb)} + 12px)` }, `${(top / r.gb).toFixed(1)}× smaller`) : null),
       el("span", { class: "size-value" }, `${r.gb.toFixed(r.gb < 10 ? 2 : 1)} GB`))));
 }
 

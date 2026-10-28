@@ -64,14 +64,14 @@
 </section>
 
 <section class="section" id="macbook">
-  <div class="head"><span class="label"><b></b>On a MacBook</span><span class="meta">models that fit a 16 GB MacBook, same harness</span></div>
+  <div class="head"><span class="label"><b></b>On a MacBook</span><span class="meta">models that fit a 16 GB MacBook</span></div>
   <div class="mac-board" id="mac-board"></div>
   <p class="run-note quiet">Our runs, the same harness and settings for every model.<br>
     Gemma 4 12B's GPQA and MATH-500 with its thinking capped at 12k tokens, its better run: uncapped, it overthinks.</p>
 </section>
 
 <section class="section" id="size">
-  <div class="head"><span class="label"><b></b>Size</span><span class="meta">the same 27B model, file sizes on Hugging Face</span></div>
+  <div class="head"><span class="label"><b></b>Size</span></div>
   <div class="sizes" id="size-chart"></div>
 </section>
 
@@ -83,7 +83,7 @@ llama-server -m Ingot-IV-27B-PTQ1_0.gguf -ngl 99 -fa on --jinja</pre>
 </section>
 
 <section class="section" id="scores">
-  <div class="head"><span class="label"><b></b>Scores</span><span class="meta">the teacher, Bonsai 2 and the king, same harness</span></div>
+  <div class="head"><span class="label"><b></b>Scores</span></div>
   <div class="benchmark-charts" id="benchmark-charts"><div class="empty">loading…</div></div>
 </section>
 
@@ -93,7 +93,7 @@ llama-server -m Ingot-IV-27B-PTQ1_0.gguf -ngl 99 -fa on --jinja</pre>
 </section>
 
 <section class="section" id="how">
-  <div class="head"><span class="label"><b></b>How it is made</span><span class="meta"><a id="link-llms" href="llms.txt">llms.txt</a> has the rules</span></div>
+  <div class="head"><span class="label"><b></b>How it is made</span></div>
   <div class="steps">
     <div class="step"><i>1</i><h3>Submit</h3><p>Miners upload a ternary GGUF with the teacher's exact layout: every weight −1, 0 or +1 times a block scale, the file capped at Bonsai 2's size. The weight values are theirs.</p></div>
     <div class="step"><i>2</i><h3>Assay</h3><p>The validator reads every submission against the unquantized teacher on the same prompts: the divergence of its next-token distribution, token by token, and the distance of its hidden states, layer by layer.</p></div>
