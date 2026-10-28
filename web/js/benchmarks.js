@@ -98,7 +98,8 @@ export const MAC_BOARD = {
   ],
   rows: [
     { label: "Ingot-IV-27B-Q2", repo: "dendriteholdings/Ingot-IV-27B-Q2", gb: 5.95, king: true, scores: [63, 46.1, 77.3, 96.6] },
-    { label: "Bonsai 2", repo: "prism-ml/Ternary-Bonsai-2-27B-gguf", gb: 5.95, scores: [57, 34.8, 71.7, 96.0] },
+    // Bonsai 2 is the genesis run (its own file, the king's protocols), as everywhere on the site; the feed's
+    { label: "Bonsai 2", repo: "prism-ml/Ternary-Bonsai-2-27B-gguf", gb: 5.95, scores: [57, 46.1, 69.7, 96.0] },
     { label: "gpt-oss-20b", repo: "openai/gpt-oss-20b", gb: 12.1, scores: [23, 19.1, 62.1, 89.2] },
     { label: "Qwen3.5 9B", repo: "Qwen/Qwen3.5-9B", gb: 5.7, scores: [29, 22.5, 57.1, 79.2] },
     { label: "Gemma 4 12B", repo: "google/gemma-4-12B-it-qat-q4_0-gguf", gb: 7.0, scores: [8, 10.1, 40.4, 95.2] },
