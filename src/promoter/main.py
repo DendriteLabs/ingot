@@ -519,6 +519,8 @@ def _gguf_card(
     )
     if ptq1:
         text += f"\nEither file runs the same way: pass `-m {ptq1}` for the 1.75 bpw one.\n"
+    if drafter := config.DRAFTERS.get(pair.family):
+        text += _drafter(gguf, *drafter)
     if pair.vision_files:
         first = pair.vision_files[0]
         vrepo, _, vrev = (pair.vision_repo or "").partition("@")
@@ -538,6 +540,22 @@ def _gguf_card(
             "```\n"
         )
     return text
+
+
+def _drafter(gguf: str, repo: str, file: str) -> str:
+    hub = f"https://huggingface.co/{repo}"
+    return (
+        "\n### Faster generation\n\n"
+        f"We trained a DFlash 2 speculative-decoding drafter for this model family, "
+        f"[{repo}]({hub}). It proposes several tokens at a time and the model verifies each one, "
+        "so it decodes about 1.8x faster in greedy single-stream chat and about 1.3-1.4x when "
+        "sampling, at the cost of about 6 GB more VRAM. The same fork runs it:\n\n"
+        "```\n"
+        f"hf download {repo} {file} --local-dir .\n"
+        f"build/bin/llama-server -m {gguf} -md {file} --spec-type draft-dflash "
+        "--spec-draft-n-max 5 -ngl 99 -fa on --jinja\n"
+        "```\n"
+    )
 
 
 def main() -> None:
