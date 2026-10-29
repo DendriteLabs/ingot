@@ -274,6 +274,7 @@ main { display: flex; flex-direction: column; gap: 64px; padding-top: 56px; padd
 }
 .benchmark-chart-head h3 { margin: 0; overflow: hidden; font: inherit; color: var(--text-2); text-overflow: ellipsis; white-space: nowrap; }
 .benchmark-kind { flex-shrink: 0; color: var(--muted); }
+.benchmark-noise { text-align: right; font-family: var(--mono); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .bench-rows { --cols: 94px minmax(0, 1fr) 86px; display: grid; gap: 6px; padding: 10px 14px; border: 1px solid var(--line); background: var(--panel); }
 .bench-row {
   display: grid; grid-template-columns: var(--cols); align-items: center; gap: 12px;

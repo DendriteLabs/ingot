@@ -2,6 +2,8 @@
 // protocol, the teacher's run, and the figures built on the scores: the Artificial Analysis estimate
 // and the intelligence density.
 
+import { el } from "./dom.js";
+
 export const BENCHMARKS = [
   ["SWE-bench Multilingual", "coding"], ["Terminal-Bench 2.1", "terminal"], ["AutomationBench", "automation"],
   ["GPQA Diamond", "science"], ["MATH-500", "math"], ["τ³-bench Banking", "tool use"], ["MMMU", "vision"],
@@ -16,6 +18,29 @@ export const complete = (r) => r.status === "complete" && typeof r.score === "nu
 
 // a round's runs: the feed's results on that round's protocol
 export const roundRuns = (results, round) => results.filter((r) => r.protocol?.id === protocolOf(round, r.benchmark));
+
+// run-to-run noise per benchmark in percent points, from /api/noise.json; {} while it is missing
+export async function loadNoise() {
+  try {
+    const res = await fetch("/api/noise.json", { cache: "no-store" });
+    return res.ok ? Object.fromEntries((await res.json()).benchmarks.map((b) => [b.benchmark, b.noise_pp])) : {};
+  } catch (err) {
+    console.warn("noise fetch failed", err);
+    return {};
+  }
+}
+
+// the line atop a benchmark card's box: the error of a score, per noise.json the larger of the run-to-run
+// noise and the binomial error 100 * sqrt(p * (1 - p) / samples), taken at genesis's run, which the
+// card's +/- figures are measured from
+export function noiseLine(noise, name, run) {
+  const p = run && complete(run) && run.samples ? run.score / 100 : null;
+  const binomial = p == null ? null : 100 * Math.sqrt((p * (1 - p)) / run.samples);
+  const errors = [noise[name], binomial].filter((v) => v != null);
+  if (!errors.length) return null;
+  return el("div", { class: "benchmark-noise", title: `larger of run-to-run noise (${noise[name]?.toFixed(2) ?? "—"}%) and sampling error at genesis's score (${binomial?.toFixed(2) ?? "—"}%)` },
+    `±${Math.max(...errors).toFixed(2)}%`);
+}
 
 export const scoreOf = (runs, model, benchmark) => {
   const run = runs.find((r) => r.benchmark === benchmark && r.model === model);

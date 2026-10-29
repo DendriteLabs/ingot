@@ -4,7 +4,7 @@
 import { el, mount, link } from "./js/dom.js";
 import { fmtRelative } from "./js/format.js";
 import { $, mountHeader, svgEl } from "./js/page.js";
-import { AA, BENCHMARKS, MAC_BOARD, SIZES_GB, TEACHER_RUN, aaEstimate, boardDensity, rankKings, roundRuns, scoreOf } from "./js/benchmarks.js";
+import { AA, BENCHMARKS, MAC_BOARD, SIZES_GB, TEACHER_RUN, aaEstimate, boardDensity, loadNoise, noiseLine, rankKings, roundRuns, scoreOf } from "./js/benchmarks.js";
 
 const ROUND = "q2";
 // the genesis run is Bonsai 2's own file; the links go to Prism's repo, not our mirror of it
@@ -15,6 +15,7 @@ const signed = (v) => `${v < 0 ? "−" : "+"}${Math.abs(v).toFixed(1)}`;
 
 let state = null;
 let runs = null;
+let noise = {};
 // all-time Hugging Face downloads per repo of the org's Ingot models, refreshed every ten minutes
 let downloads = null;
 
@@ -41,7 +42,8 @@ const MACBOOK_GB = 16;
 
 async function load() {
   try {
-    const [s, b] = await Promise.all([fetch("/api/state.json", { cache: "no-store" }), fetch("/api/benchmarks.json", { cache: "no-store" })]);
+    const [s, b, n] = await Promise.all([fetch("/api/state.json", { cache: "no-store" }), fetch("/api/benchmarks.json", { cache: "no-store" }), loadNoise()]);
+    noise = n;
     if (s.ok) state = await s.json();
     if (b.ok) runs = roundRuns((await b.json()).results ?? [], ROUND);
     render();
@@ -190,7 +192,7 @@ function renderScores(models) {
     };
     return el("article", { class: "benchmark-card" },
       el("div", { class: "benchmark-chart-head" }, el("h3", {}, name), el("span", { class: "benchmark-kind" }, kind)),
-      el("div", { class: "bench-rows" }, ...rows.map(bar)));
+      el("div", { class: "bench-rows" }, noiseLine(noise, name, runs.find((r) => r.benchmark === name && r.model === GENESIS.run)), ...rows.map(bar)));
   }));
 }
 

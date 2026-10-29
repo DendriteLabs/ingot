@@ -3,7 +3,7 @@
 import { el, mount, link } from "./js/dom.js";
 import { fmtDateTime, fmtDuration, fmtRelative, shortHotkey } from "./js/format.js";
 import { $, minerLink, mountHeader, placeTip, svgEl } from "./js/page.js";
-import { BENCHMARKS, TEACHER_RUN, complete, protocolOf, rankKings as rank, roundRuns } from "./js/benchmarks.js";
+import { BENCHMARKS, TEACHER_RUN, complete, loadNoise, noiseLine, protocolOf, rankKings as rank, roundRuns } from "./js/benchmarks.js";
 
 const POLL_MS = 5000;
 const STAGES = {
@@ -31,6 +31,7 @@ const hotkeyCell = (hotkey, cls = "hotkey") => el("td", { class: cls }, hotkey ?
 let state = null;
 let benchmarksLoading = false;
 let benchmarkDocument = null;
+let noise = {};
 // the selected round's benchmark runs (its protocol's), for the hero's best model; null until loaded
 let benchRuns = null;
 
@@ -263,7 +264,8 @@ async function loadBenchmarks() {
   benchmarksLoading = true;
   const box = $("benchmark-charts");
   try {
-    const res = await fetch("/api/benchmarks.json", { cache: "no-store" });
+    const [res, n] = await Promise.all([fetch("/api/benchmarks.json", { cache: "no-store" }), loadNoise()]);
+    noise = n;
     if (res.status === 404) {
       if (benchmarkDocument !== null) throw new Error("benchmark feed unavailable");
       $("benchmarks-meta").textContent = "awaiting results";
@@ -277,7 +279,7 @@ async function loadBenchmarks() {
     const { genesis } = ROUNDS[selectedRound];
     mount($("benchmarks-meta"), el("b", {}, link(hubUrl(state.teacher), "Qwen BF16")), ": the unquantized teacher · ",
       el("b", {}, link(hubUrl(genesis.repo), genesis.name)), `: ${genesis.about}`);
-    const fingerprint = JSON.stringify([doc, selectedRound, (state?.kings ?? []).map((k) => k.name)]);
+    const fingerprint = JSON.stringify([doc, noise, selectedRound, (state?.kings ?? []).map((k) => k.name)]);
     if (fingerprint === benchmarkDocument) {
       return;
     }
@@ -405,7 +407,7 @@ function renderBenchmarkCharts(results, benchmarks) {
     const axis = scores.length ? el("div", { class: "bench-axis" }, el("span"), el("span", {}, el("b", {}, `${floor}%`), el("b", {}, pct(hi))), el("span")) : null;
     return el("article", { class: "benchmark-card" },
       el("div", { class: "benchmark-chart-head" }, el("h3", {}, name), el("span", { class: "benchmark-kind" }, kind)),
-      el("div", { class: "bench-rows" }, ...rows.map(bar), axis));
+      el("div", { class: "bench-rows" }, noiseLine(noise, name, rows.find((row) => row.tone === "genesis")?.run), ...rows.map(bar), axis));
   }));
 }
 
