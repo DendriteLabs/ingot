@@ -50,9 +50,18 @@ async function load() {
   }
 }
 
-// the round's best model by the external benchmarks (a full suite only), else the reigning king
+const FEATURED_KING = "Ingot-IV-27B-Q2";
+
+// the featured king; else the round's best model by the external benchmarks (a full suite only), else
+// the reigning king
 function bestKing() {
   const kings = (state?.kings ?? []).filter((k) => k.quant === ROUND && k.submission_id);
+  const featured = kings.find((k) => k.name === FEATURED_KING);
+  if (featured) {
+    const row = runs ? rankKings(runs, BENCHMARKS, [featured], GENESIS.run)[0] : null;
+    const full = row?.done === BENCHMARKS.length;
+    return { king: featured, ahead: full ? row.ahead : null, benchmarked: full };
+  }
   if (runs) {
     const best = rankKings(runs, BENCHMARKS, kings, GENESIS.run).find((row) => row.done === BENCHMARKS.length);
     if (best) return { king: best.king, ahead: best.ahead, benchmarked: true };
@@ -134,22 +143,22 @@ function renderKings(best) {
   const total = downloads ? Object.values(downloads).reduce((a, b) => a + b, 0) : null;
   mount($("kings-meta"), `${kings.length} crowned · ${state.stats?.evaluated ?? state.history.length} assayed`,
     total ? ` · ${total.toLocaleString("en-US")} downloads · ` : " · ", link("dashboard.html", "dashboard →", { target: null, rel: null }));
-  // the four best by the site's own rule, the summed points over Bonsai 2 across a full suite (the
-  // hero's pick comes first); without the feed, the newest
+  // the hero's king first, badged, then the best by the site's own rule, the summed points over
+  // Bonsai 2 across a full suite; without the feed, the newest
   const scored = runs ? rankKings(runs, BENCHMARKS, kings, GENESIS.run).filter((row) => row.done === BENCHMARKS.length) : [];
-  const shown = scored.length ? scored.slice(0, 4).map((row) => row.king) : kings.slice(-4).reverse();
+  const shown = scored.length ? [best, ...scored.map((row) => row.king).filter((k) => k !== best)].slice(0, 4) : kings.slice(-4).reverse();
   mount($("king-cards"), ...shown.map((k) => {
     const aa = runs ? aaEstimate(runs, k.name) : null;
     const full = aa && scored.some((row) => row.king === k);
     const pending = aa ? "benchmarking" : "queued";
-    return el("a", { class: `king-card${k === shown[0] && scored.length ? " best" : ""}`, href: hubUrl(k.hf_repo), target: "_blank", rel: "noopener" },
+    return el("a", { class: `king-card${k === best && scored.length ? " best" : ""}`, href: hubUrl(k.hf_repo), target: "_blank", rel: "noopener" },
       el("span", { class: "kc-numeral" }, k.name.split("-")[1]),
       el("span", { class: "kc-name" }, k.name),
       el("span", { class: "kc-meta" }, `crowned ${fmtRelative(k.crowned_at)}`),
       el("span", { class: "kc-stats" },
         el("span", {}, el("b", {}, full ? `≈${Math.round(aa.aa)}` : "—"), full ? "AA index, est." : pending),
         el("span", {}, el("b", {}, downloads?.[k.hf_repo] != null ? downloads[k.hf_repo].toLocaleString("en-US") : "—"), "downloads")),
-      k === shown[0] && scored.length ? el("span", { class: "kc-badge" }, "best") : null);
+      k === best && scored.length ? el("span", { class: "kc-badge" }, "best") : null);
   }));
 }
 
