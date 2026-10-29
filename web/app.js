@@ -404,10 +404,9 @@ function renderBenchmarkCharts(results, benchmarks) {
         d == null ? null : el("span", { class: `bench-delta${d > 0 ? " up" : ""}` }, signed(d)),
         scored(row) ? pct(run.score) : pending));
     };
-    const axis = scores.length ? el("div", { class: "bench-axis" }, el("span"), el("span", {}, el("b", {}, `${floor}%`), el("b", {}, pct(hi))), el("span")) : null;
     return el("article", { class: "benchmark-card" },
       el("div", { class: "benchmark-chart-head" }, el("h3", {}, name), el("span", { class: "benchmark-kind" }, kind)),
-      el("div", { class: "bench-rows" }, noiseLine(noise, name, rows.find((row) => row.tone === "genesis")?.run), ...rows.map(bar), axis));
+      el("div", { class: "bench-rows" }, noiseLine(noise, name, rows.find((row) => row.tone === "genesis")?.run), ...rows.map(bar)));
   }));
 }
 

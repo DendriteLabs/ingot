@@ -300,9 +300,6 @@ main { display: flex; flex-direction: column; gap: 64px; padding-top: 56px; padd
 .bench-row.king.latest:not(.missing) .bench-value { color: var(--text); }
 .bench-row.missing { color: var(--muted); }
 /* the track is zoomed, so its ends are labelled: a long bar is not a high score */
-.bench-axis { display: grid; grid-template-columns: var(--cols); gap: 12px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
-.bench-axis span:nth-child(2) { display: flex; justify-content: space-between; padding-top: 3px; border-top: 1px solid var(--line); }
-.bench-axis b { font-weight: normal; }
 a.bench-row:hover .bench-label, a.bench-row:hover .bench-value { color: var(--text); }
 #fails-wrap { max-height: calc(37px + 12 * 39px + 2px); }
 table.data-table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; }
