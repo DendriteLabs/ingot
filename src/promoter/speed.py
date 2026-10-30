@@ -29,7 +29,6 @@ MAC_ROWS = (
 # (engine, mode, decode tok/s) of the MLX pack on the Mac
 MLX_ROWS = (
     ("MTPLX 2.12 (mlx 0.32) server", "plain", "55.3"),
-    ("MTPLX 2.12 (mlx 0.32) server", "speculative", "66.6"),
     ("mlx-lm 0.31 graph with MTPLX's ternary kernels, in-process", "plain", "59.9"),
 )
 MLX_VS_GGUF = (MAC_ROWS[1][1]["PQ2_0"][0], GPU_PQ2[0])
@@ -79,8 +78,7 @@ def mlx_section(gguf_repo: str) -> str:
         "\n## Speed\n\n"
         f"Decode tokens per second at batch 1 on a {MAC}, measured on Ingot king IV. "
         "Every q2 king has the same layout and size, so the numbers hold for all of them within "
-        'run-to-run noise. "Plain" is one token per forward pass; "speculative" uses MTPLX\'s '
-        "multi-token draft head (`--generation-mode mtp --depth 1`). The server numbers are 256 "
+        'run-to-run noise. "Plain" is one token per forward pass. The server numbers are 256 '
         "generated tokens on a code prompt, timed over HTTP; the in-process numbers are 128 "
         "tokens with no server.\n\n"
         "| engine | mode | decode tok/s |\n| --- | --- | --- |\n"

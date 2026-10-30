@@ -194,7 +194,6 @@ def test_the_mlx_card_and_the_link_from_the_gguf_card(spec):
     )
     assert "| 8.60 GB |" in text
     assert f"[{mlx.TEMPLATE_REPO}](https://huggingface.co/{mlx.TEMPLATE_REPO})" in text
-    assert "mlx_lm.generate --model ns/Ingot-I-27B-MLX-2bit" in text
 
     gguf = card(row, "Ingot-I-27B-Q2", q2, [], mlx_repo="ns/Ingot-I-27B-MLX-2bit")
     assert "[ns/Ingot-I-27B-MLX-2bit](https://huggingface.co/ns/Ingot-I-27B-MLX-2bit)" in gguf

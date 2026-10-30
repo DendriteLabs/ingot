@@ -382,17 +382,39 @@ def card_mlx(
     )
     if steps:
         text += _scores(steps)
+    mlx_repo = f"{gguf_repo.rsplit('/', 1)[0]}/{models.mlx_repo_name(title)}"
     text += speed.mlx_section(gguf_repo) + (
         "\n## Running it\n\n"
+        "The pack uses Prism's `prism_hadamard_qwen35` layout, which mlx-lm does not load. "
+        "[MTPLX](https://github.com/youssofal/mtplx) does, and serves it as an OpenAI-compatible "
+        "API:\n\n"
         "```\n"
-        "pip install mlx-lm\n"
-        f"mlx_lm.generate --model {gguf_repo.rsplit('/', 1)[0]}/{models.mlx_repo_name(title)}"
-        ' --prompt "Hello"\n'
+        "pip install mtplx\n"
+        f"mtplx serve --model {mlx_repo} --generation-mode ar --port 8080 --no-auth --yes\n"
         "```\n\n"
-        "The pack loads in any runtime that reads Prism's `prism_hadamard_qwen35` layout, MTPLX "
-        f"among them. The gguf twin runs in Prism's llama.cpp fork; see [its card]({gguf_hub}).\n"
+        "This repo carries no MTP draft head, so MTPLX decodes one token per step. The gguf twin "
+        f"runs in the [Dendrite llama.cpp fork]({speed.FORK}); see [its card]({gguf_hub}).\n"
     )
+    if drafter := config.MLX_DRAFTERS.get(pair.family):
+        text += _mlx_drafter(mlx_repo, drafter)
     return text
+
+
+def _mlx_drafter(mlx_repo: str, repo: str) -> str:
+    hub = f"https://huggingface.co/{repo}"
+    return (
+        "\n### Faster generation\n\n"
+        f"We trained a DFlash 2 speculative-decoding drafter for this model family, "
+        f"[{repo}]({hub}). It proposes several tokens at a time and the model verifies each one; "
+        "on the M3 Ultra above it raises greedy single-stream decode from 59 to about 73 tok/s, "
+        "and code answers reach about 90. Its repo has the runner:\n\n"
+        "```\n"
+        f"hf download {repo} --local-dir ingot-dflash2-mlx\n"
+        "pip install -r ingot-dflash2-mlx/requirements.txt\n"
+        "python ingot-dflash2-mlx/ingot_dflash_mlx.py serve --drafter ingot-dflash2-mlx "
+        f"--king {mlx_repo} --port 8080\n"
+        "```\n"
+    )
 
 
 def _mlx_link(mlx_repo: str) -> str:
