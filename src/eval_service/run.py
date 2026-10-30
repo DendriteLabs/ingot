@@ -47,15 +47,17 @@ class Duel:
 
 
 def needed(king: Distance) -> Distance:
-    """How much closer to the teacher than this king a challenger must be on each measure."""
-    return Distance(kl=config.KL_MARGIN * king.kl, dist=config.DIST_MARGIN * king.dist)
+    """How much closer on KL a challenger must be than this king, and how much further on the
+    hidden-state distance it may be (a negative lead: the slack)."""
+    return Distance(kl=config.KL_MARGIN * king.kl, dist=-config.DIST_SLACK * king.dist)
 
 
 def won(challenger: Distance, king: Distance) -> bool:
-    """The challenger must be closer to the teacher on both measures, each by its margin. A model
-    whose score is not finite diverged (inf, NaN, or it left the teacher's answer): a diverged
-    challenger loses, and a diverged king loses to any challenger that did not. NaN compares
-    False, so without this a king that diverges on some inputs could never be beaten."""
+    """The challenger must be closer to the teacher on KL by the margin, and no further on the
+    hidden-state distance than the slack. A model whose score is not finite diverged (inf, NaN, or
+    it left the teacher's answer): a diverged challenger loses, and a diverged king loses to any
+    challenger that did not. NaN compares False, so without this a king that diverges on some
+    inputs could never be beaten."""
     if not _finite(challenger):
         return False
     if not _finite(king):
@@ -206,15 +208,11 @@ class _Evaluation:
         return results
 
     def distance(self, results: list[Result], role: str) -> Distance:
-        """Token-weighted means over all samples the role read; DIVERGED for a role that left
-        the teacher's answer on any sample."""
+        """Means over the samples the role read; DIVERGED for a role that left the teacher's
+        answer on any sample."""
         if role in self.diverged:
             return DIVERGED
-        sums = [by_role[role] for by_role, _ in results if role in by_role]
-        return Distance(
-            kl=sum(s.kl for s in sums) / sum(s.predictions for s in sums),
-            dist=sum(s.layer_mean_dist for s in sums) / max(sum(s.activations for s in sums), 1),
-        )
+        return per_sample([by_role[role] for by_role, _ in results if role in by_role])
 
     def _sample(self, i: int, sample: Sample) -> Result:
         paths: dict[str, str] = {}  # role -> the hidden-state file its server wrote
@@ -230,7 +228,7 @@ class _Evaluation:
             else:
                 with timing.stages.timed("teacher"):
                     answer, paths["teacher"] = generate(
-                        self.groups["teacher"], prompt, i, sample.id
+                        self.groups["teacher"], prompt, i, sample.id, answer_budget(sample)
                     )
             with timing.stages.timed("read"):
                 self._read_along(i, sample, prompt, answer, paths)
@@ -339,14 +337,28 @@ class _Evaluation:
         return sum(group.preemptions() for group in self.groups.values())
 
 
+def per_sample(sums: Sequence[Any]) -> Distance:
+    """Each sample's per-token means, averaged over the samples: one agent step or one answer
+    weighs the same whatever its length."""
+    n = len(sums)
+    return Distance(
+        kl=sum(s.kl / max(s.predictions, 1) for s in sums) / n,
+        dist=sum(s.layer_mean_dist / max(s.activations, 1) for s in sums) / n,
+    )
+
+
+def answer_budget(sample: Sample) -> int:
+    return config.DOMAIN_MAX_TOKENS.get(sample.domain, config.MAX_TOKENS)
+
+
 def generate(
-    teacher: servers.Groups, prompt: list[int], seed: int, label: str
+    teacher: servers.Groups, prompt: list[int], seed: int, label: str, budget: int
 ) -> tuple[list[int], str]:
-    """The teacher's answer to `prompt`, at most MAX_TOKENS tokens, and the states file it wrote."""
+    """The teacher's answer to `prompt`, at most `budget` tokens, and the states file it wrote."""
     room = config.MAX_MODEL_LEN - len(prompt)
     if room < 1:
         raise ValueError(f"{label}: a {len(prompt)}-token prompt leaves no room")
-    return teacher.complete(prompt, min(config.MAX_TOKENS, room), seed)
+    return teacher.complete(prompt, min(budget, room), seed)
 
 
 class Prefetch:
@@ -363,8 +375,9 @@ class Prefetch:
 
     def _one(self, i: int) -> tuple[list[int], str]:
         _wait_for_room()
-        prompt = _render(self.tokenizer, self.samples[i].messages, self.samples[i].tools)
-        return generate(self.teacher, prompt, i, self.samples[i].id)
+        sample = self.samples[i]
+        prompt = _render(self.tokenizer, sample.messages, sample.tools)
+        return generate(self.teacher, prompt, i, sample.id, answer_budget(sample))
 
     def result(self) -> Prefetched:
         """Waits for every answer; a sample whose answer failed is left to the duel."""
@@ -395,12 +408,13 @@ def _render(
 
 
 def fits(tokenizer: Any) -> Callable[[Sample], bool]:
-    """Whether a sample's rendered prompt leaves the whole answer budget, for the draw. A byte-level
-    token covers at least one UTF-8 byte, so a prompt that short in bytes fits without rendering."""
-    limit = config.MAX_MODEL_LEN - config.MAX_TOKENS
+    """Whether a sample's rendered prompt leaves its domain's whole answer budget, for the draw. A
+    byte-level token covers at least one UTF-8 byte, so a prompt that short in bytes fits without
+    rendering."""
     frame = len(_render(tokenizer, [{"role": "user", "content": ""}]))
 
     def check(sample: Sample) -> bool:
+        limit = config.MAX_MODEL_LEN - answer_budget(sample)
         size = sum(len(m["content"].encode()) for m in sample.messages)
         if size > limit * config.MAX_BYTES_PER_TOKEN:
             return False

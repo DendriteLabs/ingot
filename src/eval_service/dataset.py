@@ -278,15 +278,17 @@ def _choose(
 
 def _cut(sample: Sample, seed: str, fits: Fits | None) -> Sample | None:
     """A trajectory (a sample with assistant turns) cut before a seeded random assistant turn after
-    the first, uniform over those whose prompt fits; any other sample as it is, if it fits."""
+    the first, uniform over those whose prompt fits (the later of two picks for LATE_CUT_SOURCES);
+    any other sample as it is, if it fits."""
     turns = [i for i, m in enumerate(sample.messages) if m["role"] == "assistant"][1:]
     if not turns:
         return sample if fits is None or fits(sample) else None
     rng = random.Random(f"{seed}/{sample.id}")
+    late = sample.source in config.LATE_CUT_SOURCES
     while turns:
         # the prompt only grows turn by turn, so a turn that does not fit rules out every later
         # one; picking again among the earlier ones keeps the pick uniform over the ones that fit
-        turn = rng.choice(turns)
+        turn = max(rng.choice(turns), rng.choice(turns)) if late else rng.choice(turns)
         cut = replace(sample, messages=sample.messages[:turn])
         if fits is None or fits(cut):
             return cut

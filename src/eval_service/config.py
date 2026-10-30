@@ -20,14 +20,15 @@ MAX_ATTEMPTS = 3
 IDLE_S = 5.0
 
 SAMPLES_PER_DOMAIN = 40
-DOMAIN_SAMPLES = {"swe": 150, "terminal": 150}
+DOMAIN_SAMPLES = {"terminal": 300, "swe": 250, "tau3": 100, "science": 100, "math": 50}
+LATE_CUT_SOURCES = frozenset({"open_swe_minisweagent", "teacher_tbpro", "teacher_swesmith"})
 # Threads a draw renders its long candidates with, and the corpus is read with at startup.
 DRAW_THREADS = 32
-# A win needs the challenger closer to the teacher than the king on both measures, each by this
-# share of the king's own score in that eval, so the bar shrinks as kings near the teacher. The two
-# move together (distance by ~0.56% per 1% of KL across the duels so far), hence their ratio.
+# A win needs the challenger closer to the teacher on KL by this share of the king's own KL in that
+# eval, so the bar shrinks as kings near the teacher. The hidden-state distance only guards: the
+# challenger may not be further from the teacher than the king.
 KL_MARGIN = 0.015  # of the king's mean KL(teacher ‖ model) per answer token
-DIST_MARGIN = 0.0084  # of the king's mean |h - h_teacher| / |h_teacher| over LAYERS
+DIST_SLACK = 0.0  # of the king's mean |h - h_teacher| / |h_teacher| over LAYERS
 
 # One vLLM server per GPU. The comparison math runs on the king's and the challenger's GPUs, whose
 # servers leave room for it (an lm_head copy and a few GiB of work space).
@@ -39,6 +40,7 @@ SERVER_START_S = 3600
 LAYERS = tuple(range(8, 65, 8))
 
 MAX_TOKENS = 4096
+DOMAIN_MAX_TOKENS = {"science": 12288, "math": 8192}
 # prompt and answer together; the draw passes over prompts that leave less than MAX_TOKENS. At
 # 65536 a teacher GPU's KV cache held 87k tokens, one or two agent prompts: 5 requests in flight
 # and a 70-minute duel (eval 158). 32k of prompt keeps most of an agent run's depth.

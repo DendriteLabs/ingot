@@ -202,3 +202,29 @@ def test_trajectories_are_cut_before_a_seeded_turn_that_fits():
     assert _cut(trajectory, "7", short) == cuts["7"]
     prompt = Sample("p", [{"role": "user", "content": "q"}])
     assert _cut(prompt, "7", short) == prompt and _cut(prompt, "7", lambda s: False) is None
+
+
+def test_on_policy_sources_are_cut_later(monkeypatch):
+    monkeypatch.setattr(config, "LATE_CUT_SOURCES", frozenset({"own"}))
+    turns = [
+        m
+        for i in range(30)
+        for m in ({"role": "assistant", "content": f"a{i}"}, {"role": "tool", "content": f"o{i}"})
+    ]
+    messages = [{"role": "user", "content": "task"}, *turns]
+    uniform = Sample("t", messages, source="other")
+    late = Sample("t", messages, source="own")
+    fits = lambda s: len(s.messages) <= 41  # noqa: E731
+
+    def depth(sample: Sample, seed: str) -> int:
+        cut = _cut(sample, seed, fits)
+        assert cut is not None
+        return len(cut.messages)
+
+    seeds = [str(i) for i in range(300)]
+    mean = {
+        kind: sum(depth(s, seed) for seed in seeds) / 300
+        for kind, s in (("uniform", uniform), ("late", late))
+    }
+    assert mean["late"] > mean["uniform"] + 5
+    assert all(depth(late, seed) <= 41 for seed in seeds)

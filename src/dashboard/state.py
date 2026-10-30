@@ -44,8 +44,8 @@ def build(conn: db.Conn, *, s: Settings, spec: ChainSpec, now: datetime | None =
             if s.king_hf_namespace
             else None,
         },
-        # shares of the king's scores the next eval needs; each eval row keeps the leads it needed
-        "margins": {"kl": eval_config.KL_MARGIN, "dist": eval_config.DIST_MARGIN},
+        # shares of the king's scores the next eval needs (dist: the loss allowed, 0 or negative)
+        "margins": {"kl": eval_config.KL_MARGIN, "dist": 0.0 - eval_config.DIST_SLACK},
         "king": kings[-1] if kings else None,
         "kings": kings,
         "stats": _stats(conn),

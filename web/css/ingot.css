@@ -350,10 +350,9 @@ table.reign-table th:last-child, table.reign-table td:last-child { padding-right
 .q-status.working::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 7px; background: var(--accent); vertical-align: 1px; }
 .q-table tr.working td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 
-/* history */
-.margin-pct.ok { color: var(--accent-ink); font-weight: 600; }
-.margin-pct.bad { color: var(--text-2); }
-.margin-pct.far { color: var(--muted); }
+/* history: leads read like the "vs king" cell; a crowned row's are brass and bold */
+.margin-pct { color: var(--text-2); }
+.margin-pct.crowned { color: var(--accent-ink); font-weight: 600; }
 .verdict-badge {
   display: inline-block; min-width: 76px; padding: 2px 8px; line-height: 16px; text-align: center;
   font-size: 12px; text-transform: uppercase; letter-spacing: 0.12em;

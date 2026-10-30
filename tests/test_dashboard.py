@@ -83,10 +83,10 @@ def test_state_after_a_coronation(conn, s, spec):
         ("hk-win", True, "GENESIS", 0.1),
     ]
     assert all(
-        e["dist_margin"] == pytest.approx(eval_config.DIST_MARGIN * e["dist_king"])
+        e["dist_margin"] == pytest.approx(-eval_config.DIST_SLACK * e["dist_king"])
         for e in doc["history"]
     )
-    assert doc["margins"] == {"kl": eval_config.KL_MARGIN, "dist": eval_config.DIST_MARGIN}
+    assert doc["margins"] == {"kl": eval_config.KL_MARGIN, "dist": -eval_config.DIST_SLACK}
     assert [(e["uid"], e["king"], e["score_challenger"]) for e in doc["losers"]] == [
         (8, "Ingot-I-27B-FP8", 0.9)
     ]

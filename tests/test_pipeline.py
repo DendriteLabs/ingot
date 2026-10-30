@@ -54,7 +54,7 @@ WORKER = "test"
 def rules(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(eval_config, "SAMPLES_PER_DOMAIN", 4)
     monkeypatch.setattr(eval_config, "KL_MARGIN", 0.05)
-    monkeypatch.setattr(eval_config, "DIST_MARGIN", 0.05)
+    monkeypatch.setattr(eval_config, "DIST_SLACK", 0.05)
     monkeypatch.setattr(validation_config, "MAX_ATTEMPTS", 2)
     # an eval claimed ahead by one test must not reach the next
     monkeypatch.setattr(eval_service, "_pending", None)
