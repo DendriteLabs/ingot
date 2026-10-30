@@ -125,3 +125,69 @@ def test_mini_swe_rows_lose_reasoning_and_get_object_arguments() -> None:
     assert corpus_row("swe", "d", "k", "python", out[:2], tools) is None, (
         "one assistant turn leaves nothing to cut"
     )
+
+
+def test_atif_of_this_harness_is_not_wrapped_twice() -> None:
+    task = TASK_PREFIX + "fix it" + TASK_SUFFIX
+    result = json.dumps({"returncode": 0, "output": "ok"}, indent=2)
+    steps = [
+        {"source": "system", "message": SYSTEM["content"]},
+        {"source": "user", "message": task},
+        {
+            "source": "agent",
+            "message": "looking",
+            "tool_calls": [{"function_name": "bash", "arguments": {"command": "ls"}}],
+            "observation": {"results": [{"content": result}]},
+        },
+        {
+            "source": "agent",
+            "message": "done",
+            "tool_calls": [{"function_name": "bash", "arguments": {"command": "true"}}],
+        },
+    ]
+    messages = from_atif(steps)
+    assert messages[1]["content"] == task
+    assert messages[3] == {"role": "tool", "content": result}
+
+
+def test_atif_of_this_harness_keeps_one_result_per_call() -> None:
+    task = TASK_PREFIX + "fix it" + TASK_SUFFIX
+    a, b = (json.dumps({"returncode": 0, "output": o}, indent=2) for o in ("ok", "/app"))
+    steps = [
+        {"source": "user", "message": task},
+        {
+            "source": "agent",
+            "message": "two at once",
+            "tool_calls": [
+                {"function_name": "bash", "arguments": {"command": "ls"}},
+                {"function_name": "bash", "arguments": {"command": "pwd"}},
+            ],
+            "observation": {"results": [{"content": a}, {"content": b}]},
+        },
+        {
+            "source": "agent",
+            "message": "done",
+            "tool_calls": [{"function_name": "bash", "arguments": {"command": "true"}}],
+        },
+    ]
+    messages = from_atif(steps)
+    assert [m["content"] for m in messages if m["role"] == "tool"][:2] == [a, b]
+
+
+def test_a_tool_result_with_a_harness_notice_appended_stays_whole() -> None:
+    result = json.dumps({"returncode": 0, "output": "ok"}, indent=2) + "\nRespond more concisely."
+    steps = [
+        {"source": "user", "message": TASK_PREFIX + "fix it" + TASK_SUFFIX},
+        {
+            "source": "agent",
+            "message": "",
+            "tool_calls": [{"function_name": "bash", "arguments": {"command": "ls"}}],
+            "observation": {"results": [{"content": result}]},
+        },
+        {
+            "source": "agent",
+            "message": "done",
+            "tool_calls": [{"function_name": "bash", "arguments": {"command": "true"}}],
+        },
+    ]
+    assert [m["content"] for m in from_atif(steps) if m["role"] == "tool"][0] == result

@@ -139,7 +139,9 @@ def from_atif(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
     mini-swe-agent: the first user step is the task, each agent step's tool calls become bash
     calls (file tools as the bash a person would have typed), its observation their result."""
     task = next(s["message"] for s in steps if s.get("source") == "user")
-    out: list[dict[str, Any]] = [SYSTEM, task_message(task)]
+    # a run of this harness already carries the rendered task and tool results
+    user = {"role": "user", "content": task} if task.startswith(TASK_PREFIX) else task_message(task)
+    out: list[dict[str, Any]] = [SYSTEM, user]
     for s in steps:
         if s.get("source") != "agent":
             continue
@@ -156,9 +158,16 @@ def from_atif(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "tool_calls": [bash_call(_atif_command(c)) for c in calls],
             }
         )
-        observation = _observation(s)
+        parts = _observation_parts(s)
+        if any(_is_tool_result(p) for p in parts):  # this harness: one result per call
+            if len(parts) > len(calls):
+                parts = parts[: len(calls) - 1] + ["\n".join(parts[len(calls) - 1 :])]
+            parts += [""] * (len(calls) - len(parts))
+            out += [_tool_message(p) for p in parts]
+            continue
+        observation = "\n".join(parts)
         for _ in calls:
-            out.append(tool_result(observation))
+            out.append(_tool_message(observation))
             observation = ""  # one observation per step; later calls of the step show nothing
     return out
 
@@ -188,14 +197,35 @@ def _atif_command(call: dict[str, Any]) -> str:
     return f"# {name} {json.dumps(args, ensure_ascii=False)[:400]}"
 
 
-def _observation(step: dict[str, Any]) -> str:
+def _is_tool_result(text: str) -> bool:
+    """A tool result as this harness writes it, with or without a notice appended after the JSON
+    (the output-limit and step-limit reminders)."""
+    try:
+        parsed, _ = json.JSONDecoder().raw_decode(text.lstrip())
+    except (ValueError, TypeError):
+        return False
+    return (
+        isinstance(parsed, dict)
+        and "returncode" in parsed
+        and bool({"output", "output_head"} & set(parsed))
+    )
+
+
+def _tool_message(observation: str) -> dict[str, str]:
+    """The observation as a tool message; one that is a tool result already stays as it is."""
+    if _is_tool_result(observation):
+        return {"role": "tool", "content": observation}
+    return tool_result(observation)
+
+
+def _observation_parts(step: dict[str, Any]) -> list[str]:
     obs = step.get("observation")
     parts = (
         (obs.get("results") or obs.get("outputs") or [obs])
         if isinstance(obs, dict)
         else (obs if isinstance(obs, list) else [obs])
     )
-    return "\n".join(str(p.get("content") if isinstance(p, dict) else p) for p in parts if p)
+    return [str(p.get("content") if isinstance(p, dict) else p) for p in parts if p]
 
 
 def corpus_row(
