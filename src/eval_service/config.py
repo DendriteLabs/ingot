@@ -21,7 +21,7 @@ IDLE_S = 5.0
 
 SAMPLES_PER_DOMAIN = 40
 DOMAIN_SAMPLES = {"terminal": 300, "swe": 250, "tau3": 100, "science": 100, "math": 50}
-LATE_CUT_SOURCES = frozenset({"open_swe_minisweagent", "teacher_tbpro", "teacher_swesmith"})
+LATE_CUT_SOURCES = frozenset({"open_swe_minisweagent", "tbpro_qwen38"})
 # Threads a draw renders its long candidates with, and the corpus is read with at startup.
 DRAW_THREADS = 32
 # A win needs the challenger closer to the teacher on KL by this share of the king's own KL in that
