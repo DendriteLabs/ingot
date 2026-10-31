@@ -261,7 +261,7 @@ class LlamaServer:
                 "-c",
                 str(config.MAX_MODEL_LEN),
                 "-b",
-                str(config.LLAMA_BATCH),
+                str(settings().llama_batch or config.LLAMA_BATCH),
             ],
             env={**os.environ, "CUDA_VISIBLE_DEVICES": str(gpu)},
             stdin=subprocess.PIPE,
@@ -347,7 +347,9 @@ class LlamaGroup:
     def __init__(self, model_dir: Path, gpus: Sequence[int], role: str = "model") -> None:
         self.model_dir, self.role = model_dir, role
         self.servers = [
-            LlamaServer(model_dir, gpu, k) for gpu in gpus for k in range(config.LLAMA_PER_GPU)
+            LlamaServer(model_dir, gpu, k)
+            for gpu in gpus
+            for k in range(settings().llama_per_gpu or config.LLAMA_PER_GPU)
         ]
         self.waiting = [0] * len(self.servers)
         self.cv = threading.Condition()

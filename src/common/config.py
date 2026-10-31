@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     teacher_gpus: str = ""
     king_gpus: str = "0,1,2,3"
     challenger_gpus: str = "4,5,6,7"
+    # overrides of eval_service.config's LLAMA_BATCH and LLAMA_PER_GPU, for tuning a box
+    llama_batch: int | None = None
+    llama_per_gpu: int | None = None
 
     @property
     def database_url(self) -> str:

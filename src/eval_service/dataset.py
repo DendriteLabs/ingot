@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import bisect
+import functools
 import hashlib
 import heapq
 import json
@@ -40,6 +41,14 @@ class Sample:
     source: str = ""
     language: str = ""
     tools: list[dict[str, Any]] | None = None  # an agent conversation's tool schemas
+
+
+@dataclass(frozen=True)
+class _Candidate:
+    """A sample the draw may take, read from the corpus only once it is looked at."""
+
+    id: str
+    load: Callable[[], Sample]
 
 
 @dataclass(frozen=True)
@@ -226,7 +235,7 @@ def _draw_index(
 ) -> list[Sample]:
     # Keeping the lowest seeded hashes makes the result independent of shard and row order.
     # Each key's rows are ranked in file order, as reading the files ranked them.
-    by_domain: dict[str, dict[str, list[Sample]]] = defaultdict(dict)
+    by_domain: dict[str, dict[str, list[_Candidate]]] = defaultdict(dict)
     for (domain, language), (ids, serials, sources) in index.rows.items():
         keep = config.DOMAIN_SAMPLES.get(domain, samples_per_domain) * (OVERDRAW if fits else 1)
         reservoir: list[tuple[int, str, int, str]] = []
@@ -237,43 +246,79 @@ def _draw_index(
             elif rank < -reservoir[0][0]:
                 heapq.heapreplace(reservoir, (-rank, sample_id, serial, source))
         by_domain[domain][language] = [
-            Sample(
-                id=sample_id, domain=domain, source=source, language=language, **index.chat(serial)
+            _Candidate(
+                sample_id,
+                functools.partial(_from_index, index, sample_id, serial, domain, source, language),
             )
             for _, sample_id, serial, source in reservoir
         ]
     return _choose(by_domain, seed, samples_per_domain, fits)
 
 
+def _from_index(
+    index: ParquetIndex, sample_id: str, serial: int, domain: str, source: str, language: str
+) -> Sample:
+    return Sample(
+        id=sample_id, domain=domain, source=source, language=language, **index.chat(serial)
+    )
+
+
 def _choose(
-    tree: dict[str, dict[str, list[Sample]]],
+    tree: dict[str, dict[str, list[_Candidate]]] | dict[str, dict[str, list[Sample]]],
     seed: str,
     samples_per_domain: int,
     fits: Fits | None,
 ) -> list[Sample]:
     """`samples_per_domain` from each domain (DOMAIN_SAMPLES from those it names), spread evenly
     over its languages, each language's samples in seeded rank order and trajectories cut (_cut);
-    what `fits` rejects is passed over, within OVERDRAW times the draw."""
+    what `fits` rejects is passed over, within OVERDRAW times the draw.
+
+    Candidates are read and cut in rank order only as far as a language's share needs. A language
+    not yet run out counts as all its candidates fitting; one that runs out short of its share
+    counts as what it has, and the shares are split again. The shares come out as if every
+    candidate had been cut: a language's cap only matters where its share would exceed it."""
     chosen: list[Sample] = []
     # fits renders the long candidates through the tokenizer, which lets other threads run
     pool = ThreadPoolExecutor(config.DRAW_THREADS)
     for domain, languages in tree.items():
         quota = config.DOMAIN_SAMPLES.get(domain, samples_per_domain)
         keep = quota * OVERDRAW
-        ranked: dict[str, list[Sample]] = {}
-        for language, items in languages.items():
-            ordered = sorted(items, key=lambda sample: (_rank(seed, sample.id), sample.id))[:keep]
-            cuts = pool.map(lambda sample: _cut(sample, seed, fits), ordered)
-            ranked[language] = [sample for sample in cuts if sample is not None]
-        counts = _equal_shares(
-            {language: len(items) for language, items in ranked.items()},
-            quota,
-            f"{seed}/{domain}",
-        )
+        ordered = {
+            language: sorted(items, key=lambda c: (_rank(seed, c.id), c.id))[:keep]
+            for language, items in languages.items()
+        }
+        fitting: dict[str, list[Sample]] = {language: [] for language in ordered}
+        tried = dict.fromkeys(ordered, 0)
+        while True:
+            sizes = {
+                language: len(fitting[language]) if tried[language] == len(items) else len(items)
+                for language, items in ordered.items()
+            }
+            counts = _equal_shares(sizes, quota, f"{seed}/{domain}")
+            while batches := {
+                language: ordered[language][tried[language] : tried[language] + missing]
+                for language, count in counts.items()
+                if (missing := count - len(fitting[language])) > 0
+                and tried[language] < len(ordered[language])
+            }:
+                for language, batch in batches.items():
+                    tried[language] += len(batch)
+                cuts = {
+                    language: pool.map(lambda c: _cut(_load(c), seed, fits), batch)
+                    for language, batch in batches.items()
+                }
+                for language, done in cuts.items():
+                    fitting[language] += [sample for sample in done if sample is not None]
+            if all(len(fitting[language]) >= count for language, count in counts.items()):
+                break
         for language, count in counts.items():
-            chosen.extend(ranked[language][:count])
+            chosen.extend(fitting[language][:count])
     pool.shutdown()
     return sorted(chosen, key=lambda sample: sample.id)
+
+
+def _load(item: _Candidate | Sample) -> Sample:
+    return item.load() if isinstance(item, _Candidate) else item
 
 
 def _cut(sample: Sample, seed: str, fits: Fits | None) -> Sample | None:

@@ -5,6 +5,7 @@ Summed per sample; the caller averages."""
 from __future__ import annotations
 
 import fcntl
+import functools
 import json
 import re
 from dataclasses import dataclass, field
@@ -58,25 +59,12 @@ class GgufHead:
     here on the fly."""
 
     def __init__(self, model_dir: Path, device: str) -> None:
-        from common.gguf import read_header
-        from common.gguf.dequant import hadamard, rotation, tensor
-
-        (path,) = model_dir.glob("*.gguf")
-        g = read_header(path)
-        if "output.weight" not in g.tensors:
-            raise ValueError(f"{path.name}: no output.weight (a tied head is not supported)")
-        arch = g.kv["general.architecture"].value
-        self.eps = float(g.kv[f"{arch}.attention.layer_norm_rms_epsilon"].value)
-        self.norm = torch.from_numpy(tensor(path, g, "output_norm.weight")).to(device)
-        self.head = torch.from_numpy(tensor(path, g, "output.weight")).to(device)
-        folded = rotation(g, "output.weight")
+        eps, norm, head, rot = _gguf_head(model_dir)
+        self.eps = eps
+        self.norm, self.head = norm.to(device), head.to(device)
         self.rot: tuple[torch.Tensor, torch.Tensor] | None = None
-        if folded:
-            block, signs = folded
-            self.rot = (
-                torch.from_numpy(hadamard(block)).to(device),
-                torch.from_numpy(signs).to(device),
-            )
+        if rot is not None:
+            self.rot = (rot[0].to(device), rot[1].to(device))
 
     def logprobs(self, h: torch.Tensor) -> torch.Tensor:
         h = h.float()
@@ -90,6 +78,31 @@ class GgufHead:
         with _no_tf32():
             logits = torch.mm(h, self.head.T)
         return torch.log_softmax(logits, -1)
+
+
+# The king's model usually faces several challengers in a row: its head is dequantized once, on the
+# CPU, and copied to each comparison GPU from there.
+@functools.lru_cache(maxsize=3)
+def _gguf_head(
+    model_dir: Path,
+) -> tuple[float, torch.Tensor, torch.Tensor, tuple[torch.Tensor, torch.Tensor] | None]:
+    from common.gguf import read_header
+    from common.gguf.dequant import hadamard, rotation, tensor
+
+    (path,) = model_dir.glob("*.gguf")
+    g = read_header(path)
+    if "output.weight" not in g.tensors:
+        raise ValueError(f"{path.name}: no output.weight (a tied head is not supported)")
+    arch = g.kv["general.architecture"].value
+    eps = float(g.kv[f"{arch}.attention.layer_norm_rms_epsilon"].value)
+    norm = torch.from_numpy(tensor(path, g, "output_norm.weight"))
+    head = torch.from_numpy(tensor(path, g, "output.weight"))
+    folded = rotation(g, "output.weight")
+    rot = None
+    if folded:
+        block, signs = folded
+        rot = (torch.from_numpy(hadamard(block)), torch.from_numpy(signs))
+    return eps, norm, head, rot
 
 
 class _no_tf32:
@@ -113,17 +126,23 @@ def heads(
 ) -> dict[str, dict[str, FinalHead | GgufHead]]:
     """Per device, role → final head. A model with the teacher's norm and lm_head shares the
     teacher's copy, which leaves the comparison GPU more room; a gguf model has its own."""
-    teacher = FinalHead(models["teacher"], "cpu")
+    teacher = _final_head(models["teacher"], "cpu")
     shared = {
         role: role == "teacher" or (not any(d.glob("*.gguf")) and teacher.same(FinalHead(d, "cpu")))
         for role, d in models.items()
     }
     out: dict[str, dict[str, FinalHead | GgufHead]] = {}
     for dev in devices:
-        on_dev = FinalHead(models["teacher"], dev)
+        on_dev = _final_head(models["teacher"], dev)
         out[dev] = {role: on_dev if shared[role] else head(d, dev) for role, d in models.items()}
         out[dev]["teacher_rerun"] = on_dev
     return out
+
+
+@functools.lru_cache(maxsize=16)
+def _final_head(model_dir: Path, device: str) -> FinalHead:
+    """The teacher's head, the same for every eval: loaded once per device."""
+    return FinalHead(model_dir, device)
 
 
 def load_states(path: str, read: list[int], first: int) -> torch.Tensor:
