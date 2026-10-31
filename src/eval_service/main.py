@@ -114,7 +114,7 @@ def run_once(
             challenger_dir,
             king_dir,
             drawn,
-            on_progress=_progress(link, eval_id),
+            on_progress=_progress(link, eval_id, worker),
             prefetched=prefetched,
             on_teacher_drained=lambda: _claim_ahead(
                 worker, data, fits, teacher_dir, s, prefetcher, fetch
@@ -233,6 +233,9 @@ def _claim_ahead(
         conn = db.connect(s.database_url)
         row = None
         try:
+            # a duel outlasts WORKER_STALE_S: other services' heartbeats mark this worker OFFLINE,
+            # and claim takes nothing for a worker that is not ACTIVE
+            db.heartbeat(conn, worker, queued=states.UNIQUE)
             row = db.claim(
                 conn,
                 worker=worker,
@@ -242,6 +245,7 @@ def _claim_ahead(
                 unless=_CROWNING,
             )
             if row is None:
+                log.info("nothing to claim ahead")
                 return
             drawn = data.draw(_seed(row), config.SAMPLES_PER_DOMAIN, fits)
             _pending = _Pending(row, drawn, prefetcher(teacher_dir, drawn))
@@ -273,13 +277,16 @@ def _claim_ahead(
     _claiming.start()
 
 
-def _progress(link: db.Link, eval_id: int) -> run.Progress:
-    """Writes samples_done for the dashboard; the scorer calls it from its worker threads."""
+def _progress(link: db.Link, eval_id: int, worker: str) -> run.Progress:
+    """Writes samples_done for the dashboard and touches the worker row, which a duel longer than
+    WORKER_STALE_S would otherwise leave OFFLINE; the scorer calls it from its worker threads."""
     lock = threading.Lock()
 
     def report(done: int) -> None:
         with lock:
-            link.conn().execute("UPDATE evals SET samples_done = %s WHERE id = %s", (done, eval_id))
+            conn = link.conn()
+            conn.execute("UPDATE evals SET samples_done = %s WHERE id = %s", (done, eval_id))
+            db.heartbeat(conn, worker, queued=states.UNIQUE)
 
     return report
 
