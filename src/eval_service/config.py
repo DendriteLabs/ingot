@@ -31,9 +31,10 @@ KL_MARGIN = 0.015  # of the king's mean KL(teacher ‖ model) per answer token
 DIST_SLACK = 0.0  # of the king's mean |h - h_teacher| / |h_teacher| over LAYERS
 
 # One vLLM server per GPU. The comparison math runs on the king's and the challenger's GPUs, whose
-# servers leave room for it (an lm_head copy and a few GiB of work space). The teacher's GPUs hold
-# nothing else: what its weights leave is KV cache, and every request books its full length there.
-MEMORY_SHARE = {"teacher": 0.95, "king": 0.80, "challenger": 0.80}
+# servers leave room for it (an lm_head copy and a few GiB of work space). The teacher's share
+# leaves room for vLLM's start-up peak above it and the eval service's own CUDA context on GPU 0:
+# at 0.95 a teacher server restarted there ran out of memory on every start.
+MEMORY_SHARE = {"teacher": 0.90, "king": 0.80, "challenger": 0.80}
 BASE_PORT = 9100
 SERVER_START_S = 3600
 # Hidden states are compared at every 8th layer; the last one also gives the next-token
