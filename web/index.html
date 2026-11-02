@@ -48,44 +48,32 @@
   <div class="stat"><b id="s-size">5.95 GB</b><span>one file, 1.75 bits per weight</span></div>
   <div class="stat"><b id="s-index">—</b><span>AA Intelligence Index, estimated</span></div>
   <div class="stat"><b id="s-ahead">—</b><span>benchmarks at or above Bonsai 2</span></div>
-  <div class="stat"><b id="s-density">—</b><span>intelligence density, per GB</span></div>
 </section>
 
 <section class="section" id="benchmarks">
   <div class="head"><span class="label"><b></b>Benchmarks</span></div>
   <div class="figures" id="panel-figures">
     <figure><figcaption><h3>Artificial Analysis Intelligence Index</h3><p>v4.3.2</p></figcaption><div class="vbars" id="index-chart"></div></figure>
-    <figure><figcaption><h3>Intelligence density</h3><p>negative log of the error rate per GB · the four benchmarks below</p></figcaption><div class="vbars" id="density-chart"></div></figure>
+    <figure><figcaption><h3>Size</h3><p>the file you download, in GB · the line a 16 GB MacBook draws</p></figcaption><div class="sizes" id="size-chart"></div></figure>
   </div>
   <p class="run-note quiet wide">Artificial Analysis has not evaluated our models or Bonsai 2, so their bars (≈) are estimates: how much of
-    the teacher's score each keeps on the four benchmarks below, scaled to match Qwen3.5 9B's and gpt-oss-20b's
-    <a href="https://artificialanalysis.ai/methodology/intelligence-benchmarking" target="_blank" rel="noopener">published scores</a>.
-    Our scores come from runs with replies capped at 16k tokens, keeping Ingot-IV at ~7 GB of memory; uncapped, the models may score higher.
+    the teacher's score each keeps on SWE-bench Multilingual, Terminal-Bench, GPQA and MATH-500 in the scores below, scaled to match
+    Qwen3.5 9B's and gpt-oss-20b's <a href="https://artificialanalysis.ai/methodology/intelligence-benchmarking" target="_blank" rel="noopener">published scores</a>.
     Gemma 4 12B's score is Artificial Analysis's own estimate.</p>
 </section>
 
-<section class="section" id="macbook">
-  <div class="head"><span class="label"><b></b>On a MacBook</span><span class="meta">models that fit a 16 GB MacBook</span></div>
-  <div class="mac-board" id="mac-board"></div>
-  <p class="run-note quiet wide">Our runs, every model with replies capped at 16k tokens; at a 16k context Ingot-IV takes about 7 GB of memory.<br>
-    Gemma 4 12B's GPQA and MATH-500 with its thinking capped at 12k tokens, its better run: uncapped, it overthinks.</p>
+<section class="section" id="scores">
+  <div class="head"><span class="label"><b></b>Scores</span></div>
+  <div class="benchmark-charts" id="benchmark-charts"><div class="empty">loading…</div></div>
+  <div id="scores-protocol"></div>
 </section>
 
-<section class="section" id="size">
-  <div class="head"><span class="label"><b></b>Size</span></div>
-  <div class="sizes" id="size-chart"></div>
-</section>
 
 <section class="section" id="run">
   <div class="head"><span class="label"><b></b>Run it</span><span class="meta" id="run-meta">5.95 GB · one file</span></div>
   <pre class="cmd" id="run-cmd">hf download dendriteholdings/Ingot-IV-27B-Q2 Ingot-IV-27B-PTQ1_0.gguf --local-dir .
 llama-server -m Ingot-IV-27B-PTQ1_0.gguf -ngl 99 -fa on --jinja</pre>
   <p class="run-note"><code>llama-server</code> from <a href="https://github.com/DendriteLabs/llama.cpp/tree/dendrite" target="_blank" rel="noopener">our llama.cpp fork</a>.</p>
-</section>
-
-<section class="section" id="scores">
-  <div class="head"><span class="label"><b></b>Scores</span></div>
-  <div class="benchmark-charts" id="benchmark-charts"><div class="empty">loading…</div></div>
 </section>
 
 <section class="section" id="kings">

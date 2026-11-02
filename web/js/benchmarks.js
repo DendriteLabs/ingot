@@ -1,6 +1,5 @@
 // The external benchmark feed (/api/benchmarks.json) as both pages read it: the suite, each round's
-// protocol, the teacher's run, and the figures built on the scores: the Artificial Analysis estimate
-// and the intelligence density.
+// protocol, the teacher's run, and the figure built on the scores: the Artificial Analysis estimate.
 
 import { el } from "./dom.js";
 
@@ -8,16 +7,68 @@ export const BENCHMARKS = [
   ["SWE-bench Multilingual", "coding"], ["Terminal-Bench 2.1", "terminal"], ["AutomationBench", "automation"],
   ["GPQA Diamond", "science"], ["MATH-500", "math"], ["τ³-bench Banking", "tool use"], ["MMMU", "vision"],
 ];
-export const PROTOCOL = "sampled-16k-150-v1";
-// The 2-bit round's Terminal-Bench is on v2 (agent budget x24, verifier x2.0) so a task ends at the
-// 150-step limit, not on the clock; the closed 8-bit round keeps its v1 runs
-const PROTOCOLS = { q2: { "Terminal-Bench 2.1": "sampled-16k-150-v2" } };
-export const protocolOf = (round, benchmark) => PROTOCOLS[round]?.[benchmark] ?? PROTOCOL;
-export const TEACHER_RUN = "Qwen3.8-27B-BF16";
+// each round's protocol, teacher and genesis runs, and suite; the 2-bit round's from King XVII on
+export const ROUND_BENCH = {
+  q2: {
+    protocol: "t1-minp05-32k-150", teacher: "Qwen3.8-27B-BF16-t1minp05-32k", genesis: "Ingot-genesis-27B-Q2-t1minp05-32k",
+    topK: 20,
+    benchmarks: [["Terminal-Bench 2.1", "terminal"], ["SWE-bench Multilingual", "coding"], ["GPQA Diamond", "science"],
+      ["τ³-bench Banking", "tool use"], ["MATH-500", "math"]],
+  },
+  fp8: { protocol: "sampled-16k-150", ids: ["sampled-16k-150-v1"], teacher: "Qwen3.8-27B-BF16", genesis: "Ingot-genesis-27B-FP8", benchmarks: BENCHMARKS },
+};
 export const complete = (r) => r.status === "complete" && typeof r.score === "number" && Number.isFinite(r.score);
 
-// a round's runs: the feed's results on that round's protocol
-export const roundRuns = (results, round) => results.filter((r) => r.protocol?.id === protocolOf(round, r.benchmark));
+// a round's runs: the feed's results on that round's protocol, a stopped run left out
+export function roundRuns(results, round) {
+  const { protocol, ids } = ROUND_BENCH[round];
+  const ours = (id) => (ids ? ids.includes(id) : id?.startsWith(`${protocol}-`));
+  return results.filter((r) => ours(r.protocol?.id) && r.status !== "stopped");
+}
+
+// a king's numeral as a number (Ingot-XVII-27B-Q2: 17), to order kings by
+export function kingNumber(name) {
+  const values = { I: 1, V: 5, X: 10, L: 50, C: 100 };
+  const digits = [...(name.split("-")[1] ?? "")].map((c) => values[c] ?? 0);
+  return digits.reduce((total, v, i) => total + (v < (digits[i + 1] ?? 0) ? -v : v), 0);
+}
+
+// a benchmark's models as columns from a floor at least 25 points under the lowest score
+export function benchColumns(cols, genesis) {
+  const scores = cols.map((c) => c.score).filter((v) => v != null);
+  const hi = Math.max(...scores, 1);
+  const lo = Math.min(...scores, hi);
+  const floor = Math.max(0, Math.floor(lo - Math.max(25, hi - lo)));
+  const y = (score) => (100 * (score - floor)) / (hi - floor);
+  const signed = (v) => `${v < 0 ? "−" : "+"}${Math.abs(v).toFixed(1)}`;
+  return el("div", { class: "bench-cols" }, ...cols.map((c) => el(c.href ? "a" : "div", {
+    class: `bench-col ${c.tone}${c.score == null ? " missing" : ""}`, title: c.title,
+    href: c.href, target: c.href ? "_blank" : null, rel: c.href ? "noopener" : null,
+  },
+  el("span", { class: "bench-value" }, c.score == null ? c.pending : `${c.score.toFixed(1)}%`),
+  el("span", { class: `bench-delta${c.delta > 0 ? " up" : ""}` }, c.delta == null ? " " : signed(c.delta)),
+  el("span", { class: "bench-track" },
+    genesis == null ? null : el("i", { class: "bench-ref", style: `bottom: ${y(genesis)}%` }),
+    c.score == null ? null : el("i", { class: "bench-bar", style: `height: ${Math.max(1, y(c.score))}%` })),
+  el("span", { class: "bench-label" }, c.label))));
+}
+
+// the protocol under a round's benchmark cards, from the runs' own protocol records
+export function protocolNote(runs, round) {
+  const { topK, benchmarks } = ROUND_BENCH[round];
+  const records = runs.map((r) => r.protocol).filter(Boolean);
+  if (!records.length) return null;
+  const p = records.find((r) => r.harbor_agent_timeout_multiplier) ?? records[0];
+  const names = benchmarks.map(([name]) => name).filter((name) => runs.some((r) => r.benchmark === name && r.protocol?.agent_network));
+  const sealed = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0];
+  const sampling = [`temperature ${p.temperature.toFixed(1)}`, `top-p ${p.top_p}`, p.min_p != null ? `min-p ${p.min_p}` : null,
+    topK ? `top-k ${topK}` : null].filter(Boolean).join(", ");
+  return el("p", { class: "run-note quiet wide protocol-note" },
+    `Every model above ran with the same settings: ${sampling}; replies up to `,
+    `${p.max_tokens.toLocaleString("en-US")} tokens; agents get ${p.step_limit} steps; Harbor's time limits ×${p.harbor_timeout_multiplier}`,
+    p.harbor_agent_timeout_multiplier ? `, Terminal-Bench's agent clock ×${p.harbor_agent_timeout_multiplier}, so a task ends at the step limit, not on the clock` : "",
+    sealed ? `; on ${sealed} the agent has no internet, only the model (and τ³'s own runtime).` : ".");
+}
 
 // run-to-run noise per benchmark in percent points, from /api/noise.json; {} while it is missing
 export async function loadNoise() {
@@ -68,10 +119,10 @@ export const AA = {
   shared: { coding: ["SWE-bench Multilingual", "Terminal-Bench 2.1"], reasoning: ["GPQA Diamond", "MATH-500"] },
   exponent: 2.1,
 };
-export function aaEstimate(runs, model) {
+export function aaEstimate(runs, model, teacher) {
   const values = [];
   for (const names of Object.values(AA.shared)) {
-    const shares = names.map((name) => [scoreOf(runs, model, name), scoreOf(runs, TEACHER_RUN, name)])
+    const shares = names.map((name) => [scoreOf(runs, model, name), scoreOf(runs, teacher, name)])
       .filter(([mine, teacher]) => mine != null && teacher > 0).map(([mine, teacher]) => Math.min(mine / teacher, 1));
     if (shares.length !== names.length) return null;
     values.push(shares.reduce((a, b) => a + b, 0) / shares.length);
@@ -80,39 +131,8 @@ export function aaEstimate(runs, model) {
   return { aa: AA.teacher * share ** AA.exponent, share };
 }
 
-export const MAC_BOARD = {
-  columns: [
-    { kind: "Coding", name: "SWE-bench Multilingual" }, { kind: "Terminal", name: "Terminal-Bench 2.1" },
-    { kind: "Science", name: "GPQA Diamond" }, { kind: "Math", name: "MATH-500" },
-  ],
-  rows: [
-    { label: "Ingot-IV-27B-Q2", repo: "dendriteholdings/Ingot-IV-27B-Q2", gb: 5.95, king: true, scores: [61.0, 46.1, 77.3, 96.6] },
-    // Bonsai 2 is the genesis run (its own file, the king's protocols), as everywhere on the site; the feed's
-    { label: "Bonsai 2", repo: "prism-ml/Ternary-Bonsai-2-27B-gguf", gb: 5.95, scores: [58.3, 46.1, 69.7, 96.0] },
-    // the usual 2-bit quant of the same teacher (Unsloth's UD-IQ2_XXS), on our pods
-    { label: "Qwen3.8 27B IQ2_XXS", repo: "unsloth/Qwen3.8-27B-GGUF", gb: 7.27, scores: [19, 32.6, 54.5, 85.4] },
-    { label: "gpt-oss-20b", repo: "openai/gpt-oss-20b", gb: 12.1, scores: [23, 19.1, 62.1, 89.2] },
-    { label: "Qwen3.5 9B", repo: "Qwen/Qwen3.5-9B", gb: 5.7, scores: [29, 22.5, 57.1, 79.2] },
-    { label: "Gemma 4 12B", repo: "google/gemma-4-12B-it-qat-q4_0-gguf", gb: 7.0, scores: [8, 10.1, 40.4, 95.2] },
-  ],
-  // the teacher on the same four, its feed scores (SWE-bench Multilingual on all 300; 76 on the subset)
-  teacher: { label: "Qwen BF16", repo: "Qwen/Qwen3.8-27B", gb: 54.4, scores: [73.7, 64.0, 81.3, 97.4] },
-};
-// intelligence density on the four benchmarks every model on the board ran
-export function boardDensity(row) {
-  const mean = row.scores.reduce((a, b) => a + b, 0) / row.scores.length;
-  return { density: -Math.log2(1 - mean / 100) / row.gb, mean };
-}
-
-// Intelligence density, Prism's figure: -log2(error rate) per GB, the error rate being one minus the
-// mean benchmark score. Sizes are the files people download, in decimal GB.
+// the files people download, in decimal GB
 export const SIZES_GB = { q2: 5.95, fp8: 28.6, teacher: 54.4 };
-export function density(runs, model, sizeGb) {
-  const scores = BENCHMARKS.map(([name]) => scoreOf(runs, model, name)).filter((v) => v != null);
-  if (!scores.length) return null;
-  const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
-  return { density: -Math.log2(1 - mean / 100) / sizeGb, mean, benchmarks: scores.length };
-}
 
 // the round's kings, best first by the sum of their points over genesis: the +/- figures on the cards,
 // added up. Each benchmark counts the points it moves, so MATH-500, where every model sits near 96,
