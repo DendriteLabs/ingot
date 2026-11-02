@@ -288,7 +288,8 @@ class _Evaluation:
         # every finished request's file must be discarded, even when another one failed
         for role, future in futures.items():
             try:
-                reads[role], paths[role] = future.result()
+                reads[role], path = future.result()
+                paths[role] = servers.hold(path)
             except Exception as exc:
                 errors.append(exc)
         if errors:
@@ -370,7 +371,8 @@ def generate(
     room = config.MAX_MODEL_LEN - len(prompt)
     if room < 1:
         raise ValueError(f"{label}: a {len(prompt)}-token prompt leaves no room")
-    return teacher.complete(prompt, min(budget, room), seed)
+    answer, path = teacher.complete(prompt, min(budget, room), seed)
+    return answer, servers.hold(path)
 
 
 class Prefetch:
@@ -393,11 +395,6 @@ class Prefetch:
         # held until the file is written; from then on /dev/shm's usage counts it
         with ROOM.reserve(size):
             return generate(self.teacher, prompt, i, sample.id, answer_budget(sample))
-
-    def paths(self) -> set[str]:
-        """The states files of the answers written so far."""
-        done = [f for f in list(self.futures.values()) if f.done() and not f.exception()]
-        return {f.result()[1] for f in done}
 
     def result(self) -> Prefetched:
         """Waits for every answer; a sample whose answer failed is left to the duel."""

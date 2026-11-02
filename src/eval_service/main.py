@@ -44,8 +44,6 @@ class _Pending:
 # one eval at a time: the one claimed ahead waits here for run_once's next call
 _pending: _Pending | None = None
 _claiming: threading.Thread | None = None
-# the answers taken ahead that the running duel has not used yet (it pops the ones it uses)
-_answered_ahead: run.Prefetched = {}
 
 
 def run_once(
@@ -62,7 +60,7 @@ def run_once(
     fits: dataset.Fits | None = None,
     prefetcher: Prefetcher = run.Prefetch,
 ) -> bool:
-    global _pending, _claiming, _answered_ahead
+    global _pending, _claiming
     conn = link.conn()
     db.heartbeat(conn, worker, queued=states.UNIQUE)
     cache.sweep(conn, s.model_cache_dir)
@@ -85,11 +83,11 @@ def run_once(
         drawn = data.draw(_seed(row), config.SAMPLES_PER_DOMAIN, fits)
         drew = f"drawn in {time.monotonic() - started:.0f}s"
     else:
-        row, drawn = _pending.row, _pending.drawn
+        pending, _pending = _pending, None
+        row, drawn = pending.row, pending.drawn
         # the eval before this one may have won: its coronation makes the king this one faces
         _wait_for_crowning(conn)
-        prefetched = _answered_ahead = _pending.prefetch.result()
-        _pending = None  # only now: until here the sweep keeps its answers through _pending
+        prefetched = pending.prefetch.result()
         drew = f"drawn ahead, {len(prefetched)} answered ahead"
     king = db.current_king(conn, row["family"], row["quant"])
     eval_id = db.one(
@@ -155,7 +153,6 @@ def run_once(
         return True
     finally:
         # the teacher stays loaded; the king and challenger free their GPUs until the next eval
-        _answered_ahead = {}
         servers.release("king", "challenger")
     scored = time.monotonic()
     conn = link.conn(check=True)
@@ -357,18 +354,10 @@ def _sweep_abandoned() -> None:
     while True:
         time.sleep(600)
         try:
-            if swept := servers.sweep(config.STATES_TTL_S, keep=_held()):
+            if swept := servers.sweep(config.STATES_TTL_S):
                 log.info("{} abandoned state files swept", swept)
         except Exception:
             log.exception("sweeping abandoned state files failed")
-
-
-def _held() -> set[str]:
-    # answers taken ahead wait for their duel however long a coronation or a king's fetch takes
-    held = {path for _, path in list(_answered_ahead.values())}
-    if (pending := _pending) is not None:
-        held |= pending.prefetch.paths()
-    return held
 
 
 def stop(link: db.Link, worker: str) -> None:

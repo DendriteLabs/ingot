@@ -19,7 +19,7 @@ import sysconfig
 import threading
 import time
 import uuid
-from collections.abc import Collection, Generator, Sequence
+from collections.abc import Generator, Sequence
 from pathlib import Path
 
 import httpx
@@ -449,6 +449,19 @@ class RemoteGroup:
         return out["token_ids"], path
 
 
+# the state files a sample of this process still needs: the sweep leaves them however old, as an
+# answer taken ahead waits for its duel and a sample can wait long for room in /dev/shm
+_held: set[str] = set()
+_held_lock = threading.Lock()
+
+
+def hold(path: str) -> str:
+    """Keeps `path` from the sweep until it is discarded."""
+    with _held_lock:
+        _held.add(path)
+    return path
+
+
 def discard(path: str) -> None:
     """Delete a request's state file, after the server finished writing it: deleting earlier
     leaves an orphan the server writes afterwards, which fills /dev/shm."""
@@ -457,20 +470,24 @@ def discard(path: str) -> None:
     for name in (path + ".lock", path):
         with contextlib.suppress(FileNotFoundError):
             os.remove(name)
+    with _held_lock:
+        _held.discard(path)
 
 
-def sweep(older_than_s: float = 0.0, keep: Collection[str] = ()) -> int:
+def sweep(older_than_s: float = 0.0) -> int:
     """Delete the state files (and lone locks) under HIDDEN_STATES_DIR untouched for `older_than_s`
-    seconds: what a killed process, or an eval that never fetched them, left behind. The ones in
-    `keep` stay however old. The count."""
+    seconds: what a killed process, or an eval that never fetched them, left behind. The held ones
+    stay however old. The count."""
     cutoff = time.time() - older_than_s
     paths = {
         p.with_suffix("") if p.suffix == ".lock" else p
         for p in HIDDEN_STATES_DIR.rglob("*.safetensors*")
     }
+    with _held_lock:
+        held = set(_held)
     swept = 0
     for path in paths:
-        if str(path) in keep:
+        if str(path) in held:
             continue
         with contextlib.suppress(FileNotFoundError):
             times = [p.stat().st_mtime for p in (path, Path(f"{path}.lock")) if p.exists()]
