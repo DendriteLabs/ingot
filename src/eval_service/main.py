@@ -44,6 +44,8 @@ class _Pending:
 # one eval at a time: the one claimed ahead waits here for run_once's next call
 _pending: _Pending | None = None
 _claiming: threading.Thread | None = None
+# the answers taken ahead that the running duel has not used yet (it pops the ones it uses)
+_answered_ahead: run.Prefetched = {}
 
 
 def run_once(
@@ -60,7 +62,7 @@ def run_once(
     fits: dataset.Fits | None = None,
     prefetcher: Prefetcher = run.Prefetch,
 ) -> bool:
-    global _pending, _claiming
+    global _pending, _claiming, _answered_ahead
     conn = link.conn()
     db.heartbeat(conn, worker, queued=states.UNIQUE)
     cache.sweep(conn, s.model_cache_dir)
@@ -83,11 +85,11 @@ def run_once(
         drawn = data.draw(_seed(row), config.SAMPLES_PER_DOMAIN, fits)
         drew = f"drawn in {time.monotonic() - started:.0f}s"
     else:
-        pending, _pending = _pending, None
-        row, drawn = pending.row, pending.drawn
+        row, drawn = _pending.row, _pending.drawn
         # the eval before this one may have won: its coronation makes the king this one faces
         _wait_for_crowning(conn)
-        prefetched = pending.prefetch.result()
+        prefetched = _answered_ahead = _pending.prefetch.result()
+        _pending = None  # only now: until here the sweep keeps its answers through _pending
         drew = f"drawn ahead, {len(prefetched)} answered ahead"
     king = db.current_king(conn, row["family"], row["quant"])
     eval_id = db.one(
@@ -153,6 +155,7 @@ def run_once(
         return True
     finally:
         # the teacher stays loaded; the king and challenger free their GPUs until the next eval
+        _answered_ahead = {}
         servers.release("king", "challenger")
     scored = time.monotonic()
     conn = link.conn(check=True)
@@ -328,6 +331,7 @@ def main() -> None:
         data.row_count,
         servers.sweep(),
     )
+    threading.Thread(target=_sweep_abandoned, daemon=True).start()
 
     def tick() -> bool:
         db.release_closed(link.conn(), spec)
@@ -346,6 +350,25 @@ def main() -> None:
         idle_s=config.IDLE_S,
         on_stop=lambda: stop(link, worker),
     )
+
+
+def _sweep_abandoned() -> None:
+    # a crashed eval, a sample whose read failed or a write that failed leaves state files behind
+    while True:
+        time.sleep(600)
+        try:
+            if swept := servers.sweep(config.STATES_TTL_S, keep=_held()):
+                log.info("{} abandoned state files swept", swept)
+        except Exception:
+            log.exception("sweeping abandoned state files failed")
+
+
+def _held() -> set[str]:
+    # answers taken ahead wait for their duel however long a coronation or a king's fetch takes
+    held = {path for _, path in list(_answered_ahead.values())}
+    if (pending := _pending) is not None:
+        held |= pending.prefetch.paths()
+    return held
 
 
 def stop(link: db.Link, worker: str) -> None:

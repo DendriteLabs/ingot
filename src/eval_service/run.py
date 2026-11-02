@@ -3,13 +3,14 @@ tokens, and both are measured against the teacher on the answer tokens; then the
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import queue
 import shutil
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Generator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -138,6 +139,7 @@ class _Evaluation:
         serving = time.monotonic()
         self.tokenizer = load_tokenizer(models["teacher"])
         self.eos = _eos(models["teacher"])
+        self.state_bytes = state_bytes_per_token(models["teacher"])
         # both readers' GPUs: a gguf reader leaves most of its GPU free, and the comparison is a
         # quarter of an eval's GPU time, too much for one GPU alone
         readers = (*settings().gpus("king"), *settings().gpus("challenger"))
@@ -214,16 +216,25 @@ class _Evaluation:
             return DIVERGED
         return per_sample([by_role[role] for by_role, _ in results if role in by_role])
 
+    def _state_size(self, prompt: list[int], sample: Sample) -> int:
+        tokens = min(len(prompt) + answer_budget(sample), config.MAX_MODEL_LEN)
+        return tokens * self.state_bytes
+
     def _sample(self, i: int, sample: Sample) -> Result:
         paths: dict[str, str] = {}  # role -> the hidden-state file its server wrote
+        stack = contextlib.ExitStack()  # the sample's room in /dev/shm, given back last
         started = time.monotonic()
         with self.lock:
             self.started += 1
         try:
-            with timing.stages.timed("shm wait"):
-                _wait_for_room()
             prompt = _render(self.tokenizer, sample.messages, sample.tools)
-            if (ahead := self.prefetched.pop(i, None)) is not None:
+            ahead = self.prefetched.pop(i, None)
+            # the files this sample will write: the teacher's (unless answered ahead), the king's,
+            # the challenger's and on a rerun the teacher's again
+            files = (ahead is None) + 2 + (i % config.RERUN_EVERY == 0)
+            with timing.stages.timed("shm wait"):
+                stack.enter_context(ROOM.reserve(files * self._state_size(prompt, sample)))
+            if ahead is not None:
                 answer, paths["teacher"] = ahead
             else:
                 with timing.stages.timed("teacher"):
@@ -240,6 +251,7 @@ class _Evaluation:
             self._count()  # a failed sample counts too, so progress reaches the total
             for path in paths.values():
                 servers.discard(path)
+            stack.close()
 
     def _watch_drain(self, stop: threading.Event) -> None:
         """Calls on_teacher_drained once every sample has started and none waits for the teacher
@@ -369,15 +381,23 @@ class Prefetch:
     def __init__(self, teacher_dir: Path, samples: Sequence[Sample]) -> None:
         self.teacher = servers.serve({"teacher": teacher_dir})["teacher"]  # the running one
         self.tokenizer, self.samples = load_tokenizer(teacher_dir), samples
+        self.state_bytes = state_bytes_per_token(teacher_dir)
         self.pool = ThreadPoolExecutor(config.WORKERS)
         ahead = sorted(range(len(samples)), key=lambda i: -_size(samples[i]))
         self.futures = {i: self.pool.submit(self._one, i) for i in ahead[: config.PREFETCH_SAMPLES]}
 
     def _one(self, i: int) -> tuple[list[int], str]:
-        _wait_for_room()
         sample = self.samples[i]
         prompt = _render(self.tokenizer, sample.messages, sample.tools)
-        return generate(self.teacher, prompt, i, sample.id, answer_budget(sample))
+        size = min(len(prompt) + answer_budget(sample), config.MAX_MODEL_LEN) * self.state_bytes
+        # held until the file is written; from then on /dev/shm's usage counts it
+        with ROOM.reserve(size):
+            return generate(self.teacher, prompt, i, sample.id, answer_budget(sample))
+
+    def paths(self) -> set[str]:
+        """The states files of the answers written so far."""
+        done = [f for f in list(self.futures.values()) if f.done() and not f.exception()]
+        return {f.result()[1] for f in done}
 
     def result(self) -> Prefetched:
         """Waits for every answer; a sample whose answer failed is left to the duel."""
@@ -449,10 +469,39 @@ def _report(stop: threading.Event, total: int) -> None:
             log.exception("eval timing report failed")
 
 
-def _wait_for_room() -> None:
-    # raw states wait in /dev/shm until compared; hold new samples back when it fills up
-    while True:
+def state_bytes_per_token(model_dir: Path) -> int:
+    """The size of one token's row in a states file: LAYERS hidden states in bf16."""
+    cfg = json.loads((model_dir / "config.json").read_text())
+    return len(config.LAYERS) * cfg.get("text_config", cfg)["hidden_size"] * 2
+
+
+class _Room:
+    """/dev/shm space promised to the state files of requests in flight. A request starts only
+    when what is already written plus every promise, its own included, fits under SHM_SHARE: the
+    files are written only when a request ends, so the usage alone lets too many start and the
+    servers' writes then fail with ENOSPC. A promise is kept until its files are discarded, so a
+    written file counts twice for a while: the room errs on the safe side."""
+
+    def __init__(self) -> None:
+        self.cond, self.promised = threading.Condition(), 0
+
+    @contextlib.contextmanager
+    def reserve(self, nbytes: int) -> Generator[None]:
+        with self.cond:
+            # with nothing promised no request of ours is in flight to free room by waiting
+            while self.promised and not self._fits(nbytes):
+                self.cond.wait(5)
+            self.promised += nbytes
+        try:
+            yield
+        finally:
+            with self.cond:
+                self.promised -= nbytes
+                self.cond.notify_all()
+
+    def _fits(self, nbytes: int) -> bool:
         shm = shutil.disk_usage("/dev/shm")
-        if shm.used < 0.6 * shm.total:
-            return
-        time.sleep(5)
+        return shm.used + self.promised + nbytes <= config.SHM_SHARE * shm.total
+
+
+ROOM = _Room()  # one for the running duel and the next eval's prefetch both

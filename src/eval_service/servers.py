@@ -19,7 +19,7 @@ import sysconfig
 import threading
 import time
 import uuid
-from collections.abc import Generator, Sequence
+from collections.abc import Collection, Generator, Sequence
 from pathlib import Path
 
 import httpx
@@ -459,9 +459,10 @@ def discard(path: str) -> None:
             os.remove(name)
 
 
-def sweep(older_than_s: float = 0.0) -> int:
+def sweep(older_than_s: float = 0.0, keep: Collection[str] = ()) -> int:
     """Delete the state files (and lone locks) under HIDDEN_STATES_DIR untouched for `older_than_s`
-    seconds: what a killed process, or an eval that never fetched them, left behind. The count."""
+    seconds: what a killed process, or an eval that never fetched them, left behind. The ones in
+    `keep` stay however old. The count."""
     cutoff = time.time() - older_than_s
     paths = {
         p.with_suffix("") if p.suffix == ".lock" else p
@@ -469,6 +470,8 @@ def sweep(older_than_s: float = 0.0) -> int:
     }
     swept = 0
     for path in paths:
+        if str(path) in keep:
+            continue
         with contextlib.suppress(FileNotFoundError):
             times = [p.stat().st_mtime for p in (path, Path(f"{path}.lock")) if p.exists()]
             if times and max(times) < cutoff:

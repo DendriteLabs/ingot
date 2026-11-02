@@ -63,8 +63,10 @@ PREFETCH_SAMPLES = 100
 MAX_FAILED_SAMPLES = 10
 PROGRESS_CHUNKS = 20  # how often a running eval writes samples_done for the dashboard
 # A state file no eval fetched in this long was abandoned (its eval died); the teacher server
-# sweeps such files, /dev/shm being RAM.
+# and the eval service sweep such files, /dev/shm being RAM.
 STATES_TTL_S = 3600
+# of /dev/shm that written state files and the promises of requests in flight may fill
+SHM_SHARE = 0.9
 # how often the teacher server touches its workers row
 TEACHER_HEARTBEAT_S = 30
 # how often a running eval logs its per-stage timings (eval_service.timing)
