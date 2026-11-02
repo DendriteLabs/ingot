@@ -4,6 +4,7 @@
 import { el, mount, link } from "./js/dom.js";
 import { fmtRelative } from "./js/format.js";
 import { $, mountHeader, svgEl } from "./js/page.js";
+import { renderTokens } from "./js/tokens.js";
 import { AA, ROUND_BENCH, SIZES_GB, aaEstimate, benchColumns, loadNoise, noiseLine, protocolNote, rankKings, roundRuns, scoreOf } from "./js/benchmarks.js";
 
 const ROUND = "q2";
@@ -269,3 +270,4 @@ setInterval(loadDownloads, 600000);
 new ResizeObserver(() => runs && render()).observe($("panel-figures"));
 load();
 setInterval(load, 30000);
+renderTokens();

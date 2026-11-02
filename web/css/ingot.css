@@ -518,7 +518,7 @@ button.zip:disabled { opacity: 0.6; cursor: wait; }
 .figures .size-overlay { inset: 10px 0 6px; }
 .figures .size-row, .figures .size-overlay { grid-template-columns: 150px minmax(0, 1fr) 72px; gap: 12px; }
 .figures figure { margin: 0; border: 1px solid var(--line); background: var(--panel); padding: 18px 20px 12px; min-width: 0; }
-.figures figcaption h3 { margin: 0; font-family: var(--display); font-weight: 700; font-size: 20px; letter-spacing: -0.01em; }
+.figures figcaption h3 { margin: 0; font-family: var(--display); font-weight: 600; font-size: 20px; letter-spacing: -0.01em; }
 .figures figcaption p { margin: 4px 0 14px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
 .vbars-svg { display: block; width: 100%; }
 .vbars-svg .axis { stroke: var(--line-strong); shape-rendering: crispEdges; }
@@ -561,7 +561,7 @@ button.zip:disabled { opacity: 0.6; cursor: wait; }
 .steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .step { border: 1px solid var(--line); background: var(--panel); padding: 20px 22px; }
 .step i { display: block; font-style: normal; font-family: var(--mono); font-size: 12px; letter-spacing: 0.14em; color: var(--accent-ink); margin-bottom: 12px; }
-.step h3 { margin: 0 0 8px; font-family: var(--display); font-weight: 700; font-size: 20px; letter-spacing: -0.01em; }
+.step h3 { margin: 0 0 8px; font-family: var(--display); font-weight: 600; font-size: 20px; letter-spacing: -0.01em; }
 .step p { margin: 0; font-size: 14px; line-height: 1.55; color: var(--text-2); }
 .step a { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
 .step a:hover { color: var(--accent-ink); }
@@ -655,4 +655,60 @@ button.zip:disabled { opacity: 0.6; cursor: wait; }
   .size-row { grid-template-columns: 110px minmax(0, 1fr) 70px; gap: 10px; }
   .size-overlay { grid-template-columns: 110px minmax(0, 1fr) 70px; gap: 10px; }
   .king-cards, .foot-cols { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* the token section: per-domain KL bars, then one teacher answer at a time, each token shaded by a model's KL */
+.kl-rows { display: grid; gap: 7px; padding: 6px 0 8px; }
+.figures .kl-rows .size-row { grid-template-columns: 150px minmax(0, 1fr) 72px; gap: 12px; }
+.tok-viewer { margin-top: 18px; border: 1px solid var(--line); background: var(--panel); }
+.tok-viewer > summary { display: grid; grid-template-columns: 12px auto minmax(0, 1fr); align-items: center; gap: 4px 14px; padding: 14px 18px; cursor: pointer; list-style: none; }
+.tok-viewer > summary::-webkit-details-marker { display: none; }
+.tok-viewer > summary::before { content: "+"; width: 12px; font-family: var(--mono); font-size: 18px; line-height: 1; text-align: center; color: var(--accent-ink); }
+.tok-viewer[open] > summary::before { content: "−"; }
+.tok-viewer > summary span { font-family: var(--display); font-weight: 600; font-size: 20px; line-height: 1.2; letter-spacing: -0.01em; color: var(--text); }
+.tok-viewer > summary small { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.tok-viewer > summary:hover span { color: var(--accent-ink); }
+.tok-viewer[open] > summary { border-bottom: 1px solid var(--line); }
+.tok-intro { margin: 0; padding: 12px 18px 0; font-size: 14px; color: var(--text-2); }
+.tok-picker { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px 24px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.tok-pick, .tok-models { display: flex; flex-wrap: wrap; gap: 4px; }
+.tok-picker button { padding: 5px 9px; border: 1px solid var(--line); font-family: var(--mono); font-size: 12px; color: var(--text-2); }
+.tok-picker button:hover { color: var(--text); border-color: var(--line-strong); }
+.tok-picker button.on { color: var(--text); border-color: var(--text-2); background: var(--band); }
+.tok-models button.king.on { border-color: var(--accent-ink); color: var(--accent-ink); }
+.tok-models button small { margin-left: 8px; color: var(--muted); }
+.tok-context { padding: 12px 18px; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.tok-context summary { margin-top: 6px; cursor: pointer; color: var(--text-2); }
+.tok-context pre { margin: 8px 0 0; max-height: 220px; overflow: auto; padding: 10px 12px; background: var(--stamp-bg); color: var(--stamp-fg); white-space: pre-wrap; word-break: break-word; }
+.tok-main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; }
+.tok-stream { padding: 16px 18px; max-height: 460px; overflow: auto; font-family: var(--mono); font-size: 13px; line-height: 1.75; white-space: pre-wrap; word-break: break-word; color: var(--text); }
+.tok-stream:focus-visible { outline: 1px solid var(--accent-ink); outline-offset: -1px; }
+.tok { --k: 0; background: color-mix(in srgb, var(--brass) calc(var(--k) * 70%), transparent); cursor: default; }
+.tok.at { outline: 1px solid var(--text); outline-offset: 0; }
+.tok.mark { padding: 0 3px; border: 1px solid var(--line-strong); font-size: 11px; color: var(--muted); }
+.tok-inspect { padding: 16px 18px; border-left: 1px solid var(--line); min-width: 0; }
+.tok-head { display: grid; gap: 4px; font-size: 14px; color: var(--text-2); }
+.tok-head code, .tok-row code { font-family: var(--mono); color: var(--text); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.tok-head span { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.tok-head span.king { color: var(--accent-ink); }
+.tok-cols { display: grid; gap: 14px; margin-top: 14px; }
+.tok-col h4 { margin: 0 0 6px; font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+.tok-col.king h4 { color: var(--accent-ink); }
+.tok-row { display: grid; grid-template-columns: minmax(0, 1fr) 90px 52px; align-items: center; gap: 10px; padding: 2px 0; font-size: 12px; }
+.tok-row.actual code { text-decoration: underline; text-underline-offset: 3px; }
+.tok-bar { position: relative; height: 10px; }
+.tok-bar i { position: absolute; inset: 0 auto 0 0; background: var(--text-2); }
+.tok-col.king .tok-bar i { background: var(--brass); }
+.tok-p { font-family: var(--mono); text-align: right; color: var(--text-2); }
+.tok-legend { display: flex; align-items: center; gap: 8px; padding: 10px 18px; border-top: 1px solid var(--line); font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.tok-legend span:first-child { margin-right: 8px; letter-spacing: 0.14em; text-transform: uppercase; }
+.tok-legend i { width: 120px; height: 10px; background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--brass) 70%, transparent)); border: 1px solid var(--line); }
+@media (max-width: 960px) {
+  .tok-main { grid-template-columns: minmax(0, 1fr); }
+  .tok-viewer > summary small { grid-column: 2 / -1; }
+  .tok-inspect { border-left: 0; border-top: 1px solid var(--line); }
+}
+@media (max-width: 600px) {
+  .figures .kl-rows .size-row { grid-template-columns: 110px minmax(0, 1fr) 60px; gap: 10px; }
+  .tok-viewer > summary, .tok-intro, .tok-picker, .tok-context, .tok-stream, .tok-inspect, .tok-legend { padding-left: 14px; padding-right: 14px; }
 }
