@@ -3,11 +3,9 @@
 
 import { el } from "./dom.js";
 
-export const BENCHMARKS = [
-  ["SWE-bench Multilingual", "coding"], ["Terminal-Bench 2.1", "terminal"], ["AutomationBench", "automation"],
-  ["GPQA Diamond", "science"], ["MATH-500", "math"], ["τ³-bench Banking", "tool use"], ["MMMU", "vision"],
-];
-// each round's protocol, teacher and genesis runs, and suite; the 2-bit round's from King XVII on
+// each round's protocol, teacher and genesis runs, and suite; the 2-bit round's from King XVII on. The 8-bit
+// round's teacher shows the 2-bit round's teacher runs (`teacherFrom`), so both rounds show one teacher; its own
+// 8-bit run only where the 2-bit round has none (AutomationBench). MMMU left the suite on 2026-11-03.
 export const ROUND_BENCH = {
   q2: {
     protocol: "t1-minp05-32k-150", teacher: "Qwen3.8-27B-BF16-t1minp05-32k", genesis: "Ingot-genesis-27B-Q2-t1minp05-32k",
@@ -15,15 +13,26 @@ export const ROUND_BENCH = {
     benchmarks: [["Terminal-Bench 2.1", "terminal"], ["SWE-bench Multilingual", "coding"], ["GPQA Diamond", "science"],
       ["τ³-bench Banking", "tool use"], ["MATH-500", "math"], ["BBEH Mini", "reasoning"]],
   },
-  fp8: { protocol: "sampled-16k-150", ids: ["sampled-16k-150-v1"], teacher: "Qwen3.8-27B-BF16", genesis: "Ingot-genesis-27B-FP8", benchmarks: BENCHMARKS },
+  fp8: {
+    protocol: "sampled-16k-150", ids: ["sampled-16k-150-v1"], teacher: "Qwen3.8-27B-BF16", genesis: "Ingot-genesis-27B-FP8", teacherFrom: "q2",
+    benchmarks: [["Terminal-Bench 2.1", "terminal"], ["SWE-bench Multilingual", "coding"], ["GPQA Diamond", "science"],
+      ["τ³-bench Banking", "tool use"], ["MATH-500", "math"], ["AutomationBench", "automation"]],
+  },
 };
 export const complete = (r) => r.status === "complete" && typeof r.score === "number" && Number.isFinite(r.score);
 
-// a round's runs: the feed's results on that round's protocol, a stopped run left out
+// a round's runs: the feed's results on that round's protocol, a stopped run left out. With `teacherFrom`, the
+// other round's teacher runs stand in for this round's teacher (named as it, `borrowed` set) on every benchmark
+// that round has one for.
 export function roundRuns(results, round) {
-  const { protocol, ids } = ROUND_BENCH[round];
+  const { protocol, ids, teacher, teacherFrom } = ROUND_BENCH[round];
   const ours = (id) => (ids ? ids.includes(id) : id?.startsWith(`${protocol}-`));
-  return results.filter((r) => ours(r.protocol?.id) && r.status !== "stopped");
+  const runs = results.filter((r) => ours(r.protocol?.id) && r.status !== "stopped");
+  if (!teacherFrom) return runs;
+  const borrowed = roundRuns(results, teacherFrom).filter((r) => r.model === ROUND_BENCH[teacherFrom].teacher)
+    .map((r) => ({ ...r, model: teacher, borrowed: true }));
+  const covered = new Set(borrowed.map((r) => r.benchmark));
+  return [...runs.filter((r) => !(r.model === teacher && covered.has(r.benchmark))), ...borrowed];
 }
 
 // a king's numeral as a number (Ingot-XVII-27B-Q2: 17), to order kings by
@@ -54,8 +63,10 @@ export function benchColumns(cols, genesis) {
 }
 
 // the protocol under a round's benchmark cards, from the runs' own protocol records
-export function protocolNote(runs, round) {
-  const { topK, benchmarks } = ROUND_BENCH[round];
+export function protocolNote(all, round) {
+  const { topK, benchmarks, teacherFrom } = ROUND_BENCH[round];
+  // the round's own runs: a teacher run borrowed from another round ran on that round's settings
+  const runs = all.filter((r) => !r.borrowed);
   const records = runs.map((r) => r.protocol).filter(Boolean);
   if (!records.length) return null;
   const p = records.find((r) => r.harbor_agent_timeout_multiplier) ?? records[0];
@@ -64,11 +75,13 @@ export function protocolNote(runs, round) {
   const sampling = [`temperature ${p.temperature.toFixed(1)}`, `top-p ${p.top_p}`, p.min_p != null ? `min-p ${p.min_p}` : null,
     topK ? `top-k ${topK}` : null].filter(Boolean).join(", ");
   return el("p", { class: "run-note quiet wide protocol-note" },
-    `Every model above ran with the same settings: ${sampling}; replies up to `,
+    `${all.some((r) => r.borrowed) ? "The kings and genesis above ran" : "Every model above ran"} with the same settings: ${sampling}; replies up to `,
     `${p.max_tokens.toLocaleString("en-US")} tokens; agents get ${p.step_limit} steps; Harbor's time limits ×${p.harbor_timeout_multiplier}`,
     p.harbor_agent_timeout_multiplier ? `, Terminal-Bench's agent clock ×${p.harbor_agent_timeout_multiplier}, so a task ends at the step limit, not on the clock` : "",
-    sealed ? `; on ${sealed} the agent has no internet, only the model (and τ³'s own runtime).` : ".");
+    sealed ? `; on ${sealed} the agent has no internet, only the model (and τ³'s own runtime).` : ".",
+    all.some((r) => r.borrowed) ? ` The teacher's scores are its ${ROUND_LABEL[teacherFrom]} round runs, the same as that round shows.` : "");
 }
+const ROUND_LABEL = { q2: "1.75-bit", fp8: "8-bit" };
 
 // run-to-run noise per benchmark in percent points, from /api/noise.json; {} while it is missing
 export async function loadNoise() {

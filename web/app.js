@@ -31,9 +31,9 @@ const hotkeyCell = (hotkey, cls = "hotkey") => el("td", { class: cls }, hotkey ?
 let state = null;
 let benchmarksLoading = false;
 let benchmarkDocument = null;
+// the last benchmark feed read (/api/benchmarks.json), so switching rounds redraws without a fetch
+let benchmarkFeed = null;
 let noise = {};
-// the selected round's benchmark runs (its protocol's), for the hero's best model; null until loaded
-let benchRuns = null;
 
 async function tick() {
   try {
@@ -92,27 +92,24 @@ function kingGains() {
   });
 }
 
-// the dashboard's head: the round tabs, and the round's best model (by the external benchmarks once
-// their feed is in, a full suite only; until then the reigning king)
+// the dashboard's head: the round tabs, and the round's best model: its reigning king, the closest to the
+// teacher, with how much closer than genesis it is. Not the benchmark feed's, so a reload or a tab click
+// shows the same thing.
 function renderHero() {
   document.querySelectorAll(".stamp-tab").forEach((tab) => {
     tab.setAttribute("aria-selected", String(tab.dataset.tab === selectedRound));
-    tab.onclick = () => { selectedRound = tab.dataset.tab; benchRuns = null; render(); loadBenchmarks(); };
+    tab.onclick = () => { selectedRound = tab.dataset.tab; render(); drawBenchmarks(); loadBenchmarks(); };
   });
   const { open, genesis } = ROUNDS[selectedRound];
-  const { benchmarks } = suite();
-  const best = benchRuns ? rankKings(benchRuns, benchmarks).find((row) => row.done === benchmarks.length) : null;
-  const king = best?.king ?? kingGains().filter((k) => k.submission_id).at(-1);
+  const king = kingGains().filter((k) => k.submission_id).at(-1);
   const teacher = state.teacher.split("/").pop();
   const [name, repo] = king ? [king.name, king.hf_repo] : [genesis.name, genesis.repo];
   const url = repo ? hubUrl(repo) : null;
-  $("hero-label").textContent = `${open ? "Open round" : "Closed round"}${best ? " · best model" : " · reigning king"}`;
+  $("hero-label").textContent = `${open ? "Open round" : "Closed round"} · best model`;
   mount($("hero-king"), url ? link(url, name) : name);
-  mount($("hero-line"), ...(best
-    ? [el("b", {}, `${best.ahead} of ${benchmarks.length}`), "benchmarks at or above ", link(hubUrl(genesis.repo), genesis.versus)]
-    : king
-      ? [el("b", {}, `${king.gain.toFixed(1)}%`), "closer to ", link(hubUrl(state.teacher), teacher), " than ", link(hubUrl(genesis.repo), genesis.versus)]
-      : []));
+  mount($("hero-line"), ...(king
+    ? [el("b", {}, `${king.gain.toFixed(1)}%`), "closer to ", link(hubUrl(state.teacher), teacher), " than ", link(hubUrl(genesis.repo), genesis.versus)]
+    : []));
 }
 
 // the round's kings with a run on its protocol, ranked
@@ -262,6 +259,16 @@ function renderKingsChart() {
   mount(box, el("div", { class: "hero-chart-plot" }, svg, tip));
 }
 
+// the benchmark cards from the last feed read, unless that feed, the noise, the round and the kings are the
+// ones already drawn; a round switch calls it at once instead of waiting for a fresh fetch
+function drawBenchmarks() {
+  if (!benchmarkFeed || !state) return;
+  const fingerprint = JSON.stringify([benchmarkFeed, noise, selectedRound, state.kings.map((k) => k.name)]);
+  if (fingerprint === benchmarkDocument) return;
+  renderBenchmarkCharts(benchmarkFeed.results, suite().benchmarks);
+  benchmarkDocument = fingerprint;
+}
+
 async function loadBenchmarks() {
   // the cards name the teacher and the kings from the state: nothing to draw before it is here
   if (benchmarksLoading || !state) return;
@@ -281,12 +288,8 @@ async function loadBenchmarks() {
     const { results } = doc;
     if (!Array.isArray(results)) throw new Error("benchmark feed needs a results array");
     $("benchmarks-meta").textContent = "";
-    const fingerprint = JSON.stringify([doc, noise, selectedRound, (state?.kings ?? []).map((k) => k.name)]);
-    if (fingerprint === benchmarkDocument) {
-      return;
-    }
-    renderBenchmarkCharts(results, suite().benchmarks);
-    benchmarkDocument = fingerprint;
+    benchmarkFeed = doc;
+    drawBenchmarks();
   } catch (err) {
     if (benchmarkDocument !== null) {
       $("benchmarks-meta").textContent = "connection interrupted · retrying";
@@ -366,10 +369,6 @@ function renderBenchmarkCharts(results, benchmarks) {
   const { genesis } = ROUNDS[selectedRound];
   const { teacher, genesis: genesisRun } = suite();
   const ranked = rankKings(runs, benchmarks);
-  if (benchRuns !== runs) {
-    benchRuns = runs;
-    renderHero();
-  }
   const pick = ranked.find((row) => row.king.name === chosenKing[selectedRound]) ?? ranked[0];
   if (pick) renderKingPicker(ranked, pick, () => renderBenchmarkCharts(results, benchmarks), runs);
   else mount($("bench-picker"));
@@ -399,7 +398,7 @@ function renderBenchmarkCharts(results, benchmarks) {
       const { run } = row;
       const d = delta(row);
       const tasksOf = (r) => `${r.completed ?? "—"} / ${r.samples ?? "—"} tasks`;
-      return scored(row) ? `${run.model}: ${pct(run.score)}${d == null ? "" : ` · ${signed(d)} points from ${ROUNDS[selectedRound].genesis.label}`} · ${tasksOf(run)}`
+      return scored(row) ? `${run.model}: ${pct(run.score)}${d == null ? "" : ` · ${signed(d)} points from ${ROUNDS[selectedRound].genesis.label}`} · ${tasksOf(run)}${run.borrowed ? " · its 1.75-bit round run" : ""}`
         : pendingOf(row) === "running" && run.completed != null ? `running · ${tasksOf(run)}` : pendingOf(row);
     };
     const bar = (row) => {
