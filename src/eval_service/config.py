@@ -1,7 +1,7 @@
 # The commit of the Dendrite llama.cpp fork (DendriteLabs/llama.cpp, PrismML's fork plus our
 # changes) that runs q2 (gguf) models: llama-prism is checked out here, so a bump moves both
 # together.
-LLAMA_CPP_COMMIT = "c96baf4abe24d11a50f326e40b6223b687449d63"
+LLAMA_CPP_COMMIT = "62c418ccd7aefee37997e94c2d9fac1eed7fc89b"
 # A gguf model reads the teacher's answer in llama-states (scripts/build_llama.sh builds both),
 # LLAMA_PER_GPU processes per GPU, each one request at a time, in passes of LLAMA_BATCH tokens.
 LLAMA_STATES = "build/llama_states/llama-states"

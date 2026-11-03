@@ -497,7 +497,44 @@ def sweep(older_than_s: float = 0.0) -> int:
     return swept
 
 
-Groups = Group | LlamaGroup | RemoteGroup
+class SplitTeacher:
+    """The teacher on this box's INGOT_TEACHER_GPUS and on another box (INGOT_TEACHER_URL) at once:
+    each request goes to the side with fewer requests in flight per GPU, so both stay busy."""
+
+    def __init__(self, local: Group, remote: RemoteGroup, remote_gpus: int) -> None:
+        self.local, self.remote, self.model_dir = local, remote, local.model_dir
+        self.weights = {"local": len(local.servers), "remote": remote_gpus}
+        self.inflight = {"local": 0, "remote": 0}
+        self.lock = threading.Lock()
+
+    def wait_ready(self, deadline: float) -> None:
+        self.local.wait_ready(deadline)
+        self.remote.wait_ready(deadline)
+
+    def alive(self) -> bool:
+        return self.local.alive() and self.remote.alive()
+
+    def preemptions(self) -> float:
+        return self.local.preemptions() + self.remote.preemptions()
+
+    def stop(self) -> None:
+        self.local.stop()
+
+    def complete(
+        self, prompt: list[int], max_tokens: int, seed: int, force: list[int] | None = None
+    ) -> tuple[list[int], str]:
+        with self.lock:
+            side = min(self.inflight, key=lambda k: self.inflight[k] / self.weights[k])
+            self.inflight[side] += 1
+        try:
+            group = self.local if side == "local" else self.remote
+            return group.complete(prompt, max_tokens, seed, force)
+        finally:
+            with self.lock:
+                self.inflight[side] -= 1
+
+
+Groups = Group | LlamaGroup | RemoteGroup | SplitTeacher
 _groups: dict[str, Groups] = {}
 
 
@@ -514,6 +551,14 @@ def serve(models: dict[str, Path]) -> dict[str, Groups]:
             continue
         if group:
             group.stop()
+        if role == "teacher" and remote_teacher and settings().gpus("teacher"):
+            gpus = settings().gpus("teacher")
+            log.info("teacher split: GPUs {} here and {}: {}", gpus, remote_teacher, model_dir)
+            local = Group(model_dir, gpus, config.MEMORY_SHARE[role], role)
+            _groups[role] = SplitTeacher(
+                local, RemoteGroup(remote_teacher, model_dir), settings().remote_teacher_gpus
+            )
+            continue
         if role == "teacher" and remote_teacher:
             log.info("using the teacher at {}: {}", remote_teacher, model_dir)
             _groups[role] = RemoteGroup(remote_teacher, model_dir)

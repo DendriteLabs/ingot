@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     # Comma-separated: several tunnels to it, used in turn (pm2 INGOT_TEACHER_TUNNELS)
     teacher_url: str = ""
     teacher_port: int = 9300
+    # GPUs behind INGOT_TEACHER_URL, when this box serves the teacher on INGOT_TEACHER_GPUS too
+    remote_teacher_gpus: int = 8
     # one vLLM server per listed GPU; the teacher's are the teacher server's on its own box, or the
     # eval box's when it has no INGOT_TEACHER_URL
     teacher_gpus: str = ""

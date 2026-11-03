@@ -216,9 +216,18 @@ class _Evaluation:
             return DIVERGED
         return per_sample([by_role[role] for by_role, _ in results if role in by_role])
 
-    def _state_size(self, prompt: list[int], sample: Sample) -> int:
-        tokens = min(len(prompt) + answer_budget(sample), config.MAX_MODEL_LEN)
-        return tokens * self.state_bytes
+    def _room(self, i: int, prompt: list[int], sample: Sample, ahead: bool) -> int:
+        """/dev/shm bytes the sample's files may take: the king's and the challenger's, the
+        teacher's unless answered ahead, and on a rerun the teacher's again. llama-states and a
+        remote teacher write the answer rows only, llama-states in float32."""
+        full = state_bytes(prompt, sample, self.state_bytes)
+        answer = state_bytes(prompt, sample, self.state_bytes, answer_only=True)
+        readers = sum(
+            2 * answer if isinstance(self.groups[role], servers.LlamaGroup) else full
+            for role in ("king", "challenger")
+        )
+        teacher_file = answer if isinstance(self.groups["teacher"], servers.RemoteGroup) else full
+        return readers + ((not ahead) + (i % config.RERUN_EVERY == 0)) * teacher_file
 
     def _sample(self, i: int, sample: Sample) -> Result:
         paths: dict[str, str] = {}  # role -> the hidden-state file its server wrote
@@ -229,11 +238,8 @@ class _Evaluation:
         try:
             prompt = _render(self.tokenizer, sample.messages, sample.tools)
             ahead = self.prefetched.pop(i, None)
-            # the files this sample will write: the teacher's (unless answered ahead), the king's,
-            # the challenger's and on a rerun the teacher's again
-            files = (ahead is None) + 2 + (i % config.RERUN_EVERY == 0)
             with timing.stages.timed("shm wait"):
-                stack.enter_context(ROOM.reserve(files * self._state_size(prompt, sample)))
+                stack.enter_context(ROOM.reserve(self._room(i, prompt, sample, ahead is not None)))
             if ahead is not None:
                 answer, paths["teacher"] = ahead
             else:
@@ -391,7 +397,8 @@ class Prefetch:
     def _one(self, i: int) -> tuple[list[int], str]:
         sample = self.samples[i]
         prompt = _render(self.tokenizer, sample.messages, sample.tools)
-        size = min(len(prompt) + answer_budget(sample), config.MAX_MODEL_LEN) * self.state_bytes
+        remote = isinstance(self.teacher, servers.RemoteGroup)
+        size = state_bytes(prompt, sample, self.state_bytes, answer_only=remote)
         # held until the file is written; from then on /dev/shm's usage counts it
         with ROOM.reserve(size):
             return generate(self.teacher, prompt, i, sample.id, answer_budget(sample))
@@ -464,6 +471,17 @@ def _report(stop: threading.Event, total: int) -> None:
             )
         except Exception:
             log.exception("eval timing report failed")
+
+
+def state_bytes(
+    prompt: list[int], sample: Sample, per_token: int, *, answer_only: bool = False
+) -> int:
+    """The size of a states file for `prompt` at its domain's full answer budget; every row of the
+    request, or from the last prompt row only (llama-states, and a remote teacher)."""
+    rows = min(len(prompt) + answer_budget(sample), config.MAX_MODEL_LEN)
+    if answer_only:
+        rows -= len(prompt) - 1
+    return rows * per_token
 
 
 def state_bytes_per_token(model_dir: Path) -> int:

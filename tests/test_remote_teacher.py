@@ -3,6 +3,8 @@ box's copy deleted; no GPU, a fake teacher behind the real endpoint."""
 
 from __future__ import annotations
 
+import json
+import struct
 import threading
 import time
 from http.server import ThreadingHTTPServer
@@ -11,12 +13,39 @@ from pathlib import Path
 import httpx
 import pytest
 
+from common import models
 from common.config import Settings, settings
 from eval_service import servers, teacher_server
 
+HIDDEN = 3  # floats per row: one layer of three
+
+
+def states_file(path: Path, tokens: list[int]) -> None:
+    """A vLLM states file: hidden_states [rows, 1, HIDDEN] F32, row r filled with r, then
+    token_ids I64, every row of the request."""
+    rows = len(tokens)
+    header = {
+        "hidden_states": {
+            "dtype": "F32",
+            "shape": [rows, 1, HIDDEN],
+            "data_offsets": [0, rows * HIDDEN * 4],
+        },
+        "token_ids": {
+            "dtype": "I64",
+            "shape": [rows],
+            "data_offsets": [rows * HIDDEN * 4, rows * (HIDDEN * 4 + 8)],
+        },
+    }
+    head = json.dumps(header).encode()
+    head += b" " * (-len(head) % 8)
+    body = b"".join(struct.pack("<f", r) * HIDDEN for r in range(rows))
+    body += b"".join(struct.pack("<q", t) for t in tokens)
+    path.write_bytes(struct.pack("<Q", len(head)) + head + body)
+    Path(str(path) + ".lock").touch()
+
 
 class FakeTeacher:
-    """Writes each request's 'states' into the serving box's states dir, as vLLM does."""
+    """Writes each request's states into the serving box's states dir, as vLLM does."""
 
     def __init__(self, states_dir: Path) -> None:
         self.states_dir, self.n = states_dir, 0
@@ -25,9 +54,9 @@ class FakeTeacher:
         self.n += 1
         path = self.states_dir / "gpu0" / f"req{self.n}.safetensors"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(bytes(prompt) * 1000)
-        Path(str(path) + ".lock").touch()
-        return (force[len(prompt) :] if force else [7] * max_tokens), str(path)
+        answer = force[len(prompt) :] if force else [7] * max_tokens
+        states_file(path, prompt + answer[:-1])
+        return answer, str(path)
 
     def preemptions(self) -> float:
         return 0.0
@@ -55,7 +84,24 @@ def test_an_answer_and_its_states_come_over_once(remote, tmp_path):
     tokens, path = group.complete([1, 2, 3], 4, seed=0)
     assert tokens == [7, 7, 7, 7]
     assert Path(path).parent == local / "remote"
-    assert Path(path).read_bytes() == bytes([1, 2, 3]) * 1000
+    # only the rows from the last prompt token come over, in llama-states' layout
+    header = models.safetensors_header(Path(path))
+    assert header["hidden_states"]["shape"] == [4, 1, HIDDEN]
+    assert header["token_ids"]["shape"] == [6]
+    raw = Path(path).read_bytes()
+    data = raw[8 + struct.unpack("<Q", raw[:8])[0] :]
+    first = struct.unpack("<q", data[slice(*header["first_row"]["data_offsets"])])[0]
+    assert first == 2
+    rows = struct.unpack("<12f", data[slice(*header["hidden_states"]["data_offsets"])])
+    assert rows == (2.0,) * 3 + (3.0,) * 3 + (4.0,) * 3 + (5.0,) * 3
+    assert struct.unpack("<6q", data[slice(*header["token_ids"]["data_offsets"])]) == (
+        1,
+        2,
+        3,
+        7,
+        7,
+        7,
+    )
     # the serving box deletes its copy after sending the last byte, so a moment after the download
     deadline = time.monotonic() + 5
     while list(serving.rglob("*.safetensors*")) and time.monotonic() < deadline:
@@ -136,7 +182,7 @@ def test_requests_take_the_tunnels_in_turn(remote, tmp_path):
         assert group.urls == [url, url2] and group.alive()
         for n in range(4):
             tokens, path = group.complete([n + 1], 2, seed=n)
-            assert tokens == [7, 7] and Path(path).read_bytes() == bytes([n + 1]) * 1000
+            assert tokens == [7, 7] and models.safetensors_header(Path(path))["first_row"]
             servers.discard(path)
         assert other.n == 102, "every other request went to the second tunnel"
     finally:
