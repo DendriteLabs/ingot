@@ -3,7 +3,7 @@
 import { el, mount, link } from "./js/dom.js";
 import { fmtDateTime, fmtDuration, fmtRelative, shortHotkey } from "./js/format.js";
 import { $, minerLink, mountHeader, placeTip, svgEl } from "./js/page.js";
-import { AA, ROUND_BENCH, aaEstimate, benchColumns, complete, kingNumber, loadNoise, noiseLine, protocolNote, rankKings as rank, roundRuns } from "./js/benchmarks.js";
+import { AA, ROUND_BENCH, aaEstimate, aaPendingNote, benchColumns, complete, kingNumber, loadNoise, noiseLine, protocolNote, rankKings as rank, roundRuns } from "./js/benchmarks.js";
 
 const POLL_MS = 5000;
 const STAGES = {
@@ -326,7 +326,7 @@ function renderKingPicker(ranked, pick, redraw, runs) {
     return el("li", {
       role: "option", id: `king-option-${i}`, "aria-selected": String(row === pick),
       class: row.done === total ? null : "running",
-      title: aa ? `AA Intelligence Index, estimated: ${(100 * aa.share).toFixed(0)}% of the teacher's scores kept` : `${row.done} of ${total} benchmarks done`,
+      title: aa ? `AA Intelligence Index, estimated: ${(100 * aa.share).toFixed(0)}% of the teacher's scores kept${aaPendingNote(aa)}` : `${row.done} of ${total} benchmarks done`,
     },
     el("span", { class: "kp-name" }, `King ${numeralOf(row.king)}`),
     el("span", { class: "kp-done" }, `${row.done}/${total}`),
@@ -382,6 +382,8 @@ function renderBenchmarkCharts(results, benchmarks) {
   ];
   const pct = (v) => `${v.toFixed(1)}%`;
   const signed = (v) => `${v < 0 ? "−" : "+"}${Math.abs(v).toFixed(1)}`;
+  // five or six benchmarks as one row of column cards; the 8-bit round's seven keep the 3 + 4 grid of bar cards
+  const asColumns = benchmarks.length === 5 || benchmarks.length === 6;
   mount($("benchmark-charts"), ...benchmarks.map(([name, kind]) => {
     const mine = runs.filter((r) => r.benchmark === name);
     const rows = models.map((m) => ({ ...m, run: mine.find(m.is) }));
@@ -420,7 +422,7 @@ function renderBenchmarkCharts(results, benchmarks) {
         scored(row) ? pct(run.score) : pending));
     };
     const noisy = noiseLine(noise, name, rows.find((row) => row.tone === "genesis")?.run);
-    if (benchmarks.length === 5) {
+    if (asColumns) {
       return el("article", { class: "benchmark-card" },
         el("div", { class: "benchmark-chart-head" }, el("h3", {}, name), el("div", { class: "benchmark-sub" }, el("span", { class: "benchmark-kind" }, kind), noisy)),
         el("div", { class: "bench-rows" }, benchColumns(rows.map((row) => ({
@@ -432,7 +434,8 @@ function renderBenchmarkCharts(results, benchmarks) {
       el("div", { class: "benchmark-chart-head" }, el("h3", {}, name), el("span", { class: "benchmark-kind" }, kind)),
       el("div", { class: "bench-rows" }, noisy, ...rows.map(bar)));
   }));
-  $("benchmark-charts").classList.toggle("five", benchmarks.length === 5);
+  $("benchmark-charts").classList.toggle("cols", asColumns);
+  $("benchmark-charts").style.setProperty("--cols", benchmarks.length);
   mount($("benchmarks-protocol"), protocolNote(runs, selectedRound));
 }
 

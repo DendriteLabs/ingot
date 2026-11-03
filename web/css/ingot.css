@@ -268,9 +268,9 @@ main { display: flex; flex-direction: column; gap: 64px; padding-top: 56px; padd
 .benchmark-charts { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 16px; }
 .benchmark-card { min-width: 0; grid-column: span 4; }
 .benchmark-card:nth-child(n + 4) { grid-column: span 3; }
-.benchmark-charts.five { grid-template-columns: repeat(5, minmax(0, 1fr)); }
-.benchmark-charts.five .benchmark-card, .benchmark-charts.five .benchmark-card:nth-child(n + 4) { grid-column: auto; }
-.benchmark-charts.five .benchmark-chart-head { flex-direction: column; align-items: stretch; gap: 3px; }
+.benchmark-charts.cols { grid-template-columns: repeat(var(--cols, 5), minmax(0, 1fr)); }
+.benchmark-charts.cols .benchmark-card, .benchmark-charts.cols .benchmark-card:nth-child(n + 4) { grid-column: auto; }
+.benchmark-charts.cols .benchmark-chart-head { flex-direction: column; align-items: stretch; gap: 3px; }
 .benchmark-sub { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .benchmark-sub .benchmark-noise { letter-spacing: 0; text-transform: none; }
 .benchmark-chart-head {
@@ -478,7 +478,7 @@ button.zip:disabled { opacity: 0.6; cursor: wait; }
   .samples-table .c-prompt, .samples-table .c-king, .domains-table .c-bar, .domains-table .c-count { display: none; }
 }
 @media (max-width: 1180px) {
-  .benchmark-charts.five { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .benchmark-charts.cols { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 960px) {
   .benchmark-card, .benchmark-card:nth-child(n + 4) { grid-column: span 6; }
@@ -488,7 +488,7 @@ button.zip:disabled { opacity: 0.6; cursor: wait; }
 }
 @media (max-width: 560px) {
   .benchmark-card, .benchmark-card:nth-child(n + 4) { grid-column: span 12; }
-  .benchmark-charts.five { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .benchmark-charts.cols { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .row, main { padding-left: 16px; padding-right: 16px; }
   main { gap: 48px; padding-top: 36px; }
   .hero h1 { font-size: 42px; }

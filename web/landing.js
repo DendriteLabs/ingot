@@ -5,7 +5,7 @@ import { el, mount, link } from "./js/dom.js";
 import { fmtRelative } from "./js/format.js";
 import { $, mountHeader, svgEl } from "./js/page.js";
 import { renderTokens } from "./js/tokens.js";
-import { AA, ROUND_BENCH, SIZES_GB, aaEstimate, benchColumns, loadNoise, noiseLine, protocolNote, rankKings, roundRuns, scoreOf } from "./js/benchmarks.js";
+import { AA, ROUND_BENCH, SIZES_GB, aaEstimate, aaPendingNote, benchColumns, loadNoise, noiseLine, protocolNote, rankKings, roundRuns, scoreOf } from "./js/benchmarks.js";
 
 const ROUND = "q2";
 const { benchmarks: BENCHMARKS, teacher: TEACHER_RUN } = ROUND_BENCH[ROUND];
@@ -108,7 +108,7 @@ function render() {
     .map((m) => ({ ...m, aa: m.est.aa, estimate: "ours" }));
   const aaRows = [teacher, ...estimated.reverse(), ...AA.published.map((m) => ({ ...m, tone: "other", name: m.label, estimate: m.estimate ? "AA" : null }))];
   renderBars($("index-chart"), aaRows, (m) => m.aa, (m) => (m.estimate === "ours" ? `≈${Math.round(m.aa)}` : `${m.aa}`), 40,
-    (m) => (m.estimate === "ours" ? `our estimate: ${(100 * m.est.share).toFixed(0)}% of the teacher's scores kept on four shared benchmarks`
+    (m) => (m.estimate === "ours" ? `our estimate: ${(100 * m.est.share).toFixed(0)}% of the teacher's scores kept on four shared benchmarks${aaPendingNote(m.est)}`
       : m.estimate ? "Artificial Analysis's own estimate" : `Artificial Analysis Intelligence Index ${AA.version}`), teacher);
 }
 
@@ -183,7 +183,7 @@ function renderScores(models) {
       delta: r.score != null && base != null && r.tone !== "genesis" ? r.score - base : null,
     })), base);
     const noisy = noiseLine(noise, name, runs.find((r) => r.benchmark === name && r.model === GENESIS.run));
-    if (BENCHMARKS.length === 5) {
+    if (BENCHMARKS.length >= 5) {
       return el("article", { class: "benchmark-card" },
         el("div", { class: "benchmark-chart-head" }, el("h3", {}, name), el("div", { class: "benchmark-sub" }, el("span", { class: "benchmark-kind" }, kind), noisy)),
         el("div", { class: "bench-rows" }, columns()));
@@ -192,7 +192,8 @@ function renderScores(models) {
       el("div", { class: "benchmark-chart-head" }, el("h3", {}, name), el("span", { class: "benchmark-kind" }, kind)),
       el("div", { class: "bench-rows" }, noisy, ...rows.map(bar)));
   }));
-  $("benchmark-charts").classList.toggle("five", BENCHMARKS.length === 5);
+  $("benchmark-charts").classList.toggle("cols", BENCHMARKS.length >= 5);
+  $("benchmark-charts").style.setProperty("--cols", BENCHMARKS.length);
   mount($("scores-protocol"), protocolNote(runs, ROUND));
 }
 

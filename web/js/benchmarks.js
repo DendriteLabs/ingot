@@ -13,7 +13,7 @@ export const ROUND_BENCH = {
     protocol: "t1-minp05-32k-150", teacher: "Qwen3.8-27B-BF16-t1minp05-32k", genesis: "Ingot-genesis-27B-Q2-t1minp05-32k",
     topK: 20,
     benchmarks: [["Terminal-Bench 2.1", "terminal"], ["SWE-bench Multilingual", "coding"], ["GPQA Diamond", "science"],
-      ["τ³-bench Banking", "tool use"], ["MATH-500", "math"]],
+      ["τ³-bench Banking", "tool use"], ["MATH-500", "math"], ["BBEH Mini", "reasoning"]],
   },
   fp8: { protocol: "sampled-16k-150", ids: ["sampled-16k-150-v1"], teacher: "Qwen3.8-27B-BF16", genesis: "Ingot-genesis-27B-FP8", benchmarks: BENCHMARKS },
 };
@@ -119,17 +119,24 @@ export const AA = {
   shared: { coding: ["SWE-bench Multilingual", "Terminal-Bench 2.1"], reasoning: ["GPQA Diamond", "MATH-500"] },
   exponent: 2.1,
 };
+// The model needs a score on all four; a teacher benchmark without a score yet (a rerun replaces the
+// finished row in the feed) is left out of its group, which then averages the rest, and `pending` names it.
 export function aaEstimate(runs, model, teacher) {
   const values = [];
+  const pending = [];
   for (const names of Object.values(AA.shared)) {
-    const shares = names.map((name) => [scoreOf(runs, model, name), scoreOf(runs, teacher, name)])
-      .filter(([mine, teacher]) => mine != null && teacher > 0).map(([mine, teacher]) => Math.min(mine / teacher, 1));
-    if (shares.length !== names.length) return null;
+    const pairs = names.map((name) => [name, scoreOf(runs, model, name), scoreOf(runs, teacher, name)]);
+    if (pairs.some(([, mine]) => mine == null)) return null;
+    pending.push(...pairs.filter(([, , ref]) => !(ref > 0)).map(([name]) => name));
+    const shares = pairs.filter(([, , ref]) => ref > 0).map(([, mine, ref]) => Math.min(mine / ref, 1));
+    if (!shares.length) return null;
     values.push(shares.reduce((a, b) => a + b, 0) / shares.length);
   }
   const share = values.reduce((a, b) => a + b, 0) / values.length;
-  return { aa: AA.teacher * share ** AA.exponent, share };
+  return { aa: AA.teacher * share ** AA.exponent, share, pending };
 }
+// the estimate's note when a teacher run was left out
+export const aaPendingNote = (est) => (est?.pending?.length ? ` (${est.pending.join(" and ")} left out until the teacher's run finishes)` : "");
 
 // the files people download, in decimal GB
 export const SIZES_GB = { q2: 5.95, fp8: 28.6, teacher: 54.4 };
