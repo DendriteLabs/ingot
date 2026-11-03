@@ -280,9 +280,7 @@ async function loadBenchmarks() {
     const doc = await res.json();
     const { results } = doc;
     if (!Array.isArray(results)) throw new Error("benchmark feed needs a results array");
-    const { genesis } = ROUNDS[selectedRound];
-    mount($("benchmarks-meta"), el("b", {}, link(hubUrl(state.teacher), "Qwen BF16")), ": the unquantized teacher · ",
-      el("b", {}, link(hubUrl(genesis.repo), genesis.name)), `: ${genesis.about}`);
+    $("benchmarks-meta").textContent = "";
     const fingerprint = JSON.stringify([doc, noise, selectedRound, (state?.kings ?? []).map((k) => k.name)]);
     if (fingerprint === benchmarkDocument) {
       return;
@@ -587,7 +585,7 @@ function renderHistory() {
   const kings = kingGains();
   const ids = new Set(kings.map((k) => k.id));
   const rows = state.history.filter((e) => e.won != null && ids.has(e.king_id));
-  $("history-meta").textContent = `${ROUNDS[selectedRound].label} · ${rows.length} shown`;
+  $("history-meta").textContent = `${rows.length} shown`;
   if (!rows.length) {
     mount($("history-wrap"), el("div", { class: "empty" }, "no completed duels yet."));
     return;
