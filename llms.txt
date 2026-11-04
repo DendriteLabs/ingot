@@ -146,10 +146,12 @@ scored. For each model, per answer token:
 Lower is better. The teacher rereading its own answer gives the noise floor, recorded with
 every eval: batching alone makes two runs of the same model differ by about that much.
 
-Every eval runs on one machine, the eval box: eight NVIDIA RTX PRO 6000 Blackwell Server Edition
-GPUs (96 GB each, driver 595.84, CUDA 13.2), two Xeon Platinum 8563C (104 cores) and 1 TB of RAM,
-Ubuntu 24.04. Six GPUs serve the teacher in vLLM; the king reads on the seventh and the
-challenger on the eighth, one GPU each. The fork is built on that box (`scripts/build_llama.sh`)
+Every eval runs on two machines, each with eight NVIDIA RTX PRO 6000 Blackwell Server Edition
+GPUs (96 GB each, driver 595.91, CUDA 13.2), 1 TB of RAM and Ubuntu 24.04. The eval box (two AMD
+EPYC 9575F, 128 cores) serves the teacher in vLLM on two GPUs, reads the king on three and the
+challenger on three. The teacher box (two Xeon 6767P, 128 cores) serves the teacher in vLLM on
+all eight GPUs; the eval box splits the teacher's work between its own two GPUs and the teacher
+box. The fork is built on both boxes (`scripts/build_llama.sh`)
 with CUDA 13.0 and GCC 13.3, its kernels for `sm_120a` only: a q2 model is read with the fork's
 PQ2_0 CUDA kernels as they compile for Blackwell.
 
