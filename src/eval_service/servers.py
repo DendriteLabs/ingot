@@ -28,6 +28,9 @@ from loguru import logger as log
 from common.config import REPO_ROOT, settings
 from eval_service import config, timing
 
+# a vllm executable whose vLLM loads Prism ggufs: set, gguf models are read by it, not llama-states
+GGUF_VLLM = os.environ.get("INGOT_GGUF_VLLM")
+
 HIDDEN_STATES_DIR = settings().hidden_states_dir
 _CACHE_RE = re.compile(r"GPU KV cache size: ([\d,]+) tokens")
 _ERROR_RE = re.compile(r"\b(\w+(?:Error|Exception): .+)")
@@ -64,7 +67,7 @@ class Server:
         with open(self.log, "a") as out:
             self.process = subprocess.Popen(
                 self.command,
-                env=_env(self.gpu),
+                env=_env(self.gpu, self.command[0]),
                 stdout=out,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
@@ -198,6 +201,8 @@ class Group:
         self, prompt: list[int], max_tokens: int, seed: int, force: list[int] | None = None
     ) -> tuple[list[int], str]:
         """Answer token ids and the hidden-state file of one request."""
+        if GGUF_VLLM and force is not None and self.role in ("king", "challenger"):
+            return self._prefill_read(prompt, force)
         body = {
             "model": "candidate",
             "prompt": prompt,
@@ -219,7 +224,35 @@ class Group:
             resp = httpx.post(f"{server.url}/v1/completions", json=body, timeout=None)
         resp.raise_for_status()
         out = resp.json()
-        return out["choices"][0]["token_ids"], out["kv_transfer_params"]["hidden_states_path"]
+        path = out["kv_transfer_params"]["hidden_states_path"]
+        if GGUF_VLLM and self.role in ("king", "challenger", "teacher"):
+            from eval_service.teacher_server import keep_answer_rows
+
+            keep_answer_rows(Path(path), len(prompt) - 1)
+        return out["choices"][0]["token_ids"], path
+
+    def _prefill_read(self, prompt: list[int], force: list[int]) -> tuple[list[int], str]:
+        """A forced read as one prefill pass over the prompt and the answer but its last token: a
+        row for every token a forced decode would feed."""
+        body = {
+            "model": "candidate",
+            "prompt": force[:-1],
+            "max_tokens": 1,
+            "temperature": 0.0,
+            "ignore_eos": True,
+            "kv_transfer_params": {"include_output_tokens": False},
+        }
+        with (
+            self._hold(len(force), first=True) as server,
+            timing.stages.timed(f"{self.role} request"),
+        ):
+            resp = httpx.post(f"{server.url}/v1/completions", json=body, timeout=None)
+        resp.raise_for_status()
+        path = resp.json()["kv_transfer_params"]["hidden_states_path"]
+        from eval_service.teacher_server import keep_answer_rows
+
+        keep_answer_rows(Path(path), len(prompt) - 1)
+        return force[len(prompt) :], path
 
     @contextlib.contextmanager
     def _hold(self, n_tokens: int, *, first: bool) -> Generator[Server]:
@@ -570,7 +603,7 @@ def serve(models: dict[str, Path]) -> dict[str, Groups]:
                 + (" or INGOT_TEACHER_URL" if role == "teacher" else "")
             )
         log.info("starting the {} on GPUs {}: {}", role, gpus, model_dir)
-        if any(model_dir.glob("*.gguf")):
+        if any(model_dir.glob("*.gguf")) and not GGUF_VLLM:
             _groups[role] = LlamaGroup(model_dir, gpus, role)
         else:
             _groups[role] = Group(model_dir, gpus, config.MEMORY_SHARE[role], role)
@@ -606,10 +639,11 @@ def _command(model_dir: Path, gpu: int, share: float, states_dir: Path) -> list[
         "kv_role": "kv_producer",
         "kv_connector_extra_config": {"shared_storage_path": str(states_dir)},
     }
+    gguf = next(model_dir.glob("*.gguf"), None) if GGUF_VLLM else None
     return [
-        str(Path(sys.executable).with_name("vllm")),
+        GGUF_VLLM if gguf and GGUF_VLLM else str(Path(sys.executable).with_name("vllm")),
         "serve",
-        str(model_dir),
+        str(gguf or model_dir),
         "--served-model-name",
         "candidate",
         "--host",
@@ -626,11 +660,11 @@ def _command(model_dir: Path, gpu: int, share: float, states_dir: Path) -> list[
         # the extractor's supported setup: a whole prompt is one prefill pass, and every row is
         # computed for its own request (prefix-cache reuse is not bit-exact)
         "--max-num-batched-tokens",
-        str(config.MAX_MODEL_LEN),
+        str(2 * config.MAX_MODEL_LEN if gguf else config.MAX_MODEL_LEN),
         "--no-enable-chunked-prefill",
         "--no-enable-prefix-caching",
         "--max-num-seqs",
-        "64",
+        "256",
         "--mamba-ssm-cache-dtype",
         "float32",
         # sm_120's FlashInfer GDN prefill kernel is about 1% off the reference
@@ -645,10 +679,13 @@ def _command(model_dir: Path, gpu: int, share: float, states_dir: Path) -> list[
     ]
 
 
-def _env(gpu: int) -> dict[str, str]:
+def _env(gpu: int, exe: str | None = None) -> dict[str, str]:
     # The CUDA toolkit comes from the pip wheels inside the venv; FlashInfer's and Triton's JIT
     # (nvcc, ninja, the linker) must be pointed at it.
-    cu = Path(sysconfig.get_paths()["purelib"]) / "nvidia" / "cu13"
+    purelib = Path(sysconfig.get_paths()["purelib"])
+    if exe and exe == GGUF_VLLM:
+        purelib = next((Path(exe).parent.parent / "lib").glob("python3*/site-packages"))
+    cu = purelib / "nvidia" / "cu13"
     libs = f"{cu}/lib:{cu}/lib64"
     cache = settings().eval_work_dir / "compile-cache"
     return {
@@ -656,7 +693,8 @@ def _env(gpu: int) -> dict[str, str]:
         "CUDA_VISIBLE_DEVICES": str(gpu),
         "CUDA_HOME": str(cu),
         "CUDA_PATH": str(cu),
-        "PATH": f"{cu}/bin:{Path(sys.executable).parent}:{os.environ.get('PATH', '')}",
+        "PATH": f"{cu}/bin:{Path(exe or sys.executable).parent}:{os.environ.get('PATH', '')}",
+        "PYTHONPATH": str(REPO_ROOT / "src"),
         "LD_LIBRARY_PATH": f"{libs}:{os.environ.get('LD_LIBRARY_PATH', '')}",
         "LIBRARY_PATH": f"{libs}:{os.environ.get('LIBRARY_PATH', '')}",
         "NVCC_APPEND_FLAGS": "-DCCCL_DISABLE_CTK_COMPATIBILITY_CHECK",

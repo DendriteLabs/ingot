@@ -211,18 +211,18 @@ class _Evaluation:
             return DIVERGED
         return per_sample([by_role[role] for by_role, _ in results if role in by_role])
 
-    def _room(self, i: int, prompt: list[int], sample: Sample, ahead: bool) -> int:
-        """/dev/shm bytes the sample's files may take: the king's and the challenger's, the
-        teacher's unless answered ahead, and on a rerun the teacher's again. llama-states and a
-        remote teacher write the answer rows only, llama-states in float32."""
-        full = state_bytes(prompt, sample, self.state_bytes)
-        answer = state_bytes(prompt, sample, self.state_bytes, answer_only=True)
-        readers = sum(
-            2 * answer if isinstance(self.groups[role], servers.LlamaGroup) else full
-            for role in ("king", "challenger")
-        )
-        teacher_file = answer if isinstance(self.groups["teacher"], servers.RemoteGroup) else full
-        return readers + ((not ahead) + (i % config.RERUN_EVERY == 0)) * teacher_file
+    def _readers(self, i: int) -> int:
+        return 2 + (i % config.RERUN_EVERY == 0)
+
+    def _teacher_room(self, i: int, prompt: list[int], sample: Sample) -> int:
+        """Booked before the teacher answers: its answer rows at the full budget, and the readers'
+        prompt rows, which their files hold until they are cut to the answer rows."""
+        teacher = state_bytes(prompt, sample, self.state_bytes, answer_only=True)
+        return teacher + self._readers(i) * len(prompt) * self.state_bytes
+
+    def _reader_room(self, i: int, answer: list[int]) -> int:
+        """The readers' answer rows, booked once the answer is known."""
+        return self._readers(i) * len(answer) * self.state_bytes
 
     def _sample(self, i: int, sample: Sample) -> Result:
         paths: dict[str, str] = {}  # role -> the hidden-state file its server wrote
@@ -233,8 +233,9 @@ class _Evaluation:
         try:
             prompt = _render(self.tokenizer, sample.messages, sample.tools)
             ahead = self.prefetched.pop(i, None)
-            with timing.stages.timed("shm wait"):
-                stack.enter_context(ROOM.reserve(self._room(i, prompt, sample, ahead is not None)))
+            if ahead is None:
+                with timing.stages.timed("shm wait"):
+                    stack.enter_context(ROOM.reserve(self._teacher_room(i, prompt, sample)))
             if ahead is not None:
                 answer, paths["teacher"] = ahead
             else:
@@ -242,6 +243,7 @@ class _Evaluation:
                     answer, paths["teacher"] = generate(
                         self.groups["teacher"], prompt, i, sample.id, answer_budget(sample)
                     )
+            stack.enter_context(ROOM.reserve(self._reader_room(i, answer), wait=False))
             with timing.stages.timed("read"):
                 self._read_along(i, sample, prompt, answer, paths)
             with timing.stages.timed("compare"):
@@ -492,10 +494,10 @@ class _Room:
         self.cond, self.promised = threading.Condition(), 0
 
     @contextlib.contextmanager
-    def reserve(self, nbytes: int) -> Generator[None]:
+    def reserve(self, nbytes: int, wait: bool = True) -> Generator[None]:
         with self.cond:
             # with nothing promised no request of ours is in flight to free room by waiting
-            while self.promised and not self._fits(nbytes):
+            while wait and self.promised and not self._fits(nbytes):
                 self.cond.wait(5)
             self.promised += nbytes
         try:

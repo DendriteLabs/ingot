@@ -8,7 +8,7 @@ LLAMA_STATES = "build/llama_states/llama-states"
 LLAMA_BATCH = 2048
 # llama-states processes per GPU per role: a read mostly writes its states file, so several
 # share a GPU
-LLAMA_PER_GPU = 4
+LLAMA_PER_GPU = 6
 # A read that takes longer than LLAMA_READ_S plus LLAMA_S_PER_1K per thousand tokens is a hung
 # process: it is stopped and blamed on its GPU's model.
 LLAMA_READ_S = 120
@@ -31,7 +31,7 @@ KL_MARGIN = 0.03
 # One vLLM server per GPU. The comparison math runs on the king's and the challenger's GPUs, whose
 # servers leave room for it (an lm_head copy and a few GiB of work space). The teacher's share
 # leaves room for vLLM's start-up peak above it and the eval service's own CUDA context on GPU 0.
-MEMORY_SHARE = {"teacher": 0.90, "king": 0.80, "challenger": 0.80}
+MEMORY_SHARE = {"teacher": 0.90, "king": 0.65, "challenger": 0.65}
 BASE_PORT = 9100
 SERVER_START_S = 3600
 # The hidden states the servers write per token: the last block's, which gives the next-token
@@ -47,7 +47,7 @@ SAMPLING = {"temperature": 1.0, "top_p": 0.95, "top_k": 20}
 # Every Nth sample the teacher reads its own answer again: the noise floor batching adds.
 RERUN_EVERY = 10
 # Samples in flight. Each server's share is bounded by its cache (_hold) and --max-num-seqs.
-WORKERS = 384
+WORKERS = 800
 # Samples of the next eval the teacher answers while the current one drains (run.Prefetch): once
 # every sample is admitted, the teacher's servers empty out over the last long answers. The
 # answers' state files wait in /dev/shm.
