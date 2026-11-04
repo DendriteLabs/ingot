@@ -45,7 +45,7 @@ revision = "main"
 [dataset]
 # Hugging Face Parquet dataset and split. Empty repo = the local JSONL at INGOT_DATASET_PATH.
 repo = "dendriteholdings/ingot_corpus"
-revision = "6ec9a55d37596f6c435ebebf0b252f009b7ae112"
+revision = "fff3f0aa8b6a904e1472b7653f7ddb04bf5ca322"
 split = "chungus"
 
 [dataset.extra]

@@ -70,10 +70,11 @@ def test_the_card(spec):
     assert "Running it" not in card(row, "Ingot-I-27B-FP8", spec.pair("qwen38_27b", "fp8"), [])
 
     # king I beat genesis 0.08 → 0.072 (10%), king II beat king I 0.072 → 0.0648 (10% more)
-    steps = [Step(0.072, 0.08, 0.45, 0.5), Step(0.0648, 0.072, 0.405, 0.45)]
+    steps = [Step(0.072, 0.08), Step(0.0648, 0.072)]
     text = card(row, "Ingot-II-27B-Q2", spec.pair("qwen38_27b", "q2"), steps)
-    assert "| this model, in its winning eval | 0.06480 | 0.4050 |" in text
-    assert "| the king it beat, same eval | 0.07200 | 0.4500 |" in text
+    assert "| this model, in its winning eval | 0.06480 |" in text
+    assert "| the king it beat, same eval | 0.07200 |" in text
+    assert "hidden-state distance" not in text
     assert "closer than genesis" not in text and "19.0%" not in text
 
 

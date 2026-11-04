@@ -6,8 +6,8 @@ challenger on a few samples, through the same scoring as the eval service.
         [--teacher DIR] [--king DIR] [--challenger DIR]
 
 Models default to the teacher and genesis from chain.toml, genesis playing both king and
-challenger, so the two must land equally close to the teacher. Prints KL and the hidden-state
-distance per model, the noise floor and the wall time; writes one record per sample.
+challenger, so the two must land equally close to the teacher. Prints each model's KL, the noise
+floor and the wall time; writes one record per sample.
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ def main() -> None:
     finally:
         servers.stop_all()
     for name, d in (("challenger", duel.challenger), ("king", duel.king), ("noise", duel.noise)):
-        print(f"{name:10s} KL {d.kl:.5f}  distance {d.dist:.4f}")
+        print(f"{name:10s} KL {d.kl:.5f}")
     print(
         f"won: {duel.won}; {len(samples)} samples in {time.perf_counter() - started:.0f}s"
         " including server start-up"

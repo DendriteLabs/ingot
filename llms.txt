@@ -121,27 +121,27 @@ The evaluation dataset is the Hugging Face Parquet dataset and split named in `c
 `[dataset]`, plus `[dataset.extra]`: public Terminal-Bench-Science leaderboard runs that may be
 used but not redistributed, which every validator converts into rows itself before drawing
 (`eval_service/dataset.py`, `common/agent_traces.py`); each eval records the revision of both it
-used. The evaluator draws `SAMPLES_PER_DOMAIN` (40) prompts from every domain and
-`DOMAIN_SAMPLES` (150) from each agent domain, swe and terminal, seeded by the block hash of your
-`r2ready` commitment. Inside a domain it spreads the draw as evenly as possible over the languages
-available there, then picks rows at random from each language; the seed makes the same draw
-reproducible on every validator. An agent domain's row is a whole agent trajectory in
-mini-swe-agent's format, the harness of the Terminal-Bench and SWE-bench runs we compare kings
-against: swe holds Qwen3.8-27B's mini-swe-agent runs from `nvidia/Open-SWE-Traces`, its language
-the repository's; terminal holds three equal shares, Long-Horizon Terminal-Bench 2.0 leaderboard
-runs (`lhtb`), the Terminal-Bench-Science runs (`tbsci`) and Qwen3.8-27B's and Nemotron-Pivot's
-Terminus-2 runs rewritten to the format (`broad`), successes and failures alike
-(`scripts/build_agent_corpus.py`). Runs on a SWE-bench Multilingual repository or a Terminal-Bench
-2.1 task are left out. The draw cuts a trajectory before a seeded random assistant turn after the
+used. The evaluator draws `DOMAIN_SAMPLES` prompts per domain (terminal 300, swe 250, reasoning
+100, science 100, math 50), seeded by the block hash of your `r2ready` commitment. Inside a domain it spreads
+the draw as evenly as possible over the strata available there (a swe row's language, a terminal
+row's source), then picks rows at random from each; the seed makes the same draw reproducible on
+every validator. An agent domain's row is a whole agent trajectory in mini-swe-agent's format: swe holds
+Qwen3.8-27B's own repository-fixing runs on public repositories, its language the repository's;
+terminal holds equal shares of three sources, public long-horizon terminal-task runs, public
+scientific terminal-task runs and the teacher's own rollouts on public terminal tasks, successes
+and failures alike. Runs on a SWE-bench Multilingual repository or a Terminal-Bench 2.1 task are
+left out, and no benchmark we report on is in the corpus. Science rows are graduate-level
+multiple-choice questions, math rows competition problems, reasoning rows generated puzzles that
+take a long chain of exact bookkeeping (state tracking, multi-step arithmetic, boolean evaluation,
+tables, spatial moves, scheduling); these are answered, not read from a trajectory. The draw cuts
+a trajectory before a seeded random assistant turn after the
 first, one whose prompt leaves room for the answer in `MAX_MODEL_LEN` (36864) tokens: the prompt
 is the task, the tool schemas, and the agent's earlier tool calls and their output. The teacher answers each
 prompt in vLLM (temperature 1.0, top_p 0.95, top_k 20, at most `MAX_TOKENS` tokens); the
 king and your model then read exactly the teacher's prompt and answer. Only the answer tokens are
-scored. For each model, per answer token:
-
-- KL: KL(teacher ‖ model) between the next-token distributions.
-- Distance: |h_model − h_teacher| / |h_teacher|, the hidden state's distance from the teacher's
-  as a fraction of the teacher's length, averaged over the layers in `LAYERS`.
+scored. For each model, per answer token: KL(teacher ‖ model) between the next-token
+distributions, averaged over the sample's tokens; the eval's score is the mean over the samples, so
+a short answer and a long agent step weigh the same.
 
 Lower is better. The teacher rereading its own answer gives the noise floor, recorded with
 every eval: batching alone makes two runs of the same model differ by about that much.
@@ -158,7 +158,7 @@ PQ2_0 CUDA kernels as they compile for Blackwell.
 **q2 (GGUF)** models read the answer in `llama-states` (`src/eval_service/llama_states/`), a
 small program on the pinned fork's own library, `LLAMA_PER_GPU` (4) processes on the model's
 GPU, each one request at a time, flash attention, a 16-bit KV cache, passes of 2048 tokens, the
-hidden states after every 8th block taken by the fork's own layer capture. The evaluator rebuilds
+last block's hidden state taken by the fork's own layer capture. The evaluator rebuilds
 the next-token distribution from your last hidden state with your own `output_norm` and
 `output.weight`, dequantized exactly and with the fork's Hadamard rotation applied, in float32
 (`GgufHead`, `src/eval_service/metrics.py`); checked against the fork's own logits, the two agree
@@ -172,12 +172,10 @@ logits processor that forces the teacher's tokens and hidden-state extraction at
 (`src/eval_service/servers.py`). The evaluator applies the final norm (float32) and `lm_head`
 (BF16 weights, logits kept in float32) itself from your own tensors.
 
-You win if your KL is lower than the king's by at least `KL_MARGIN` (1.5%) of the king's KL, and
-your distance lower than the king's by at least `DIST_MARGIN` (0.84%) of the king's distance, both
-measured in the same eval: both, so a large gain on one cannot make up for a loss on the other.
-The margins are shares of the king's score, so the absolute bar shrinks as kings near the teacher.
-The margins, the sample counts and the layers are in `src/eval_service/config.py`. A win makes
-you the new king immediately; a loss is final for that hotkey.
+You win if your KL is lower than the king's by at least `KL_MARGIN` (3%) of the king's KL,
+measured in the same eval. The margin is a share of the king's score, so the absolute bar shrinks
+as kings near the teacher. The margin and the sample counts are in `src/eval_service/config.py`.
+A win makes you the new king immediately; a loss is final for that hotkey.
 
 A model that diverges loses: one that leaves the teacher's answer while reading it, or whose score
 comes out NaN or infinite on any sample. A diverged king loses to any challenger that did not

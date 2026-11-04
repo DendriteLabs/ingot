@@ -36,5 +36,5 @@ def test_logits_are_not_rounded_to_bf16(tmp_path: Path):
     lp = FinalHead(tmp_path, "cuda").logprobs(h)
     assert lp.dtype == torch.float32
     assert abs((lp[0, 1] - lp[0, 0]).item() - 0.0625) < 1e-4
-    rounded = (h @ head.cuda().T).float()  # what the eval did before: both logits read 25.0
+    rounded = (h @ head.cuda().T).float()  # in bf16 both logits would read 25.0
     assert rounded[0, 1] == rounded[0, 0]

@@ -628,7 +628,6 @@ function renderHistory() {
       hotkeyCell(e.hotkey),
       el("td", { class: "model vs" }, kingCell(e)),
       el("td", { class: "center" }, marginCell(e.score_challenger, e.score_king, e.margin, e.won)),
-      el("td", { class: "center" }, marginCell(e.dist_challenger, e.dist_king, e.dist_margin, e.won)),
       el("td", { class: "r" }, el("span", { class: `verdict-badge ${v}` }, v)));
     tr.addEventListener("click", (ev) => open(ev, url));
     tr.addEventListener("auxclick", (ev) => ev.button === 1 && open(ev, url));
@@ -639,7 +638,6 @@ function renderHistory() {
     el("thead", {}, el("tr", {},
       el("th", {}, "when"), el("th", {}, "uid"), el("th", {}, "hotkey"), el("th", {}, "vs king"),
       el("th", { class: "center", title: "(king KL − challenger KL) / king KL; a win needs at least this" }, `KL margin${needed(share(state.margins?.kl, rows[0].margin, rows[0].score_king))}`),
-      el("th", { class: "center", title: "(king distance − challenger distance) / king distance; KL decides a win, the challenger may not be further from the teacher than the king" }, `distance${needed(share(state.margins?.dist, rows[0].dist_margin, rows[0].dist_king))}`),
       el("th", { class: "r" }, "result"))),
     el("tbody", {}, body)));
 }

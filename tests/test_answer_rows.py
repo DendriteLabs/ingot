@@ -38,18 +38,6 @@ def reference(states, heads, answer, prompt_len, device):
             lp = ref if role == "teacher" else heads[role].logprobs(own)
             s.kl += (ref_p * (ref - lp)).sum().item()
             s.top1 += (lp.argmax(-1) == ref_top).sum().item()
-    for c in range(0, len(answer) - 1, metrics.CHUNK):
-        rows = slice(prompt_len + c, prompt_len + c + metrics.CHUNK)
-        a = teacher[rows].to(device).float()
-        a_len = a.norm(dim=-1)
-        for role, s in out.items():
-            b = a if role == "teacher" else states[role][rows].to(device).float()
-            for acc, value in (
-                (s.dist, (b - a).norm(dim=-1) / a_len),
-                (s.cos_dist, 1 - (a * b).sum(-1) / (a_len * b.norm(dim=-1))),
-            ):
-                for j, v in enumerate(value.sum(0).tolist()):
-                    acc[j] += v
     return out
 
 

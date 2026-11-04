@@ -1,5 +1,5 @@
-// The token section of the model page: /data/kl-demo.json (built by the ops duel tooling), the teacher's
-// answers to held-out Terminal-Bench 2.1 and SWE-bench Multilingual steps, read by each model token by token.
+// The token section of the model page: /data/kl-demo.json, the teacher's answers to held-out
+// Terminal-Bench 2.1 and SWE-bench Multilingual steps, read by each model token by token.
 
 import { el, mount } from "./dom.js";
 

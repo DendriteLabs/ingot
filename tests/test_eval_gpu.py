@@ -30,6 +30,6 @@ def test_genesis_is_close_and_cannot_beat_itself():
         duel = run.duel(teacher, genesis, genesis, SAMPLES)
     finally:
         servers.stop_all()
-    assert 0 < duel.challenger.kl < 0.05 and 0 < duel.challenger.dist < 0.2, duel
+    assert 0 < duel.challenger.kl < 0.05, duel
     assert duel.noise.kl < duel.challenger.kl, "batching noise must stay below fp8's own drift"
-    assert not duel.won, "a model cannot beat itself by both margins"
+    assert not duel.won, "a model cannot beat itself by the margin"

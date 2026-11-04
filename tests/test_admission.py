@@ -1,5 +1,5 @@
 """A group admits requests in line order, forced reads first: a long request is not overtaken by
-short ones that would fit sooner, which once left the long prompts running at the end of an eval."""
+short ones that would fit sooner."""
 
 from __future__ import annotations
 

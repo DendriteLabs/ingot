@@ -78,15 +78,16 @@ def test_state_after_a_coronation(conn, s, spec):
     assert [(k["name"], k["weight"]) for k in doc["reign"]["kings"]] == [("Ingot-I-27B-FP8", 0.2)]
     assert doc["reign"]["burn"] == {"uid": 0, "weight": 0.8}
     assert doc["stats"] == {"evaluated": 2, "crowned": 1, "queued": 0}
-    assert [(e["hotkey"], e["won"], e["king"], e["dist_challenger"]) for e in doc["history"]] == [
+    assert [(e["hotkey"], e["won"], e["king"], e["score_challenger"]) for e in doc["history"]] == [
         ("hk-lose", False, "Ingot-I-27B-FP8", 0.9),
         ("hk-win", True, "GENESIS", 0.1),
     ]
     assert all(
-        e["dist_margin"] == pytest.approx(-eval_config.DIST_SLACK * e["dist_king"])
+        e["margin"] == pytest.approx(eval_config.KL_MARGIN * e["score_king"])
+        and e["dist_margin"] is None
         for e in doc["history"]
     )
-    assert doc["margins"] == {"kl": eval_config.KL_MARGIN, "dist": -eval_config.DIST_SLACK}
+    assert doc["margins"] == {"kl": eval_config.KL_MARGIN}
     assert [(e["uid"], e["king"], e["score_challenger"]) for e in doc["losers"]] == [
         (8, "Ingot-I-27B-FP8", 0.9)
     ]

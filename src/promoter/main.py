@@ -266,15 +266,13 @@ class Step:
 
     kl: float
     kl_king: float
-    dist: float
-    dist_king: float
 
 
 def lineage(conn: db.Conn, king_id: int, pair: Quant) -> list[Step]:
     """The winning duels of the pair's kings up to this one, oldest first."""
     rows = conn.execute(
         """
-        SELECT e.score_challenger, e.score_king, e.dist_challenger, e.dist_king
+        SELECT e.score_challenger, e.score_king
         FROM kings k
         JOIN LATERAL (
             SELECT * FROM evals e WHERE e.submission_id = k.submission_id AND e.won
@@ -285,15 +283,7 @@ def lineage(conn: db.Conn, king_id: int, pair: Quant) -> list[Step]:
         """,
         (pair.family, pair.name, king_id),
     ).fetchall()
-    return [
-        Step(
-            *(
-                float(r[c])
-                for c in ("score_challenger", "score_king", "dist_challenger", "dist_king")
-            )
-        )
-        for r in rows
-    ]
+    return [Step(float(r["score_challenger"]), float(r["score_king"])) for r in rows]
 
 
 def card(
@@ -494,17 +484,15 @@ def _files(gguf: str, ptq1: str, ptq1_bytes: int, q2_bytes: int | None) -> str:
 
 def _scores(steps: list[Step]) -> str:
     """Its winning duel, against the king it beat on the same samples. No gain over genesis: each
-    eval scores its own samples, and chaining the ratios along the reign overstated the direct
-    gap about threefold when we measured it head to head (2026-10-26)."""
+    eval scores its own samples, so the ratios do not chain along the reign."""
     last = steps[-1]
     return (
         "\n## How close it is to the teacher\n\n"
         "Per answer token, against the BF16 teacher reading the same answer: KL(teacher ‖ model) "
-        "of the next-token distributions, and the hidden-state distance |h − h_teacher| / "
-        "|h_teacher| averaged over every 8th layer. Lower is closer.\n\n"
-        "| | KL | hidden-state distance |\n| --- | --- | --- |\n"
-        f"| this model, in its winning eval | {last.kl:.5f} | {last.dist:.4f} |\n"
-        f"| the king it beat, same eval | {last.kl_king:.5f} | {last.dist_king:.4f} |\n"
+        "of the next-token distributions, averaged over the samples. Lower is closer.\n\n"
+        "| | KL |\n| --- | --- |\n"
+        f"| this model, in its winning eval | {last.kl:.5f} |\n"
+        f"| the king it beat, same eval | {last.kl_king:.5f} |\n"
     )
 
 

@@ -354,7 +354,7 @@ def test_every_unquantized_linear_must_be_listed_embeddings_and_norms_need_not()
     assert (
         check_layout(GENESIS, FAMILY, with_quant(modules_to_not_convert=["model.visual"])) is None
     )
-    # the vision tower is a linear layer too (served whole on the benchmark pod and from HF)
+    # the vision tower is a linear layer too
     dropped = with_quant(modules_to_not_convert=["lm_head", "model.norm"])
     assert layout_reason(GENESIS, dropped) == (
         "not FP8 but missing from modules_to_not_convert: model.visual.blocks.N.attn.qkv"

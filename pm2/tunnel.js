@@ -34,8 +34,7 @@ function tunnel(name, direction, hostKey, portKey, offset = 0) {
       "-o", "ServerAliveInterval=30",
       "-o", "ServerAliveCountMax=3",
       "-o", "BatchMode=yes",
-      // the teacher's hidden states are hundreds of MB per sample; AES-GCM moved 981 MB/s on one
-      // stream between the boxes, the default chacha20 852
+      // the teacher's hidden states are hundreds of MB per sample: AES-GCM, faster here than the default chacha20
       "-c", "aes128-gcm@openssh.com",
       direction, `127.0.0.1:${near}:127.0.0.1:${port}`,
       host,

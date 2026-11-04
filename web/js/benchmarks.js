@@ -5,7 +5,7 @@ import { el } from "./dom.js";
 
 // each round's protocol, teacher and genesis runs, and suite; the 2-bit round's from King XVII on. The 8-bit
 // round's teacher shows the 2-bit round's teacher runs (`teacherFrom`), so both rounds show one teacher; its own
-// 8-bit run only where the 2-bit round has none (AutomationBench). MMMU left the suite on 2026-11-03.
+// 8-bit run only where the 2-bit round has none (AutomationBench). MMMU is no longer in the suite.
 export const ROUND_BENCH = {
   q2: {
     protocol: "t1-minp05-32k-150", teacher: "Qwen3.8-27B-BF16-t1minp05-32k", genesis: "Ingot-genesis-27B-Q2-t1minp05-32k",
@@ -111,7 +111,7 @@ export const scoreOf = (runs, model, benchmark) => {
   return run && complete(run) ? run.score : null;
 };
 
-// Artificial Analysis Intelligence Index (artificialanalysis.ai, v4.3.2, read 2026-10-27): ten
+// Artificial Analysis Intelligence Index (artificialanalysis.ai, v4.3.2): ten
 // evaluations Artificial Analysis runs itself, several with private test sets, so it cannot be run
 // here. AA lists the teacher and the Mac-class models; it has not evaluated Bonsai 2 or any king.
 export const AA = {

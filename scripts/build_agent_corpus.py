@@ -7,7 +7,7 @@ before one of their assistant turns (eval_service.dataset._cut).
         --open-swe <Open-SWE-Traces dir> --ukisai <parquet> --pivot <jsonl> --lhtb <LHTB dir> \\
         --out <out dir> [--corpus <current corpus dir>]
 
-Sources (chosen by their teacher-forced KL against real benchmark runs, duels of 2026-10-27):
+Sources:
   swe       nvidia/Open-SWE-Traces, mini-swe-agent runs by Qwen3.8-27B (CC-BY-4.0); language = the
             repository's, so the draw spreads swe over languages as SWE-bench Multilingual does
   terminal  IntelligenceLab/LHTB-leaderboard, Terminus-2 runs on the 77 Long-Horizon Terminal-Bench

@@ -37,6 +37,11 @@ documented with a reason.
   `Args`/`Returns` sections.
 - An inline comment is one line above the code, in plain words, saying *why*. Never what
   the next line does, never restating a name, never a date, an author or a changelog.
+- No history. A comment states the rule as it is now; never what it was before, when it
+  changed, or what was tried. Git holds that.
+- No lab notes. A comment says what a setting does, never the measurements, run results
+  or observations behind it. `at 128 every GPU ran 13 requests`, `one process kept a GPU
+  10-20% busy` go.
 - No commented-out code; git remembers it.
 - As short as it needs to be and no shorter: cut every word that does not change what the
   reader does next. One line is the norm; a paragraph needs a reason.

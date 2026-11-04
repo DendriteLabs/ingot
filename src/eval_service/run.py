@@ -1,5 +1,6 @@
 """One evaluation: the teacher answers every drawn prompt, the king and the challenger read the same
-tokens, and both are measured against the teacher on the answer tokens; then the win rule."""
+tokens, and both are measured against the teacher's next-token distribution on the answer tokens;
+then the win rule."""
 
 from __future__ import annotations
 
@@ -27,19 +28,18 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class Distance:
-    """How far a model is from the teacher per answer token: mean KL(teacher ‖ model) at the output,
-    and the mean relative hidden-state distance |h - h_teacher| / |h_teacher| over config.LAYERS."""
+class Score:
+    """How far a model is from the teacher: the mean KL(teacher ‖ model) of the next-token
+    distributions per answer token, averaged over the samples."""
 
     kl: float
-    dist: float
 
 
 @dataclass(frozen=True)
 class Duel:
-    challenger: Distance
-    king: Distance
-    noise: Distance
+    challenger: Score
+    king: Score
+    noise: Score
     samples: list[dict[str, Any]] = field(default_factory=list)
 
     @property
@@ -47,31 +47,28 @@ class Duel:
         return won(self.challenger, self.king)
 
 
-def needed(king: Distance) -> Distance:
-    """How much closer on KL a challenger must be than this king, and how much further on the
-    hidden-state distance it may be (a negative lead: the slack)."""
-    return Distance(kl=config.KL_MARGIN * king.kl, dist=-config.DIST_SLACK * king.dist)
+def needed(king: Score) -> Score:
+    """How much closer on KL a challenger must be than this king."""
+    return Score(kl=config.KL_MARGIN * king.kl)
 
 
-def won(challenger: Distance, king: Distance) -> bool:
-    """The challenger must be closer to the teacher on KL by the margin, and no further on the
-    hidden-state distance than the slack. A model whose score is not finite diverged (inf, NaN, or
-    it left the teacher's answer): a diverged challenger loses, and a diverged king loses to any
-    challenger that did not. NaN compares False, so without this a king that diverges on some
-    inputs could never be beaten."""
+def won(challenger: Score, king: Score) -> bool:
+    """The challenger must be closer to the teacher on KL by the margin. A model whose score is not
+    finite diverged (inf, NaN, or it left the teacher's answer): a diverged challenger loses, and a
+    diverged king loses to any challenger that did not. NaN compares False, so without this a king
+    that diverges on some inputs could never be beaten."""
     if not _finite(challenger):
         return False
     if not _finite(king):
         return True
-    bar = needed(king)
-    return king.kl - challenger.kl >= bar.kl and king.dist - challenger.dist >= bar.dist
+    return king.kl - challenger.kl >= needed(king).kl
 
 
-def _finite(d: Distance) -> bool:
-    return math.isfinite(d.kl) and math.isfinite(d.dist)
+def _finite(s: Score) -> bool:
+    return math.isfinite(s.kl)
 
 
-DIVERGED = Distance(kl=math.inf, dist=math.inf)
+DIVERGED = Score(kl=math.inf)
 
 
 class LeftAnswer(ValueError):
@@ -111,9 +108,9 @@ def duel(
     )
     log.info("eval slowest samples: {}", timing.stages.slowest(5))
     return Duel(
-        challenger=evaluation.distance(results, "challenger"),
-        king=evaluation.distance(results, "king"),
-        noise=evaluation.distance(results, "teacher_rerun"),
+        challenger=evaluation.score(results, "challenger"),
+        king=evaluation.score(results, "king"),
+        noise=evaluation.score(results, "teacher_rerun"),
         samples=[record for _, record in results],
     )
 
@@ -140,8 +137,7 @@ class _Evaluation:
         self.tokenizer = load_tokenizer(models["teacher"])
         self.eos = _eos(models["teacher"])
         self.state_bytes = state_bytes_per_token(models["teacher"])
-        # both readers' GPUs: a gguf reader leaves most of its GPU free, and the comparison is a
-        # quarter of an eval's GPU time, too much for one GPU alone
+        # both readers' GPUs: a gguf reader leaves most of its GPU free
         readers = (*settings().gpus("king"), *settings().gpus("challenger"))
         devices = [f"cuda:{gpu}" for gpu in readers]
         self.heads = metrics.heads(models, devices)
@@ -154,8 +150,7 @@ class _Evaluation:
         for dev in devices:
             self.free_devices.put(dev)
         # Each thread that touches a GPU gets its own cuBLAS handle and workspace there; one
-        # thread per GPU keeps that to one, where 128 workers' worth of them once filled the
-        # comparison GPUs.
+        # thread per GPU keeps that to one.
         self.compare_on = {dev: ThreadPoolExecutor(1) for dev in devices}
         self.preemptions_at_start = self._preemptions()
         self.total, self.done, self.started, self.lock = total, 0, 0, threading.Lock()
@@ -209,7 +204,7 @@ class _Evaluation:
             raise RuntimeError("no sample was scored")
         return results
 
-    def distance(self, results: list[Result], role: str) -> Distance:
+    def score(self, results: list[Result], role: str) -> Score:
         """Means over the samples the role read; DIVERGED for a role that left the teacher's
         answer on any sample."""
         if role in self.diverged:
@@ -356,14 +351,10 @@ class _Evaluation:
         return sum(group.preemptions() for group in self.groups.values())
 
 
-def per_sample(sums: Sequence[Any]) -> Distance:
-    """Each sample's per-token means, averaged over the samples: one agent step or one answer
+def per_sample(sums: Sequence[Any]) -> Score:
+    """Each sample's per-token mean, averaged over the samples: one agent step or one answer
     weighs the same whatever its length."""
-    n = len(sums)
-    return Distance(
-        kl=sum(s.kl / max(s.predictions, 1) for s in sums) / n,
-        dist=sum(s.layer_mean_dist / max(s.activations, 1) for s in sums) / n,
-    )
+    return Score(kl=sum(s.kl / max(s.predictions, 1) for s in sums) / len(sums))
 
 
 def answer_budget(sample: Sample) -> int:

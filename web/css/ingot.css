@@ -500,7 +500,7 @@ button.zip:disabled { opacity: 0.6; cursor: wait; }
   .foot .row { flex-direction: column; justify-content: center; height: auto; padding-top: 16px; padding-bottom: 16px; gap: 6px; }
 }
 
-/* ---- the model page and the dashboard head (two pages since 2026-10-27) ---- */
+/* ---- the model page and the dashboard head ---- */
 .links .page-link { font-family: var(--mono); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); padding: 0 10px; text-decoration: none; }
 .links .page-link:hover { color: var(--text); }
 .links .page-link[aria-current="page"] { color: var(--text); }

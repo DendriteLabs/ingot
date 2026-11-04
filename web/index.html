@@ -105,7 +105,7 @@ llama-server -m Ingot-IV-27B-PTQ1_0.gguf -ngl 99 -fa on --jinja</pre>
   <div class="head"><span class="label"><b></b>How it is made</span></div>
   <div class="steps">
     <div class="step"><i>1</i><h3>Submit</h3><p>Miners upload a ternary GGUF with the teacher's exact layout: every weight −1, 0 or +1 times a block scale, the file capped at Bonsai 2's size. The codes and scales are theirs to set.</p></div>
-    <div class="step"><i>2</i><h3>Assay</h3><p>The validator reads every submission against the unquantized teacher on the same prompts: the divergence of its next-token distribution, token by token, and the distance of its hidden states, layer by layer.</p></div>
+    <div class="step"><i>2</i><h3>Assay</h3><p>The validator reads every submission against the unquantized teacher on the same prompts: the divergence of its next-token distribution from the teacher's, token by token.</p></div>
     <div class="step"><i>3</i><h3>Crown</h3><p>A submission measurably closer than the reigning king becomes king, earns the subnet's emission, and is mirrored to Hugging Face with its 1.75-bit file. <a href="dashboard.html">Watch the queue</a>.</p></div>
   </div>
 </section>

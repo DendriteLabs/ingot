@@ -1,6 +1,5 @@
 """How a model's answer tokens compare with the teacher's: next-token KL and top-1 agreement from
-the last layer, and per extracted layer the relative distance and 1 - cosine of the hidden state.
-Summed per sample; the caller averages."""
+the last layer's state through each model's own head. Summed per sample; the caller averages."""
 
 from __future__ import annotations
 
@@ -8,7 +7,7 @@ import fcntl
 import functools
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -167,40 +166,18 @@ def load_states(path: str, read: list[int], first: int) -> torch.Tensor:
     return states[first - offset :]
 
 
-def _zeros() -> list[float]:
-    return [0.0] * len(config.LAYERS)
-
-
 @dataclass
 class Sums:
-    """One model's sums over one sample's answer tokens. Predictions cover every answer token;
-    hidden states cover all but the last, which is never read back in."""
+    """One model's sums over one sample's answer tokens: every answer token has a prediction."""
 
     predictions: int
-    activations: int
     kl: float = 0.0
     top1: float = 0.0
-    dist: list[float] = field(default_factory=_zeros)
-    cos_dist: list[float] = field(default_factory=_zeros)
-
-    @property
-    def layer_mean_dist(self) -> float:
-        """Sum over tokens of the relative distance averaged over the layers."""
-        return sum(self.dist) / len(self.dist)
 
     def summary(self) -> dict[str, Any]:
         """Per-token means, as one sample's record."""
-        p, a = max(self.predictions, 1), max(self.activations, 1)
-        names = [f"L{layer:02d}" for layer in config.LAYERS]
-        return {
-            "kl": _g7(self.kl / p),
-            "top1_agreement": _g7(self.top1 / p),
-            "dist": _g7(self.layer_mean_dist / a),
-            "dist_by_layer": {name: _g7(v / a) for name, v in zip(names, self.dist, strict=True)},
-            "one_minus_cos_by_layer": {
-                name: _g7(v / a) for name, v in zip(names, self.cos_dist, strict=True)
-            },
-        }
+        p = max(self.predictions, 1)
+        return {"kl": _g7(self.kl / p), "top1_agreement": _g7(self.top1 / p)}
 
 
 @torch.no_grad()
@@ -212,8 +189,9 @@ def compare(
 ) -> dict[str, Sums]:
     """Sums for every role in `states` ([rows, layers, hidden] from the last prompt row, whose state
     predicts the first answer token, as load_states returns them), each against
-    `states["teacher"]`, over the rows that read or predict answer tokens."""
-    out = {role: Sums(len(answer), len(answer) - 1) for role in states}
+    `states["teacher"]`, over the rows that predict answer tokens: the KL of the next-token
+    distributions from the last layer's state through each model's own head."""
+    out = {role: Sums(len(answer)) for role in states}
     teacher = states["teacher"]
     for c in range(0, len(answer), CHUNK):
         rows = slice(c, c + CHUNK)
@@ -224,18 +202,6 @@ def compare(
             lp = ref if role == "teacher" else heads[role].logprobs(own)
             s.kl += (ref_p * (ref - lp)).sum().item()
             s.top1 += (lp.argmax(-1) == ref_top).sum().item()
-    for c in range(0, len(answer) - 1, CHUNK):
-        rows = slice(1 + c, 1 + c + CHUNK)
-        a = teacher[rows].to(device).float()
-        a_len = a.norm(dim=-1)
-        for role, s in out.items():
-            b = a if role == "teacher" else states[role][rows].to(device).float()
-            for acc, value in (
-                (s.dist, (b - a).norm(dim=-1) / a_len),
-                (s.cos_dist, 1 - (a * b).sum(-1) / (a_len * b.norm(dim=-1))),
-            ):
-                for j, v in enumerate(value.sum(0).tolist()):
-                    acc[j] += v
     return out
 
 

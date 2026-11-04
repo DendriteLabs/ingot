@@ -19,7 +19,7 @@ from eval_service import config as eval_config
 from eval_service import main as eval_service
 from eval_service import servers
 from eval_service.dataset import Dataset, Sample
-from eval_service.run import Distance, Duel, Scorer
+from eval_service.run import Duel, Score, Scorer
 from model_dedup import config as dedup_config
 from model_dedup import main as model_dedup
 from model_dedup.bank import AUDIT, BANK, GENESIS
@@ -54,7 +54,6 @@ WORKER = "test"
 def rules(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(eval_config, "SAMPLES_PER_DOMAIN", 4)
     monkeypatch.setattr(eval_config, "KL_MARGIN", 0.05)
-    monkeypatch.setattr(eval_config, "DIST_SLACK", 0.05)
     monkeypatch.setattr(validation_config, "MAX_ATTEMPTS", 2)
     # an eval claimed ahead by one test must not reach the next
     monkeypatch.setattr(eval_service, "_pending", None)
@@ -80,15 +79,15 @@ def listing(_uri: str) -> list[str]:
 
 
 def duel(challenger: float, king: float) -> Scorer:
-    """KL and distance both at the given value, so the two margins agree."""
+    """A scorer that returns the given KLs."""
 
     def score(
         _teacher: Path, _challenger: Path, _king: Path, samples: Sequence[Sample], **_: object
     ) -> Duel:
         return Duel(
-            Distance(challenger, challenger),
-            Distance(king, king),
-            Distance(0.0, 0.0),
+            Score(challenger),
+            Score(king),
+            Score(0.0),
             samples=[{"sample_id": sample.id} for sample in samples],
         )
 
@@ -222,7 +221,7 @@ def test_challenger_beats_king_and_gets_paid(conn, s, spec):
         4,
     )
     assert (ev["teacher"], ev["dataset_hash"]) == ("org/teacher@main", "d1")
-    assert (ev["dist_challenger"], ev["dist_king"], ev["noise_kl"]) == (0.1, 0.5, 0.0)
+    assert (ev["dist_challenger"], ev["dist_king"], ev["noise_kl"]) == (None, None, 0.0)
     assert (s.eval_work_dir / "results" / f"{ev['id']}.jsonl").exists()
     assert guard.is_used(conn, "hk-1"), "an evaluated hotkey is spent, win or lose"
 
@@ -359,12 +358,11 @@ def test_the_next_eval_faces_the_new_king(conn, s, spec):
     def score(
         _teacher: Path, challenger: Path, king: Path, samples: Sequence[Sample], **_: object
     ) -> Duel:
-        def of(model: Path) -> Distance:
-            value = 0.1 if "hk-1" in str(model) else 0.5
-            return Distance(value, value)
+        def of(model: Path) -> Score:
+            return Score(0.1 if "hk-1" in str(model) else 0.5)
 
         records = [{"sample_id": sample.id} for sample in samples]
-        return Duel(of(challenger), of(king), Distance(0.0, 0.0), samples=records)
+        return Duel(of(challenger), of(king), Score(0.0), samples=records)
 
     assert evaluate(conn, s, score) and state(conn, first) == states.WON
     assert not evaluate(conn, s, score), "the queue waits while the winner is crowned"
@@ -418,12 +416,11 @@ def test_the_next_eval_is_claimed_and_answered_ahead(conn, s, spec):
         # verdict, which would close the queue for the coronation
         claimed_ahead()
 
-        def of(model: Path) -> Distance:
-            value = 0.1 if "hk-1" in str(model) else 0.5
-            return Distance(value, value)
+        def of(model: Path) -> Score:
+            return Score(0.1 if "hk-1" in str(model) else 0.5)
 
         records = [{"sample_id": sample.id} for sample in samples]
-        return Duel(of(challenger), of(king), Distance(0.0, 0.0), samples=records)
+        return Duel(of(challenger), of(king), Score(0.0), samples=records)
 
     assert evaluate(conn, s, score, prefetcher=FakePrefetch) and state(conn, first) == states.WON
     claimed_ahead()

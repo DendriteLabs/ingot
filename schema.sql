@@ -143,7 +143,7 @@ CREATE TABLE IF NOT EXISTS evals (
     score_challenger DOUBLE PRECISION,   -- mean KL(teacher ‖ model) per answer token
     score_king DOUBLE PRECISION,
     margin DOUBLE PRECISION,             -- the KL lead this eval needed (set once it is scored)
-    dist_challenger DOUBLE PRECISION,    -- mean |h - h_teacher| / |h_teacher| per answer token
+    dist_challenger DOUBLE PRECISION,    -- hidden-state distance of older evals; NULL now that KL alone decides
     dist_king DOUBLE PRECISION,
     dist_margin DOUBLE PRECISION,
     noise_kl DOUBLE PRECISION,           -- the teacher against its own rerun

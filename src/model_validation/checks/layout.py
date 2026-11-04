@@ -66,7 +66,7 @@ def check_layout(layout: Layout, family: Family, config: dict[str, Any]) -> str 
                 return f"{name}{SIDE_SUFFIX}: scale on a non-FP8 weight"
             if len(shape) == 2 and module not in family.embeddings and not _covered(module, skip):
                 unlisted.add(_pattern(module))
-    # all at once, so one fix covers them: three attempts went one module at a time (2026-10-20)
+    # all at once, so one fix covers them instead of one module per attempt
     if unlisted:
         return f"not FP8 but missing from modules_to_not_convert: {', '.join(sorted(unlisted))}"
     if sides:

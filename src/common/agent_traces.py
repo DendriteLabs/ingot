@@ -1,8 +1,7 @@
 """Agent trajectories from other harnesses as the eval reads them: mini-swe-agent's bash tool, the
-format of the Terminal-Bench and SWE-bench runs the corpus is meant to match (duels of 2026-10-27:
-the harness format alone moves a king's KL 1.7x, so every source is rewritten to it). Terminus-2
-(JSON actions in text) and ATIF (Harbor's trajectory format) rewrite here; the eval's draw cuts a
-row before an assistant turn and scores the teacher's answer to the prefix."""
+format every source is rewritten to. Terminus-2 (JSON actions in text) and ATIF (Harbor's
+trajectory format) rewrite here; the eval's draw cuts a row before an assistant turn and scores the
+teacher's answer to the prefix."""
 
 from __future__ import annotations
 
@@ -263,8 +262,6 @@ def terminal_bench_science(root: Path, models: Iterable[str]) -> Iterator[dict[s
                 except (StopIteration, KeyError, TypeError, ValueError):
                     continue
                 key = f"{model}/{r.get('trial_id')}"
-                row = corpus_row(
-                    "terminal", "terminal_bench_science", key, "tbsci", messages, BASH_TOOL
-                )
+                row = corpus_row("terminal", "term_science", key, "science", messages, BASH_TOOL)
                 if row:
                     yield row

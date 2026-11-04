@@ -169,15 +169,15 @@ def run_once(
             (
                 duel.challenger.kl,
                 duel.king.kl,
-                duel.challenger.dist,
-                duel.king.dist,
+                None,  # dist_* columns: only older evals have a hidden-state distance
+                None,
                 duel.noise.kl,
-                duel.noise.dist,
+                None,
                 duel.won,
                 len(duel.samples),  # the ones scored: a failed sample is left out
-                # the leads this eval needed, a share of this king's scores
+                # the lead this eval needed, a share of this king's score
                 run.needed(duel.king).kl,
-                run.needed(duel.king).dist,
+                None,
                 eval_id,
             ),
         )
@@ -186,17 +186,13 @@ def run_once(
     _upload_summary(conn, upload, row["hotkey"], eval_id)
     log.info("eval {}: results stored and uploaded in {:.0f}s", eval_id, time.monotonic() - scored)
     log.info(
-        "eval {} ({} of {} samples): KL challenger {:.5f} vs king {:.5f}, distance {:.4f} vs"
-        " {:.4f} (noise floor {:.5f} / {:.4f}) → {}",
+        "eval {} ({} of {} samples): KL challenger {:.5f} vs king {:.5f} (noise floor {:.5f}) → {}",
         eval_id,
         len(duel.samples),
         len(drawn),
         duel.challenger.kl,
         duel.king.kl,
-        duel.challenger.dist,
-        duel.king.dist,
         duel.noise.kl,
-        duel.noise.dist,
         "WON" if duel.won else "LOST",
     )
     return True
@@ -317,7 +313,7 @@ def main() -> None:
     data = dataset.fetch(spec, s.dataset_path)  # the whole corpus into memory, once
     log.info("dataset {} read in {:.0f}s", data.sha256[:12], time.monotonic() - started)
     fits = run.fits(run.load_tokenizer(teacher_dir))  # the draw sizes prompts with it
-    if not s.teacher_url:
+    if not s.teacher_url or s.gpus("teacher"):
         # a teacher on this box's GPUs loads now, not with the first eval; every eval keeps it
         servers.serve({"teacher": teacher_dir})
     worker = db.register_worker(link.conn(), "eval_service")

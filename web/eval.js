@@ -1,4 +1,4 @@
-// One eval's page: the duel with the king on both win measures, how each domain moved the lead,
+// One eval's page: the duel with the king, how each domain moved the lead,
 // where in the network each model drifts from the teacher, every sample, and the raw artifacts.
 // Reads api/evals/<id>.json.
 
@@ -14,7 +14,9 @@ const pct = (v) => (v == null ? "—" : `${(100 * v).toFixed(2)}%`);
 // lower is closer to the teacher, so the challenger's lead is king − challenger, as a share of the king
 const versus = (chal, king) => (chal === king ? "even" : `${Math.abs((100 * (king - chal)) / king).toFixed(2)}% ${chal < king ? "better" : "worse"}`);
 // a sample a model diverged on has no finite score (published as null) and is left out everywhere
-const finite = (run) => Number.isFinite(run?.kl) && Number.isFinite(run?.dist);
+const finite = (run) => Number.isFinite(run?.kl);
+// older evals also carry a hidden-state distance; KL alone is scored now
+const hasDist = (samples) => samples.some((s) => Number.isFinite(s.runs?.challenger?.dist));
 const scored = (samples) => samples.filter((s) => finite(s.runs.challenger) && finite(s.runs.king));
 const diverged = (doc) => doc.samples.length - scored(doc.samples).length;
 const leftOut = (doc) => (diverged(doc) ? `${diverged(doc)} of ${doc.samples.length} samples diverged and are left out` : "");
@@ -24,7 +26,7 @@ const shown = (doc) => (picked ? groupSamples(scored(doc.samples)).groups.get(pi
 const SERIES = [["challenger", "challenger"], ["king", "king"], ["teacher_rerun", "teacher reread"]];
 const WHAT = {
   "summary.json": "the eval's row: both scores, the margins, the noise floor, seed and timings",
-  "samples.jsonl": "one record per sample: KL, top-1 agreement, 1 − cos and distance by layer for each model",
+  "samples.jsonl": "one record per sample: KL and top-1 agreement for each model (older evals also hold the distance by layer)",
 };
 // records from before the evaluator wrote each sample's domain group by source dataset instead,
 // the datasets with fewer samples than this folded into one row
@@ -84,7 +86,7 @@ function renderDuel(doc) {
   // percentage points it cleared that, or fell short
   const rows = [
     ["KL at the output", e.score_challenger, e.score_king, e.margin],
-    ["hidden-state distance", e.dist_challenger, e.dist_king, e.dist_margin],
+    ...(e.dist_king == null ? [] : [["hidden-state distance", e.dist_challenger, e.dist_king, e.dist_margin]]),
   ].map(([name, chal, king, need]) => {
     const lead = chal == null || king == null ? null : king - chal;
     const share = (v) => (100 * v) / king;
@@ -113,7 +115,7 @@ function renderDuel(doc) {
       el("tbody", {}, rows))),
     el("p", { class: "note" },
       (diverged(doc) ? `${diverged(doc)} of ${doc.samples.length} samples gave a model no finite score (it diverged); a diverged challenger loses. ` : "")
-      + `Lower is closer to the teacher. Noise floor, the teacher reading its own answers again: KL ${num(e.noise_kl)}, distance ${num(e.noise_dist, 4)}. `
+      + `Lower is closer to the teacher. Noise floor, the teacher reading its own answers again: KL ${num(e.noise_kl)}${e.noise_dist == null ? "" : `, distance ${num(e.noise_dist, 4)}`}. `
       + `Run time: challenger ${secs(e.challenger_s)}, king ${secs(e.king_s)}. Seed ${e.seed}, dataset ${e.dataset_hash}.`));
 }
 
@@ -145,8 +147,8 @@ function totals(samples) {
     t.klChal += s.runs.challenger.kl * n;
     t.klKing += s.runs.king.kl * n;
     t.states += n - 1;
-    t.distChal += s.runs.challenger.dist * (n - 1);
-    t.distKing += s.runs.king.dist * (n - 1);
+    t.distChal += (s.runs.challenger.dist ?? 0) * (n - 1);
+    t.distKing += (s.runs.king.dist ?? 0) * (n - 1);
   }
   return t;
 }
@@ -159,6 +161,7 @@ function renderDomains(doc) {
   }
   const { byDomain, groups } = groupSamples(samples);
   const all = totals(samples);
+  const withDist = hasDist(samples);
   // what a group adds to the challenger's KL lead, in points of the king's KL: the rows add up to
   // the duel's KL "vs king", so a row below zero is ground the challenger lost there
   const rows = [...groups]
@@ -176,8 +179,8 @@ function renderDomains(doc) {
       el("td", { class: "r c-share" }, pct(r.t.tokens / all.tokens)),
       el("td", { class: `r ${r.t.klChal <= r.t.klKing ? "gain" : "short"}`, title: `KL challenger ${num(r.t.klChal / r.t.tokens)}, king ${num(r.t.klKing / r.t.tokens)}` },
         versus(r.t.klChal, r.t.klKing)),
-      el("td", { class: `r c-dist ${r.t.distChal <= r.t.distKing ? "gain" : "short"}`, title: `distance challenger ${num(r.t.distChal / r.t.states, 4)}, king ${num(r.t.distKing / r.t.states, 4)}` },
-        versus(r.t.distChal, r.t.distKing)),
+      ...(withDist ? [el("td", { class: `r c-dist ${r.t.distChal <= r.t.distKing ? "gain" : "short"}`, title: `distance challenger ${num(r.t.distChal / r.t.states, 4)}, king ${num(r.t.distKing / r.t.states, 4)}` },
+        versus(r.t.distChal, r.t.distKing))] : []),
       el("td", { class: "c-bar" }, el("span", { class: "lead-bar" },
         el("i", { class: r.adds >= 0 ? "up" : "down", style: `width: ${widest ? (100 * Math.abs(r.adds)) / widest : 0}%` }))),
       el("td", { class: `r ${r.adds >= 0 ? "gain" : "short"}` }, `${signed(r.adds, 2)} pp`));
@@ -199,7 +202,7 @@ function renderDomains(doc) {
         el("th", { class: "r c-count" }, "samples"),
         el("th", { class: "r c-share", title: "its answer tokens as a share of all of them: the scores weigh every answer token the same" }, "weight"),
         el("th", { class: "r", title: "the challenger's KL against the king's on these samples; lower is closer to the teacher" }, "KL vs king"),
-        el("th", { class: "r c-dist", title: "the challenger's hidden-state distance against the king's on these samples" }, "distance vs king"),
+        ...(withDist ? [el("th", { class: "r c-dist", title: "the challenger's hidden-state distance against the king's on these samples" }, "distance vs king")] : []),
         el("th", { class: "c-bar" }, ""),
         el("th", { class: "r", title: "what these samples add to the challenger's KL lead, in points of the king's KL; the rows add up to the duel's KL vs king" }, "KL lead"))),
       el("tbody", {}, trs))),
@@ -231,7 +234,13 @@ function layerMeans(samples, role, field) {
 }
 
 function renderLayers(doc) {
-  for (const [name, field, what, noun] of LAYER_CHARTS) renderLayerChart(doc, name, field, what, noun);
+  // the per-layer sections only exist for the older evals that recorded hidden states
+  const recorded = doc.samples.some((s) => s.runs?.challenger?.dist_by_layer);
+  for (const [name, field, what, noun] of LAYER_CHARTS) {
+    const section = $(`${name}-chart`)?.closest("section");
+    if (section) section.hidden = !recorded;
+    if (recorded) renderLayerChart(doc, name, field, what, noun);
+  }
 }
 
 function renderLayerChart(doc, name, field, what, noun) {
