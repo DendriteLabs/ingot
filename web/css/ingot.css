@@ -73,7 +73,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .links .llms:disabled { opacity: 0.5; cursor: wait; }
 
 /* ---------- hero ---------- */
-main { display: flex; flex-direction: column; gap: 64px; padding-top: 56px; padding-bottom: 96px; counter-reset: section; }
+main { display: flex; flex-direction: column; gap: 48px; padding-top: 56px; padding-bottom: 96px; counter-reset: section; }
 .hero { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 48px; align-items: stretch; }
 .eyebrow, .stamp-label, .section .head, .foot {
   font-family: var(--mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.2em;
@@ -229,7 +229,7 @@ main { display: flex; flex-direction: column; gap: 64px; padding-top: 56px; padd
 /* the table panel stretches to the chart's height so the row ends level; rows stay at the top */
 #reign-wrap { display: flex; flex-direction: column; }
 #reign-wrap > .data-table-wrap { flex: 1; }
-@media (max-width: 1279px) { .pair { grid-template-columns: minmax(0, 1fr); gap: 64px; } } /* below this half a row is narrower than the table */
+@media (max-width: 1279px) { .pair { grid-template-columns: minmax(0, 1fr); gap: 48px; } } /* below this half a row is narrower than the table */
 
 /* ---------- registration chart ---------- */
 .hero-chart-plot .reg-line { fill: none; stroke: var(--text-2); stroke-width: 1.5; stroke-linejoin: round; }
@@ -510,7 +510,8 @@ button.zip:disabled { opacity: 0.6; cursor: wait; }
   .benchmark-card, .benchmark-card:nth-child(n + 4) { grid-column: span 12; }
   .benchmark-charts.cols { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .row, main { padding-left: 16px; padding-right: 16px; }
-  main { gap: 48px; padding-top: 36px; }
+  main { gap: 40px; padding-top: 36px; }
+  .stats { margin-bottom: -40px; }
   .hero h1 { font-size: 42px; }
   .stamp-king { font-size: 30px; }
   .section .head { flex-direction: column; gap: 6px; }
@@ -529,8 +530,8 @@ button.zip:disabled { opacity: 0.6; cursor: wait; }
 .links .page-link[aria-current="page"] { color: var(--text); }
 .hero h1 span { color: var(--text); }
 
-/* the strip sits on the next section's rule: main's 64px gap taken back */
-.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--line-strong); margin-bottom: -64px; }
+/* the strip sits on the next section's rule: main's gap taken back */
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--line-strong); margin-bottom: -48px; }
 .stat { padding: 22px 24px; display: grid; gap: 8px; border-left: 1px solid var(--line); }
 .stat:first-child { border-left: 0; padding-left: 0; }
 .stat b { font-family: var(--display); font-weight: 700; font-size: 40px; line-height: 1; letter-spacing: -0.015em; color: var(--text); }
@@ -654,7 +655,7 @@ button.zip:disabled { opacity: 0.6; cursor: wait; }
 .size-line span { position: absolute; top: 0; left: 6px; white-space: nowrap; font-family: var(--mono); font-style: normal; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
 
 /* the distance line: the teacher at the left end, each model a point at its KL */
-.distance-line { position: relative; height: 130px; margin: 8px 36px 0; }
+.distance-line { position: relative; height: 116px; margin: 8px 36px 0; }
 .dl-track { position: absolute; left: 0; right: 0; top: 50%; height: 2px; transform: translateY(-50%);
   background: linear-gradient(90deg, var(--accent), var(--line-strong) 75%); }
 .dl-mark { position: absolute; top: 50%; }
