@@ -215,10 +215,13 @@ def _queue(conn: db.Conn, now: datetime | None = None) -> dict[str, Any]:
             seen = (r["samples_done"], now)
             _progress_seen[r["eval_id"]] = seen
         r["updated_at"] = max(r["updated_at"], seen[1])
-    return {
-        "counts": {state: 0 for state in ACTIVE} | {r["state"]: r["n"] for r in counts},
-        "rows": rows,
-    }
+    counted = {state: 0 for state in ACTIVE} | {r["state"]: r["n"] for r in counts}
+    for r in rows:
+        if r["state"] == states.EVALUATING and r["eval_id"] is None:
+            r["state"] = states.UNIQUE
+            counted[states.EVALUATING] -= 1
+            counted[states.UNIQUE] += 1
+    return {"counts": counted, "rows": rows}
 
 
 def _history(conn: db.Conn, names: dict[int, str]) -> list[dict[str, Any]]:
