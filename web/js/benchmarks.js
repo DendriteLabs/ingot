@@ -74,7 +74,7 @@ export function protocolNote(all, round) {
   const sealed = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0];
   const sampling = [`temperature ${p.temperature.toFixed(1)}`, `top-p ${p.top_p}`, p.min_p != null ? `min-p ${p.min_p}` : null,
     topK ? `top-k ${topK}` : null].filter(Boolean).join(", ");
-  return el("p", { class: "run-note quiet wide protocol-note" },
+  return el("p", { class: "run-note quiet wide protocol-note info-src" },
     `${all.some((r) => r.borrowed) ? "The kings and genesis above ran" : "Every model above ran"} with the same settings: ${sampling}; replies up to `,
     `${p.max_tokens.toLocaleString("en-US")} tokens; agents get ${p.step_limit} steps; Harbor's time limits ×${p.harbor_timeout_multiplier}`,
     p.harbor_agent_timeout_multiplier ? `, Terminal-Bench's agent clock ×${p.harbor_agent_timeout_multiplier}, so a task ends at the step limit, not on the clock` : "",

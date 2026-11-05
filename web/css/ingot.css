@@ -150,6 +150,25 @@ main { display: flex; flex-direction: column; gap: 64px; padding-top: 56px; padd
 .section .head .label b::before { content: counter(section, decimal-leading-zero); }
 .section .head .meta { color: var(--muted); letter-spacing: 0.14em; text-align: right; }
 .section .head .meta b { font-weight: inherit; color: var(--text); }
+/* a section's notes behind an (i) at the end of its head: on hover, or open on a tap */
+.info-src { display: none !important; }
+.section .head .head-end { display: inline-flex; align-items: center; gap: 10px; }
+.info { position: relative; display: inline-flex; }
+.info-btn { display: inline-flex; padding: 0; border: 0; background: none; color: var(--text); cursor: pointer; }
+.info-btn svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; }
+.info-btn svg .dot { fill: currentColor; stroke: none; }
+.info-btn:hover, .info.open .info-btn { color: var(--accent-ink); }
+.info-pop { display: none; position: absolute; top: calc(100% + 10px); right: -4px; z-index: 30; width: min(560px, calc(100vw - 32px));
+  padding: 12px 14px; background: var(--panel); border: 1px solid var(--line-strong); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  text-align: left; text-transform: none; letter-spacing: normal; white-space: normal; }
+/* a bridge over the gap, so the pointer can move into the note and use its links */
+.info-pop::before { content: ""; position: absolute; left: 0; right: 0; top: -12px; height: 12px; }
+.info .info-pop > * { margin: 0; max-width: none; font-family: var(--sans); font-size: 13px; line-height: 1.55; color: var(--text-2); }
+.info .info-pop > * + * { margin-top: 8px; }
+@media (hover: hover) { .info:hover .info-pop { display: block; } }
+.info.open .info-pop, .info:focus-within .info-pop { display: block; }
+.update-note { position: fixed; right: 16px; bottom: 16px; z-index: 50; padding: 10px 14px; background: var(--panel);
+  border: 1px solid var(--accent); color: var(--text); font-family: var(--mono); font-size: 12px; cursor: pointer; }
 .empty { padding: 28px 0; text-align: center; font-family: var(--mono); font-size: 13px; color: var(--muted); }
 
 /* ---------- kings: the staircase beside the lineage ---------- */
@@ -496,6 +515,9 @@ button.zip:disabled { opacity: 0.6; cursor: wait; }
   .stamp-king { font-size: 30px; }
   .section .head { flex-direction: column; gap: 6px; }
   .section .head .meta { text-align: left; }
+  .section .head { position: relative; }
+  .info { position: static; }
+  .info-pop { left: 0; right: 0; width: auto; }
   .samples-table .c-answer, .samples-table .c-chal, .domains-table .c-share, .domains-table .c-dist { display: none; }
   .links .llms { padding: 0 8px; letter-spacing: 0.1em; }
   .foot .row { flex-direction: column; justify-content: center; height: auto; padding-top: 16px; padding-bottom: 16px; gap: 6px; }
@@ -639,6 +661,13 @@ button.zip:disabled { opacity: 0.6; cursor: wait; }
 .dl-mark i { position: absolute; left: 0; top: 0; width: 11px; height: 11px; transform: translate(-50%, -50%); border-radius: 50%;
   background: var(--page); border: 2px solid var(--text-2); }
 .dl-mark.king i { width: 15px; height: 15px; background: var(--brass); border-color: var(--brass); }
+/* a ring of the king's gold pulsing out from its dot */
+.dl-mark.king i::before { content: ""; position: absolute; inset: -2px; border-radius: 50%;
+  background: color-mix(in srgb, var(--brass) 45%, transparent); will-change: transform, opacity;
+  animation: dl-pulse 1.5s cubic-bezier(0.2, 0.6, 0.35, 1) infinite; }
+/* the ring is gone before the loop restarts, so the restart cannot be seen */
+@keyframes dl-pulse { 0% { transform: scale(1); opacity: 0.9; } 80%, 100% { transform: scale(2.1); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .dl-mark.king i::before { animation: none; opacity: 0; } }
 .dl-label { position: absolute; left: 0; bottom: 14px; transform: translateX(-50%); display: grid; text-align: center; white-space: nowrap;
   font-family: var(--mono); font-size: 13px; color: var(--text); }
 .dl-mark.below .dl-label { bottom: auto; top: 14px; }

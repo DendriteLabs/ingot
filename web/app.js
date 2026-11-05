@@ -108,7 +108,7 @@ function renderHero() {
   $("hero-label").textContent = `${open ? "Open round" : "Closed round"} · best model`;
   mount($("hero-king"), url ? link(url, name) : name);
   mount($("hero-line"), ...(king
-    ? [el("b", {}, `${king.gain.toFixed(1)}%`), "closer to ", link(hubUrl(state.teacher), teacher), " than ", link(hubUrl(genesis.repo), genesis.versus)]
+    ? [el("b", {}, `${king.gain.toFixed(1)}%`), "closer to ", link(hubUrl(state.teacher), teacher), " than ", link(hubUrl(genesis.repo), genesis.versus), " on eval's samples"]
     : []));
 }
 
@@ -137,7 +137,7 @@ function renderLineage() {
       el("span", { class: "who" },
         el("span", { class: "name" }, url ? link(url, k.name, { title: k.hf_repo }) : k.name),
         el("span", { class: "meta-line" }, `crowned ${fmtRelative(k.crowned_at)}`)),
-      el("span", { class: "gain", title: `${k.gain.toFixed(2)}% closer to the original ${state.teacher} than ${genesis.versus}` }, `${k.gain.toFixed(1)}%`));
+      el("span", { class: "gain", title: `${k.gain.toFixed(2)}% closer to the original ${state.teacher} than ${genesis.versus} on eval's samples` }, `${k.gain.toFixed(1)}%`));
   });
   rows.push(el("li", { class: current ? "genesis" : "current" },
     el("span", { class: "numeral" }),
@@ -154,7 +154,7 @@ function renderKingsChart() {
   // axis is how much closer to the teacher a model is than genesis. The brass staircase is the bar
   // to beat: flat while a king holds, one step up at each coronation.
   const { genesis } = ROUNDS[selectedRound];
-  mount($("kings-meta"), "closer to the original ", link(hubUrl(state.teacher), state.teacher.split("/").pop()), " than ", link(hubUrl(genesis.repo), genesis.versus));
+  mount($("kings-meta"), "closer to the original ", link(hubUrl(state.teacher), state.teacher.split("/").pop()), " than ", link(hubUrl(genesis.repo), genesis.versus), " on eval's samples");
   const crowned = kingSteps();
   if (crowned.length < 2) {
     mount(box, el("div", { class: "empty" }, "the staircase starts with the first coronation."));

@@ -50,34 +50,34 @@
   <div class="stat"><b id="s-ahead">—</b><span>benchmarks at or above Bonsai 2</span></div>
 </section>
 
-<section class="section" id="benchmarks">
+<section class="section" id="benchmarks" data-info>
   <div class="head"><span class="label"><b></b>Benchmarks</span></div>
   <div class="figures" id="panel-figures">
     <figure><figcaption><h3>Artificial Analysis Intelligence Index</h3><p>v4.3.2</p></figcaption><div class="vbars" id="index-chart"></div></figure>
     <figure><figcaption><h3>Size</h3><p>the file you download, in GB · the line a 16 GB MacBook draws</p></figcaption><div class="sizes" id="size-chart"></div></figure>
   </div>
-  <p class="run-note quiet wide">Artificial Analysis has not evaluated our models or Bonsai 2, so their bars (≈) are estimates: how much of
+  <p class="run-note quiet wide info-src">Artificial Analysis has not evaluated our models or Bonsai 2, so their bars (≈) are estimates: how much of
     the teacher's score each keeps on SWE-bench Multilingual, Terminal-Bench, GPQA and MATH-500 in the scores below, scaled to match
     Qwen3.5 9B's and gpt-oss-20b's <a href="https://artificialanalysis.ai/methodology/intelligence-benchmarking" target="_blank" rel="noopener">published scores</a>.
     Gemma 4 12B's score is Artificial Analysis's own estimate.</p>
 </section>
 
-<section class="section" id="distance" hidden>
+<section class="section" id="distance" data-info hidden>
   <div class="head"><span class="label"><b></b>Distance to the teacher</span><span class="meta" id="distance-meta"></span></div>
   <div class="distance-line" id="distance-wrap"></div>
-  <p class="run-note quiet wide" id="distance-note"></p>
+  <p class="run-note quiet wide info-src" id="distance-note"></p>
 </section>
 
-<section class="section" id="scores">
+<section class="section" id="scores" data-info>
   <div class="head"><span class="label"><b></b>Scores</span></div>
   <div class="benchmark-charts" id="benchmark-charts"><div class="empty">loading…</div></div>
   <div id="scores-protocol"></div>
 </section>
 
-<section class="section" id="tokens" hidden>
+<section class="section" id="tokens" data-info hidden>
   <div class="head"><span class="label"><b></b>Token by token</span><span class="meta">held-out steps</span></div>
   <div class="figures" id="tokens-figures"></div>
-  <p class="run-note quiet wide">The validator scores a model by the KL divergence of its next-token distribution from the teacher's, at every
+  <p class="run-note quiet wide info-src">The validator scores a model by the KL divergence of its next-token distribution from the teacher's, at every
     token of the teacher's answers. Here the answers are the teacher's next step in its own Terminal-Bench 2.1 and SWE-bench Multilingual
     runs, which the validator never scores on, and both models read the same answers.</p>
   <details class="tok-viewer">

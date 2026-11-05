@@ -76,7 +76,7 @@ function renderHead(doc) {
 
 function renderDuel(doc) {
   const e = doc.eval;
-  $("duel-meta").textContent = "a win needs both, each by its margin";
+  $("duel-meta").textContent = "a win needs the KL margin";
   if (e.error) {
     mount($("duel-wrap"), el("p", { class: "note" }, el("span", { class: "fail-code" }, "crashed"), e.error));
     return;
@@ -113,7 +113,7 @@ function renderDuel(doc) {
         el("th", { class: "r", title: "a win needs the challenger at least this share of the king's score better" }, "needed"),
         el("th", { class: "r" }, "result"))),
       el("tbody", {}, rows))),
-    el("p", { class: "note" },
+    el("p", { class: "note info-src" },
       (diverged(doc) ? `${diverged(doc)} of ${doc.samples.length} samples gave a model no finite score (it diverged); a diverged challenger loses. ` : "")
       + `Lower is closer to the teacher. Noise floor, the teacher reading its own answers again: KL ${num(e.noise_kl)}${e.noise_dist == null ? "" : `, distance ${num(e.noise_dist, 4)}`}. `
       + `Run time: challenger ${secs(e.challenger_s)}, king ${secs(e.king_s)}. Seed ${e.seed}, dataset ${e.dataset_hash}.`));
@@ -206,7 +206,7 @@ function renderDomains(doc) {
         el("th", { class: "c-bar" }, ""),
         el("th", { class: "r", title: "what these samples add to the challenger's KL lead, in points of the king's KL; the rows add up to the duel's KL vs king" }, "KL lead"))),
       el("tbody", {}, trs))),
-    el("p", { class: "note" },
+    el("p", { class: "note info-src" },
       "KL lead: what each row adds to the challenger's lead at the output, in percentage points of the king's KL. "
       + "The rows add up to the duel's KL result, so a row below zero is where the challenger lost ground to the king."));
 }

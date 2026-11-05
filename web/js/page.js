@@ -85,10 +85,81 @@ const FOOTER = `
 <div class="row foot-base"><span id="foot-netuid">Ingot</span><span>Refined. Assayed. Stamped.</span></div>
 `;
 
+// The site version this page's scripts were pushed with (push_site.py stamps it on every import);
+// none when served unstamped, as in a local preview.
+const VERSION = new URL(import.meta.url).searchParams.get("v");
+
+// An open page reloads once a newer site is pushed: at once when it is in the background, else the next time
+// it is hidden, with a reload button meanwhile. Once per version, so a page caught mid-push cannot loop.
+function watchVersion() {
+  if (!VERSION) return;
+  let stale = false;
+  const reload = () => {
+    try { sessionStorage.setItem("ingot-reloaded", stale); } catch { /* private mode: no loop guard needed */ }
+    location.reload();
+  };
+  document.addEventListener("visibilitychange", () => { if (stale && document.hidden) reload(); });
+  setInterval(async () => {
+    try {
+      const { version } = await (await fetch("/version.json", { cache: "no-store" })).json();
+      if (!version || version === VERSION || stale) return;
+      stale = version;
+      let done = null;
+      try { done = sessionStorage.getItem("ingot-reloaded"); } catch { /* as above */ }
+      if (document.hidden && done !== version) reload();
+      else document.body.append(Object.assign(document.createElement("button"),
+        { className: "update-note", textContent: "This page was updated · reload", onclick: reload }));
+    } catch { /* offline or no version yet: try again next minute */ }
+  }, 60000);
+}
+
+// A section marked data-info keeps its notes (.info-src) out of the page: an (i) at the end of its head
+// shows them, on hover or on a tap, copied in fresh each time since pages rewrite their notes.
+function mountInfo() {
+  for (const head of document.querySelectorAll(".section[data-info] > .head")) {
+    const section = head.parentElement;
+    const end = document.createElement("span");
+    end.className = "head-end";
+    const meta = head.querySelector(":scope > .meta");
+    if (meta) end.append(meta);
+    const info = document.createElement("span");
+    info.className = "info";
+    const button = Object.assign(document.createElement("button"), { className: "info-btn", type: "button" });
+    const icon = svgEl("svg", { viewBox: "0 0 16 16", "aria-hidden": "true" });
+    icon.append(svgEl("circle", { cx: 8, cy: 8, r: 7.2 }), svgEl("circle", { class: "dot", cx: 8, cy: 4.9, r: 1 }),
+      svgEl("path", { d: "M8 7.4v4.4" }));
+    button.append(icon);
+    button.setAttribute("aria-label", "About this section");
+    const pop = Object.assign(document.createElement("div"), { className: "info-pop" });
+    pop.setAttribute("role", "tooltip");
+    const fill = () => pop.replaceChildren(...[...section.querySelectorAll(".info-src")].map((n) => {
+      const copy = n.cloneNode(true);
+      copy.classList.remove("info-src");
+      copy.removeAttribute("id");
+      return copy;
+    }));
+    info.addEventListener("mouseenter", fill);
+    button.addEventListener("focus", fill);
+    button.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      fill();
+      info.classList.toggle("open");
+    });
+    info.append(button, pop);
+    end.append(info);
+    head.append(end);
+  }
+  document.addEventListener("click", (ev) => {
+    for (const open of document.querySelectorAll(".info.open")) if (!open.contains(ev.target)) open.classList.remove("open");
+  });
+}
+
 // the header into <header id="top">; dark is the default theme, a choice of light is remembered
 // per browser and applied before paint by each page's head
 export function mountHeader() {
   $("top").innerHTML = HEADER;
+  mountInfo();
+  watchVersion();
   if ($("foot")) $("foot").innerHTML = FOOTER;
   // the GitHub links follow the state's, which the pages set on the header's
   new MutationObserver(() => { if ($("foot-github")) $("foot-github").href = $("link-github").href; })

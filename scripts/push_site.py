@@ -9,12 +9,14 @@ A push shows up on a browser's next load, plain reload included. The HTML is nev
 every script and stylesheet it loads, and every module those import, is referenced as
 `<path>?v=<version>`, the version a hash of the whole site: a changed site is all new URLs, which
 no cache has, while an unchanged one keeps its URLs and its cache. Images and the rest are cached
-for a minute.
+for a minute. The pages go up last, so none references a script before it is there, and
+version.json just before them: an open page polls it and reloads (or offers to) when it changes.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import mimetypes
 import re
 from pathlib import PurePosixPath
@@ -45,7 +47,7 @@ def stamp(key: str, body: bytes, v: str) -> bytes:
 
 
 def cache_control(key: str) -> str:
-    if key.endswith(".html"):
+    if key.endswith((".html", "version.json")):
         return "no-store"
     if key.endswith((".css", ".js")):
         return "no-cache"
@@ -66,8 +68,12 @@ def main() -> None:
         raise SystemExit("R2_SITE_BUCKET_NAME is not set")
     files = site()
     v = version(files)
+    files["version.json"] = json.dumps({"version": v}).encode()
     s3 = r2_client()
-    for key, body in files.items():
+    pages = [k for k in files if k.endswith(".html")]
+    assets = [k for k in files if k not in pages and k != "version.json"]
+    for key in [*assets, "version.json", *pages]:
+        body = files[key]
         suffix = PurePosixPath(key).suffix
         kind = TYPES.get(suffix) or mimetypes.guess_type(key)[0] or "application/octet-stream"
         text = kind.startswith("text/") or kind in ("image/svg+xml", "application/json")
