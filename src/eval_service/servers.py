@@ -19,7 +19,7 @@ import sysconfig
 import threading
 import time
 import uuid
-from collections.abc import Generator, Sequence
+from collections.abc import Generator, Mapping, Sequence
 from pathlib import Path
 
 import httpx
@@ -419,6 +419,20 @@ class LlamaGroup:
         return force[len(prompt) :], path
 
 
+def _post_retrying(url: str, body: Mapping[str, object], tries: int = 3) -> httpx.Response:
+    """A POST whose connection failures (a tunnel or server refusing a burst) are retried; an
+    answer that arrived is never retried."""
+    for attempt in range(tries):
+        try:
+            return httpx.post(url, json=body, timeout=None)
+        except httpx.TransportError as exc:
+            if attempt == tries - 1:
+                raise
+            log.warning("teacher request to {} failed ({}); retrying", url, exc)
+            time.sleep(2 + 3 * attempt)
+    raise AssertionError("unreachable")
+
+
 class RemoteGroup:
     """The teacher served by another box (ingot-teacher-server, through a tunnel): its answers come
     over HTTP and each request's hidden states are downloaded into the local states dir, where the
@@ -459,7 +473,7 @@ class RemoteGroup:
         with self._lock:
             url = next(self._turn)
         with timing.stages.timed("teacher request"):
-            resp = httpx.post(f"{url}/complete", json=body, timeout=None)
+            resp = _post_retrying(f"{url}/complete", body)
         resp.raise_for_status()
         out = resp.json()
         path = str(self.dir / f"{uuid.uuid4().hex}.safetensors")

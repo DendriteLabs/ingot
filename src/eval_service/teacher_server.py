@@ -178,6 +178,7 @@ def main() -> None:
         group = servers.Group(teacher_dir, gpus, config.MEMORY_SHARE["teacher"])
         group.wait_ready(time.monotonic() + config.SERVER_START_S)
         Handler.teacher = group
+        ThreadingHTTPServer.request_queue_size = 1024
         server = ThreadingHTTPServer(("127.0.0.1", s.teacher_port), Handler)
         log.info(
             "teacher {}@{} on GPUs {} at http://127.0.0.1:{} ({} free in /dev/shm)",
