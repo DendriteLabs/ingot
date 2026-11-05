@@ -65,6 +65,7 @@
 <section class="section" id="distance" data-info hidden>
   <div class="head"><span class="label"><b></b>Distance to the teacher</span><span class="meta" id="distance-meta"></span></div>
   <div class="distance-line" id="distance-wrap"></div>
+  <p class="run-note quiet wide info-src"><code>KL(teacher &#8214; model)</code>, averaged over tokens. The teacher writes an answer, every model reads that same answer, and at each token we compare the model's distribution over the next token with the teacher's. Lower is closer, and zero is the teacher itself.</p>
   <p class="run-note quiet wide info-src" id="distance-note"></p>
 </section>
 
@@ -81,7 +82,7 @@
     token of the teacher's answers. Here the answers are the teacher's next step in its own Terminal-Bench 2.1 and SWE-bench Multilingual
     runs, which the validator never scores on, and both models read the same answers.</p>
   <details class="tok-viewer">
-    <summary><span>Compare them token by token</span><small>16 steps · King XVII and Bonsai 2 on the same answers</small></summary>
+    <summary><span>Compare them token by token</span><small id="tok-demo-note"></small></summary>
     <p class="tok-intro">The end of the teacher's thinking through its first tool call, each token shaded by the selected model's KL there;
       point at a token to see the teacher's five likeliest next tokens beside each model's.</p>
     <div class="tok-picker" id="tokens-picker"></div>

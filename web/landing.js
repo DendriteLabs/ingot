@@ -55,7 +55,7 @@ async function load() {
   }
 }
 
-const FEATURED_KING = "Ingot-XVII-27B-Q2";
+const FEATURED_KING = "Ingot-XXVII-27B-Q2";
 
 // the featured king; else the round's best model by the external benchmarks (a full suite only), else
 // the reigning king
@@ -146,8 +146,7 @@ function renderDistance(king) {
   const genesis = ladder.models.find((m) => m.label === GENESIS.label)?.kl;
   $("distance-meta").textContent = kl != null && genesis
     ? `King ${numeral}: ${estimated ? "≈" : ""}${Math.round((100 * (genesis - kl)) / genesis)}% closer to the teacher than ${GENESIS.label}` : "";
-  $("distance-note").textContent = "KL divergence from the teacher per token, lower is closer. Every model reads the same teacher answers: "
-    + `${ladder.measured_on}.`;
+  $("distance-note").textContent = `Measured on ${ladder.measured_on}.`;
 }
 
 // horizontal bars of file size, ours last, with the line a 16 GB MacBook draws

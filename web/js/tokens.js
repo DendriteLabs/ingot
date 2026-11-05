@@ -4,9 +4,10 @@
 import { el, mount } from "./dom.js";
 
 const MODELS = {
-  xvii: { label: "King XVII", note: "5.95 GB", tone: "king" },
+  xxvii: { label: "King XXVII", note: "5.95 GB", tone: "king" },
   genesis: { label: "Bonsai 2", note: "5.95 GB", tone: "other" },
 };
+const kingOf = (models) => models.find((m) => MODELS[m].tone === "king");
 const SPECIAL = new Set(["<think>", "</think>", "<tool_call>", "</tool_call>"]);
 // a token's shade on a log scale: KL 0.03 or less none, 1 or more full
 const FLOOR = Math.log10(0.03);
@@ -15,7 +16,7 @@ const visible = (piece) => piece.replaceAll(" ", "␣").replaceAll("\n", "↵").
 const pct = (p) => (p >= 0.995 ? "100%" : p < 0.001 ? "<0.1%" : `${(100 * p).toFixed(p < 0.1 ? 1 : 0)}%`);
 
 let data = null;
-let view = { passage: 0, model: "xvii", at: null };
+let view = { passage: 0, model: null, at: null };
 
 export async function renderTokens() {
   try {
@@ -27,19 +28,22 @@ export async function renderTokens() {
     return;
   }
   document.getElementById("tokens").hidden = false;
+  document.getElementById("tok-demo-note").textContent =
+    `${data.passages.length} steps · ${data.models.map((m) => MODELS[m].label).join(" and ")} on the same answers`;
   renderSummary();
   draw();
 }
 
 // per domain each model's mean KL per token over the steps, both read on the same answers
 function renderSummary() {
+  const king = kingOf(data.models);
   mount(document.getElementById("tokens-figures"), ...data.summary.map((row) => {
     const top = Math.max(...data.models.map((m) => row.kl[m]));
-    const king = row.kl.xvii;
+    const best = row.kl[king];
     return el("figure", {},
       el("figcaption", {}, el("h3", {}, row.domain), el("p", {}, `${row.n} steps · KL to the teacher per token, lower is closer`)),
       el("div", { class: "kl-rows" }, ...data.models.map((m) => el("div", { class: `size-row ${MODELS[m].tone}` },
-        el("span", { class: "size-label" }, MODELS[m].label, el("small", {}, m === "xvii" ? MODELS[m].note : `${MODELS[m].note} · +${(100 * (row.kl[m] / king - 1)).toFixed(0)}%`)),
+        el("span", { class: "size-label" }, MODELS[m].label, el("small", {}, m === king ? MODELS[m].note : `${MODELS[m].note} · +${(100 * (row.kl[m] / best - 1)).toFixed(0)}%`)),
         el("span", { class: "size-track" }, el("i", { style: `width: ${(100 * row.kl[m]) / top}%` })),
         el("span", { class: "size-value" }, row.kl[m].toFixed(3))))));
   }));
@@ -47,6 +51,7 @@ function renderSummary() {
 
 function draw() {
   const p = data.passages[view.passage];
+  view.model ??= kingOf(data.models);
   const model = p.models[view.model];
   if (view.at == null) view.at = model.kl.indexOf(Math.max(...model.kl));
   const piece = (id) => data.vocab[id] ?? "";

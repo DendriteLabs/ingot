@@ -1,11 +1,11 @@
 {
-  "measured_on": "236 held-out agent steps from the teacher's own Terminal-Bench 2.1 and SWE-bench Multilingual runs",
+  "measured_on": "the same 236 agent steps for every model, held out from the eval. 150 come from the teacher's SWE-bench Multilingual runs and 86 from Terminal-Bench 2.1, and the figure is the mean over all 236",
   "models": [
     { "label": "BF16", "repo": null, "gb": 54.66, "kl": 0 },
     { "label": "Q4_K_M", "repo": "unsloth/Qwen3.8-27B-GGUF", "gb": 16.46, "kl": 0.0063 },
-    { "label": "IQ3_XXS", "repo": "unsloth/Qwen3.8-27B-GGUF", "gb": 10.9, "kl": 0.0328 },
-    { "label": "IQ2_S", "repo": "unsloth/Qwen3.8-27B-GGUF", "gb": 8.4, "kl": 0.0871 },
-    { "label": "Bonsai 2", "repo": "prism-ml/Ternary-Bonsai-2-27B-gguf", "gb": 5.95, "kl": 0.1109 }
+    { "label": "IQ3_XXS", "repo": "unsloth/Qwen3.8-27B-GGUF", "gb": 10.9, "kl": 0.033 },
+    { "label": "IQ2_S", "repo": "unsloth/Qwen3.8-27B-GGUF", "gb": 8.4, "kl": 0.0864 },
+    { "label": "Bonsai 2", "repo": "prism-ml/Ternary-Bonsai-2-27B-gguf", "gb": 5.95, "kl": 0.1101 }
   ],
-  "kings": { "Ingot-XVII-27B-Q2": 0.093 }
+  "kings": { "Ingot-XXVII-27B-Q2": 0.0828 }
 }
