@@ -12,7 +12,7 @@ import shutil
 import threading
 import time
 from collections.abc import Callable, Generator, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -39,7 +39,6 @@ class Score:
 class Duel:
     challenger: Score
     king: Score
-    noise: Score
     samples: list[dict[str, Any]] = field(default_factory=list)
 
     @property
@@ -82,7 +81,8 @@ class LeftAnswer(ValueError):
 Scorer = Callable[..., Duel]  # (teacher, challenger, king, samples, *, on_progress=None, ...)
 Progress = Callable[[int], None]
 Result = tuple[dict[str, "Sums"], dict[str, Any]]
-Prefetched = dict[int, tuple[list[int], str]]  # sample index -> (answer, the teacher's states file)
+# sample index -> the teacher's (answer, states file), answered ahead by a Prefetch
+Prefetched = dict[int, Future[tuple[list[int], str]]]
 
 
 def duel(
@@ -93,12 +93,10 @@ def duel(
     *,
     on_progress: Progress | None = None,
     prefetched: Prefetched | None = None,
-    on_teacher_drained: Callable[[], None] | None = None,
 ) -> Duel:
-    """`prefetched` answers (a Prefetch's) skip the teacher; `on_teacher_drained` is called once
-    every sample has been admitted to the teacher, when its servers start to empty out."""
+    """`prefetched` answers (a Prefetch's) are taken instead of asking the teacher."""
     models = {"teacher": teacher_dir, "king": king_dir, "challenger": challenger_dir}
-    evaluation = _Evaluation(models, len(samples), on_progress, prefetched, on_teacher_drained)
+    evaluation = _Evaluation(models, len(samples), on_progress, prefetched)
     results = evaluation.run(samples)
     log.info(
         "eval timing, {} samples scored in {:.0f}s: {}",
@@ -110,7 +108,6 @@ def duel(
     return Duel(
         challenger=evaluation.score(results, "challenger"),
         king=evaluation.score(results, "king"),
-        noise=evaluation.score(results, "teacher_rerun"),
         samples=[record for _, record in results],
     )
 
@@ -127,7 +124,6 @@ class _Evaluation:
         total: int,
         on_progress: Progress | None = None,
         prefetched: Prefetched | None = None,
-        on_teacher_drained: Callable[[], None] | None = None,
     ) -> None:
         from eval_service import metrics
 
@@ -153,10 +149,9 @@ class _Evaluation:
         # thread per GPU keeps that to one.
         self.compare_on = {dev: ThreadPoolExecutor(1) for dev in devices}
         self.preemptions_at_start = self._preemptions()
-        self.total, self.done, self.started, self.lock = total, 0, 0, threading.Lock()
+        self.total, self.done, self.lock = total, 0, threading.Lock()
         self.on_progress = on_progress
         self.prefetched = prefetched if prefetched is not None else {}
-        self.on_teacher_drained = on_teacher_drained
         self.diverged: set[str] = set()
 
     def run(self, samples: Sequence[Sample]) -> list[Result]:
@@ -166,17 +161,18 @@ class _Evaluation:
         sample is left out for every role, so a model could otherwise shed the prompts it does
         worst on, and the king's with them."""
         timing.stages.reset()
+        if self.prefetched:
+            # the prefetch was this eval's: its requests are the running eval's from here
+            self.groups["teacher"].promote()
         pool = ThreadPoolExecutor(config.WORKERS)
         results: list[Result] = []
         failed = 0
         stop = threading.Event()
         try:
             threading.Thread(target=_report, args=(stop, len(samples)), daemon=True).start()
-            if self.on_teacher_drained:
-                threading.Thread(target=self._watch_drain, args=(stop,), daemon=True).start()
-            # longest prompts first, so they are not the ones still running at the end; each keeps
-            # its index (its seed, and whether the teacher rereads it), and results stay in order
-            by_size = sorted(range(len(samples)), key=lambda i: -_size(samples[i]))
+            # longest answer budgets first, longest prompts within: a long answer admitted late
+            # runs alone at the end; each keeps its index (its seed), and results stay in order
+            by_size = sorted(range(len(samples)), key=lambda i: _order(samples[i]))
             started = {i: pool.submit(self._sample, i, samples[i]) for i in by_size}
             futures = [started[i] for i in range(len(samples))]
             for sample, future in zip(samples, futures, strict=True):
@@ -211,39 +207,43 @@ class _Evaluation:
             return DIVERGED
         return per_sample([by_role[role] for by_role, _ in results if role in by_role])
 
-    def _readers(self, i: int) -> int:
-        return 2 + (i % config.RERUN_EVERY == 0)
-
-    def _teacher_room(self, i: int, prompt: list[int], sample: Sample) -> int:
+    def _teacher_room(self, prompt: list[int], sample: Sample) -> int:
         """Booked before the teacher answers: its answer rows at the full budget, and the readers'
         prompt rows, which their files hold until they are cut to the answer rows."""
         teacher = state_bytes(prompt, sample, self.state_bytes, answer_only=True)
-        return teacher + self._readers(i) * len(prompt) * self.state_bytes
+        return teacher + 2 * len(prompt) * self.state_bytes
 
-    def _reader_room(self, i: int, answer: list[int]) -> int:
+    def _reader_room(self, answer: list[int]) -> int:
         """The readers' answer rows, booked once the answer is known."""
-        return self._readers(i) * len(answer) * self.state_bytes
+        return 2 * len(answer) * self.state_bytes
 
     def _sample(self, i: int, sample: Sample) -> Result:
         paths: dict[str, str] = {}  # role -> the hidden-state file its server wrote
         stack = contextlib.ExitStack()  # the sample's room in /dev/shm, given back last
         started = time.monotonic()
-        with self.lock:
-            self.started += 1
         try:
             prompt = _render(self.tokenizer, sample.messages, sample.tools)
             ahead = self.prefetched.pop(i, None)
+            if ahead is not None:
+                try:
+                    with timing.stages.timed("prefetched"):
+                        answer, paths["teacher"] = ahead.result()
+                except Exception as exc:
+                    log.warning("the answer taken ahead for {} failed: {}", sample.id, exc)
+                    ahead = None
             if ahead is None:
                 with timing.stages.timed("shm wait"):
-                    stack.enter_context(ROOM.reserve(self._teacher_room(i, prompt, sample)))
-            if ahead is not None:
-                answer, paths["teacher"] = ahead
-            else:
+                    stack.enter_context(ROOM.reserve(self._teacher_room(prompt, sample)))
                 with timing.stages.timed("teacher"):
                     answer, paths["teacher"] = generate(
-                        self.groups["teacher"], prompt, i, sample.id, answer_budget(sample)
+                        self.groups["teacher"],
+                        prompt,
+                        i,
+                        sample.id,
+                        answer_budget(sample),
+                        booked_answer(sample),
                     )
-            stack.enter_context(ROOM.reserve(self._reader_room(i, answer), wait=False))
+            stack.enter_context(ROOM.reserve(self._reader_room(answer), wait=False))
             with timing.stages.timed("read"):
                 self._read_along(i, sample, prompt, answer, paths)
             with timing.stages.timed("compare"):
@@ -256,32 +256,12 @@ class _Evaluation:
                 servers.discard(path)
             stack.close()
 
-    def _watch_drain(self, stop: threading.Event) -> None:
-        """Calls on_teacher_drained once every sample has started and none waits for the teacher
-        any more: from here the teacher's servers only empty out, and the next eval's answers
-        can fill them (main.py claims it ahead)."""
-        drained = self.on_teacher_drained
-        if drained is None:
-            return
-        line = getattr(getattr(self.groups["teacher"], "admission", None), "line", None)
-        while not stop.wait(5):
-            with self.lock:
-                started = self.started
-            if started == self.total and not line:
-                try:
-                    drained()
-                except Exception:
-                    log.exception("claiming the next eval ahead failed")
-                return
-
     def _read_along(
         self, i: int, sample: Sample, prompt: list[int], answer: list[int], paths: dict[str, str]
     ) -> None:
-        """The king, the challenger and on every RERUN_EVERY-th sample the teacher again read the
-        answer, forced; each must reproduce it token for token."""
+        """The king and the challenger read the answer, forced; each must reproduce it token for
+        token."""
         readers = {"king": self.groups["king"], "challenger": self.groups["challenger"]}
-        if i % config.RERUN_EVERY == 0:
-            readers["teacher_rerun"] = self.groups["teacher"]
         with ThreadPoolExecutor(len(readers)) as pool:
             futures = {
                 role: pool.submit(group.complete, prompt, len(answer), i, prompt + answer)
@@ -363,29 +343,45 @@ def answer_budget(sample: Sample) -> int:
     return config.DOMAIN_MAX_TOKENS.get(sample.domain, config.MAX_TOKENS)
 
 
+def booked_answer(sample: Sample) -> int:
+    """The answer tokens a teacher request books in its server's cache."""
+    expected = config.EXPECTED_ANSWER_TOKENS.get(sample.domain, config.MAX_TOKENS)
+    return min(answer_budget(sample), math.ceil(expected * config.BOOKED_MARGIN))
+
+
 def generate(
-    teacher: servers.Groups, prompt: list[int], seed: int, label: str, budget: int
+    teacher: servers.Groups,
+    prompt: list[int],
+    seed: int,
+    label: str,
+    budget: int,
+    booked: int,
+    prefetch: bool = False,
 ) -> tuple[list[int], str]:
-    """The teacher's answer to `prompt`, at most `budget` tokens, and the states file it wrote."""
+    """The teacher's answer to `prompt`, at most `budget` tokens, and the states file it wrote;
+    `booked` answer tokens are booked in the server's cache."""
     room = config.MAX_MODEL_LEN - len(prompt)
     if room < 1:
         raise ValueError(f"{label}: a {len(prompt)}-token prompt leaves no room")
-    answer, path = teacher.complete(prompt, min(budget, room), seed)
+    answer, path = teacher.complete(
+        prompt, min(budget, room), seed, book=len(prompt) + min(booked, room), prefetch=prefetch
+    )
     return answer, servers.hold(path)
 
 
 class Prefetch:
-    """The teacher's answers to the first PREFETCH_SAMPLES samples of an eval that has not started
-    (longest prompts first, the duel's order), generated while the running eval drains its
-    teacher. `result` is the `prefetched` of that eval's duel."""
+    """The teacher's answers to the samples of an eval that has not started, in the duel's order,
+    each generated once a teacher server has nothing of the running eval left to generate.
+    `result` is the `prefetched` of that eval's duel: the answers as futures, the duel waits for
+    each as it needs it."""
 
     def __init__(self, teacher_dir: Path, samples: Sequence[Sample]) -> None:
         self.teacher = servers.serve({"teacher": teacher_dir})["teacher"]  # the running one
         self.tokenizer, self.samples = load_tokenizer(teacher_dir), samples
         self.state_bytes = state_bytes_per_token(teacher_dir)
         self.pool = ThreadPoolExecutor(config.WORKERS)
-        ahead = sorted(range(len(samples)), key=lambda i: -_size(samples[i]))
-        self.futures = {i: self.pool.submit(self._one, i) for i in ahead[: config.PREFETCH_SAMPLES]}
+        ahead = sorted(range(len(samples)), key=lambda i: _order(samples[i]))
+        self.futures = {i: self.pool.submit(self._one, i) for i in ahead}
 
     def _one(self, i: int) -> tuple[list[int], str]:
         sample = self.samples[i]
@@ -394,18 +390,19 @@ class Prefetch:
         size = state_bytes(prompt, sample, self.state_bytes, answer_only=remote)
         # held until the file is written; from then on /dev/shm's usage counts it
         with ROOM.reserve(size):
-            return generate(self.teacher, prompt, i, sample.id, answer_budget(sample))
+            return generate(
+                self.teacher,
+                prompt,
+                i,
+                sample.id,
+                answer_budget(sample),
+                booked_answer(sample),
+                prefetch=True,
+            )
 
     def result(self) -> Prefetched:
-        """Waits for every answer; a sample whose answer failed is left to the duel."""
-        out: Prefetched = {}
-        for i, future in self.futures.items():
-            try:
-                out[i] = future.result()
-            except Exception as exc:
-                log.warning("answering sample {} ahead failed: {}", self.samples[i].id, exc)
-        self.pool.shutdown()
-        return out
+        self.pool.shutdown(wait=False)
+        return dict(self.futures)
 
 
 def load_tokenizer(model_dir: Path) -> Any:
@@ -450,6 +447,10 @@ def _eos(model_dir: Path) -> set[int]:
 
 def _size(sample: Sample) -> int:
     return sum(len(m["content"]) for m in sample.messages)
+
+
+def _order(sample: Sample) -> tuple[int, int]:
+    return (-answer_budget(sample), -_size(sample))
 
 
 def _report(stop: threading.Event, total: int) -> None:

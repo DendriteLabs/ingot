@@ -134,7 +134,6 @@ def heads(
     for dev in devices:
         on_dev = _final_head(models["teacher"], dev)
         out[dev] = {role: on_dev if shared[role] else head(d, dev) for role, d in models.items()}
-        out[dev]["teacher_rerun"] = on_dev
     return out
 
 

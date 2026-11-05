@@ -33,8 +33,8 @@ _ONE_AT_A_TIME = (
 
 @dataclass
 class _Pending:
-    """The next eval, claimed while the current one drained: drawn, and the teacher answering its
-    first PREFETCH_SAMPLES samples."""
+    """The next eval, claimed while the current one runs: drawn, and the teacher answering its
+    samples as its servers free up."""
 
     row: db.Row
     drawn: list[Sample]
@@ -88,7 +88,7 @@ def run_once(
         # the eval before this one may have won: its coronation makes the king this one faces
         _wait_for_crowning(conn)
         prefetched = pending.prefetch.result()
-        drew = f"drawn ahead, {len(prefetched)} answered ahead"
+        drew = f"drawn ahead, {sum(f.done() for f in prefetched.values())} answered ahead"
     king = db.current_king(conn, row["family"], row["quant"])
     eval_id = db.one(
         conn,
@@ -97,6 +97,8 @@ def run_once(
         (row["id"], king["id"], teacher, data.sha256, _seed(row), len(drawn)),
     )["id"]
     log.info("eval {} of {}: {} samples {}", eval_id, row["hotkey"], len(drawn), drew)
+    # the next eval is claimed now: its teacher answers fill each server this eval leaves
+    _claim_ahead(worker, data, fits, teacher_dir, s, prefetcher, fetch)
     try:
         started = time.monotonic()
         challenger_dir = fetch(row["model_uri"], s.model_cache_dir)
@@ -116,15 +118,14 @@ def run_once(
             drawn,
             on_progress=_progress(link, eval_id, worker),
             prefetched=prefetched,
-            on_teacher_drained=lambda: _claim_ahead(
-                worker, data, fits, teacher_dir, s, prefetcher, fetch
-            ),
         )
         log.info("eval {}: duel took {:.0f}s", eval_id, time.monotonic() - fetched)
     except Exception as exc:
         # answers taken ahead that no sample used (the duel pops the ones it did)
-        for _, path in prefetched.values():
-            servers.discard(path)
+        for future in prefetched.values():
+            if future.cancel() or future.exception():
+                continue
+            servers.discard(future.result()[1])
         # the duel ran for hours: the connection it started with may be gone by now
         conn = link.conn(check=True)
         if isinstance(exc, servers.ServerExited) and exc.gpu in s.gpus("challenger"):
@@ -169,9 +170,9 @@ def run_once(
             (
                 duel.challenger.kl,
                 duel.king.kl,
-                None,  # dist_* columns: only older evals have a hidden-state distance
+                None,  # dist_* and noise_* columns: only older evals have them
                 None,
-                duel.noise.kl,
+                None,
                 None,
                 duel.won,
                 len(duel.samples),  # the ones scored: a failed sample is left out
@@ -186,13 +187,12 @@ def run_once(
     _upload_summary(conn, upload, row["hotkey"], eval_id)
     log.info("eval {}: results stored and uploaded in {:.0f}s", eval_id, time.monotonic() - scored)
     log.info(
-        "eval {} ({} of {} samples): KL challenger {:.5f} vs king {:.5f} (noise floor {:.5f}) → {}",
+        "eval {} ({} of {} samples): KL challenger {:.5f} vs king {:.5f} → {}",
         eval_id,
         len(duel.samples),
         len(drawn),
         duel.challenger.kl,
         duel.king.kl,
-        duel.noise.kl,
         "WON" if duel.won else "LOST",
     )
     return True
@@ -219,8 +219,7 @@ def _claim_ahead(
     fetch: Fetch,
 ) -> None:
     """Claims the next eval, starts its draw and prefetch and downloads its challenger, on a
-    thread: the duel's own threads call this, and a draw takes minutes. What it claimed waits in
-    _pending for run_once."""
+    thread: a draw takes minutes. What it claimed waits in _pending for run_once."""
     global _claiming
 
     def work() -> None:
@@ -246,10 +245,10 @@ def _claim_ahead(
             drawn = data.draw(_seed(row), config.SAMPLES_PER_DOMAIN, fits)
             _pending = _Pending(row, drawn, prefetcher(teacher_dir, drawn))
             log.info(
-                "eval of {} claimed ahead: {} samples drawn, the teacher answering {} of them",
+                "eval of {} claimed ahead: {} samples drawn, the teacher answers them as its"
+                " servers free up",
                 row["hotkey"],
                 len(drawn),
-                min(len(drawn), config.PREFETCH_SAMPLES),
             )
         except Exception:
             log.exception("claiming the next eval ahead failed")

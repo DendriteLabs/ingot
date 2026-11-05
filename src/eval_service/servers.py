@@ -104,12 +104,15 @@ class Server:
         return self.process.poll() is None
 
     def preemptions(self) -> float:
+        return self._metric("vllm:num_preemptions_total")
+
+    def kv_usage(self) -> float:
+        """The share of the KV cache in use right now, 0 to 1."""
+        return self._metric("vllm:kv_cache_usage_perc")
+
+    def _metric(self, name: str) -> float:
         text = httpx.get(f"{self.url}/metrics", timeout=30).text
-        return sum(
-            float(line.split()[-1])
-            for line in text.splitlines()
-            if line.startswith("vllm:num_preemptions_total")
-        )
+        return sum(float(line.split()[-1]) for line in text.splitlines() if line.startswith(name))
 
     def stop(self) -> None:
         with contextlib.suppress(ProcessLookupError):
@@ -128,46 +131,136 @@ class Server:
             os.killpg(self.process.pid, signal.SIGKILL)
 
 
+class Waiter:
+    """One request in an Admission: its place in line, and once admitted its server and booking,
+    which grows by `grow` once `due` has passed (the answer may have outrun its booking)."""
+
+    def __init__(self, seq: int, prefetch: bool) -> None:
+        self.seq, self.prefetch, self.server, self.need = seq, prefetch, -1, 0
+        self.grow, self.due = 0, float("inf")
+
+    def __lt__(self, other: Waiter) -> bool:
+        return self.seq < other.seq
+
+
 class Admission:
     """Admits requests to a group's servers in line order: the first in line goes to the server
     with the most free budget once it fits there, and the rest wait behind it. Letting whatever
     fits go first starved the long prompts until the end of an eval; forced reads (`first`) go
-    ahead of new answers, so a sample whose answer is done is not held behind them."""
+    ahead of new answers, so a sample whose answer is done is not held behind them. A prefetch
+    request (the next eval's) waits in its own line and takes a server only while none of the
+    running eval's requests generates there; `promote` makes the prefetch the running eval."""
 
     def __init__(self, n_servers: int) -> None:
         self.used = [0] * n_servers
+        self.usage = [0.0] * n_servers  # each server's live KV usage, set by its group's poll
+        self.running = [0] * n_servers  # the running eval's requests on each server
+        self.ahead = [0] * n_servers  # prefetch requests on each server
         self.cv = threading.Condition()
-        self.line: list[tuple[int, int]] = []
+        self.line: list[tuple[int, Waiter]] = []  # (tier, waiter): forced reads first
+        self.prefetch_line: list[Waiter] = []
+        self.admitted: set[Waiter] = set()
         self.tickets = itertools.count()
 
-    def enter(self, need: int, caps: Sequence[int], first: bool) -> int:
-        """Wait for this request's turn and room, then book `need` tokens; the server index."""
+    def enter(
+        self,
+        need: int,
+        caps: Sequence[int],
+        first: bool,
+        prefetch: bool,
+        grow: int = 0,
+        grow_after_s: float = 0.0,
+    ) -> Waiter:
+        """Wait for this request's turn and room, then book `need` tokens, and `grow` more once
+        it has held them for `grow_after_s`. A server has room when its bookings leave `need`
+        and its live usage is under KV_USAGE_ADMIT; for a prefetch request also when no
+        running-eval request is on it."""
+
+        def room(w: Waiter) -> list[int]:
+            return [
+                k
+                for k, (u, c) in enumerate(zip(self.used, caps, strict=True))
+                if u + need <= c
+                and self.usage[k] <= config.KV_USAGE_ADMIT
+                and (not w.prefetch or self.running[k] == 0)
+            ]
+
+        def head(w: Waiter) -> bool:
+            if w.prefetch:
+                return bool(self.prefetch_line) and self.prefetch_line[0] is w
+            return bool(self.line) and self.line[0][1] is w
+
         with self.cv:
-            ticket = (0 if first else 1, next(self.tickets))
-            heapq.heappush(self.line, ticket)
+            w = Waiter(next(self.tickets), prefetch)
+            self._push(w, first)
             try:
-                self.cv.wait_for(
-                    lambda: (
-                        self.line[0] == ticket
-                        and any(u + need <= c for u, c in zip(self.used, caps, strict=True))
-                    )
-                )
+                self.cv.wait_for(lambda: head(w) and bool(room(w)))
             except BaseException:
-                self.line.remove(ticket)
-                heapq.heapify(self.line)
+                self._drop(w)
                 self.cv.notify_all()
                 raise
-            heapq.heappop(self.line)
-            i = max(range(len(caps)), key=lambda k: caps[k] - self.used[k])
+            self._drop(w)
+            i = max(room(w), key=lambda k: caps[k] - self.used[k])
+            w.server, w.need = i, need
+            if grow:
+                w.grow, w.due = grow, time.monotonic() + grow_after_s
             self.used[i] += need
+            (self.ahead if w.prefetch else self.running)[i] += 1
+            self.admitted.add(w)
             # the next in line may fit as well
             self.cv.notify_all()
-            return i
+            return w
 
-    def leave(self, i: int, need: int) -> None:
+    def leave(self, w: Waiter) -> None:
         with self.cv:
-            self.used[i] -= need
+            self.used[w.server] -= w.need
+            (self.ahead if w.prefetch else self.running)[w.server] -= 1
+            self.admitted.discard(w)
             self.cv.notify_all()
+
+    def promote(self) -> None:
+        """The prefetch becomes the running eval: its requests, waiting or admitted, count as the
+        eval's own from here, and the next prefetch starts from nothing."""
+        with self.cv:
+            for w in self.prefetch_line:
+                w.prefetch = False
+                heapq.heappush(self.line, (1, w))
+            self.prefetch_line.clear()
+            for w in self.admitted:
+                w.prefetch = False
+            for k in range(len(self.running)):
+                self.running[k] += self.ahead[k]
+                self.ahead[k] = 0
+            self.cv.notify_all()
+
+    def _push(self, w: Waiter, first: bool) -> None:
+        if w.prefetch:
+            heapq.heappush(self.prefetch_line, w)
+        else:
+            heapq.heappush(self.line, (0 if first else 1, w))
+
+    def _drop(self, w: Waiter) -> None:
+        if w.prefetch:
+            self.prefetch_line.remove(w)
+            heapq.heapify(self.prefetch_line)
+        else:
+            self.line = [t for t in self.line if t[1] is not w]
+            heapq.heapify(self.line)
+
+    def update_usage(self, usage: Sequence[float]) -> None:
+        with self.cv:
+            self.usage[:] = usage
+            self.rebook()
+            self.cv.notify_all()
+
+    def rebook(self, now: float | None = None) -> None:
+        """Books the whole budget of every admitted request that is due for it."""
+        now = time.monotonic() if now is None else now
+        for w in self.admitted:
+            if w.grow and now >= w.due:
+                self.used[w.server] += w.grow
+                w.need += w.grow
+                w.grow = 0
 
 
 class Group:
@@ -186,6 +279,18 @@ class Group:
     def wait_ready(self, deadline: float) -> None:
         for server in self.servers:
             server.wait_ready(deadline)
+        threading.Thread(target=self._poll_usage, daemon=True).start()
+
+    def _poll_usage(self) -> None:
+        """Feeds each server's live KV usage to the admission while the servers run; a metrics
+        read that fails leaves the last value."""
+        usage = list(self.admission.usage)
+        while self.alive():
+            for k, server in enumerate(self.servers):
+                with contextlib.suppress(httpx.HTTPError, ValueError):
+                    usage[k] = server.kv_usage()
+            self.admission.update_usage(usage)
+            time.sleep(config.KV_USAGE_POLL_S)
 
     def alive(self) -> bool:
         return all(server.alive() for server in self.servers)
@@ -193,14 +298,25 @@ class Group:
     def preemptions(self) -> float:
         return sum(server.preemptions() for server in self.servers)
 
+    def promote(self) -> None:
+        self.admission.promote()
+
     def stop(self) -> None:
         for server in self.servers:
             server.stop()
 
     def complete(
-        self, prompt: list[int], max_tokens: int, seed: int, force: list[int] | None = None
+        self,
+        prompt: list[int],
+        max_tokens: int,
+        seed: int,
+        force: list[int] | None = None,
+        book: int | None = None,
+        prefetch: bool = False,
     ) -> tuple[list[int], str]:
-        """Answer token ids and the hidden-state file of one request."""
+        """Answer token ids and the hidden-state file of one request; `book` tokens are booked in
+        the server's cache instead of the prompt plus max_tokens; a `prefetch` request is the
+        next eval's and waits for a server the running eval has left."""
         if GGUF_VLLM and force is not None and self.role in ("king", "challenger"):
             return self._prefill_read(prompt, force)
         body = {
@@ -218,7 +334,13 @@ class Group:
             body["vllm_xargs"] = {"force_token_ids": force}
             body["ignore_eos"] = True
         with (
-            self._hold(len(prompt) + max_tokens, first=force is not None) as server,
+            self._hold(
+                book or len(prompt) + max_tokens,
+                first=force is not None,
+                prefetch=prefetch,
+                grow_to=len(prompt) + max_tokens,
+                booked_answer=(book or len(prompt) + max_tokens) - len(prompt),
+            ) as server,
             timing.stages.timed(f"{self.role} request"),
         ):
             resp = httpx.post(f"{server.url}/v1/completions", json=body, timeout=None)
@@ -255,18 +377,30 @@ class Group:
         return force[len(prompt) :], path
 
     @contextlib.contextmanager
-    def _hold(self, n_tokens: int, *, first: bool) -> Generator[Server]:
+    def _hold(
+        self,
+        n_tokens: int,
+        *,
+        first: bool,
+        prefetch: bool = False,
+        grow_to: int = 0,
+        booked_answer: int = 0,
+    ) -> Generator[Server]:
         # whole 800-token attention blocks, plus one block for the request's GDN state
         need = (math.ceil(n_tokens / 800) + 1) * 800
-        caps = [int(0.9 * server.cache_tokens) for server in self.servers]
+        caps = [int(config.ADMISSION_SHARE * server.cache_tokens) for server in self.servers]
         if need > max(caps):
             raise ValueError(f"a request of {n_tokens} tokens can never fit {max(caps)}")
+        # a request booked below its whole size books the rest once its booked answer
+        # tokens may all have been generated
+        grow = max(0, (math.ceil(grow_to / 800) + 1) * 800 - need)
+        grow_after_s = booked_answer * config.REBOOK_STEP_S
         with timing.stages.timed(f"{self.role} wait"):
-            i = self.admission.enter(need, caps, first)
+            waiter = self.admission.enter(need, caps, first, prefetch, grow, grow_after_s)
         try:
-            yield self.servers[i]
+            yield self.servers[waiter.server]
         finally:
-            self.admission.leave(i, need)
+            self.admission.leave(waiter)
 
 
 class LlamaServer:
@@ -397,12 +531,21 @@ class LlamaGroup:
     def preemptions(self) -> float:
         return 0.0  # a read is one pass over its own context; nothing is ever recomputed
 
+    def promote(self) -> None:
+        pass
+
     def stop(self) -> None:
         for server in self.servers:
             server.stop()
 
     def complete(
-        self, prompt: list[int], max_tokens: int, seed: int, force: list[int] | None = None
+        self,
+        prompt: list[int],
+        max_tokens: int,
+        seed: int,
+        force: list[int] | None = None,
+        book: int | None = None,
+        prefetch: bool = False,
     ) -> tuple[list[int], str]:
         if force is None or len(force) != len(prompt) + max_tokens:
             raise ValueError(f"the {self.role} runs in llama.cpp and only reads a forced answer")
@@ -466,10 +609,26 @@ class RemoteGroup:
     def stop(self) -> None:
         pass
 
+    def promote(self) -> None:
+        httpx.post(f"{self.url}/promote", timeout=30).raise_for_status()
+
     def complete(
-        self, prompt: list[int], max_tokens: int, seed: int, force: list[int] | None = None
+        self,
+        prompt: list[int],
+        max_tokens: int,
+        seed: int,
+        force: list[int] | None = None,
+        book: int | None = None,
+        prefetch: bool = False,
     ) -> tuple[list[int], str]:
-        body = {"prompt": prompt, "max_tokens": max_tokens, "seed": seed, "force": force}
+        body = {
+            "prompt": prompt,
+            "max_tokens": max_tokens,
+            "seed": seed,
+            "force": force,
+            "book": book,
+            "prefetch": prefetch,
+        }
         with self._lock:
             url = next(self._turn)
         with timing.stages.timed("teacher request"):
@@ -567,15 +726,25 @@ class SplitTeacher:
     def stop(self) -> None:
         self.local.stop()
 
+    def promote(self) -> None:
+        self.local.promote()
+        self.remote.promote()
+
     def complete(
-        self, prompt: list[int], max_tokens: int, seed: int, force: list[int] | None = None
+        self,
+        prompt: list[int],
+        max_tokens: int,
+        seed: int,
+        force: list[int] | None = None,
+        book: int | None = None,
+        prefetch: bool = False,
     ) -> tuple[list[int], str]:
         with self.lock:
             side = min(self.inflight, key=lambda k: self.inflight[k] / self.weights[k])
             self.inflight[side] += 1
         try:
             group = self.local if side == "local" else self.remote
-            return group.complete(prompt, max_tokens, seed, force)
+            return group.complete(prompt, max_tokens, seed, force, book, prefetch)
         finally:
             with self.lock:
                 self.inflight[side] -= 1

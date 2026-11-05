@@ -31,7 +31,13 @@ KL_MARGIN = 0.03
 # One vLLM server per GPU. The comparison math runs on the king's and the challenger's GPUs, whose
 # servers leave room for it (an lm_head copy and a few GiB of work space). The teacher's share
 # leaves room for vLLM's start-up peak above it and the eval service's own CUDA context on GPU 0.
-MEMORY_SHARE = {"teacher": 0.90, "king": 0.65, "challenger": 0.65}
+MEMORY_SHARE = {"teacher": 0.92, "king": 0.65, "challenger": 0.65}
+# Of a server's KV cache that admitted requests may book, and the share its live usage (vLLM's
+# kv_cache_usage_perc, polled every KV_USAGE_POLL_S) may reach before the next request waits:
+# answers run past their booking, and a cache that fills preempts, which ends the eval (run.py).
+ADMISSION_SHARE = 0.95
+KV_USAGE_ADMIT = 0.85
+KV_USAGE_POLL_S = 3.0
 BASE_PORT = 9100
 SERVER_START_S = 3600
 # The hidden states the servers write per token: the last block's, which gives the next-token
@@ -40,18 +46,29 @@ LAYERS = (64,)
 
 MAX_TOKENS = 4096
 DOMAIN_MAX_TOKENS = {"science": 12288, "math": 8192, "reasoning": 12288}
+# What a teacher request books in its server's KV cache: the prompt plus this many answer tokens
+# for its domain, times BOOKED_MARGIN, instead of the whole budget the answer may still run to.
+# Answers that together outgrow the cache are preempted by vLLM, which ends the eval (run.py).
+EXPECTED_ANSWER_TOKENS = {
+    "terminal": 1441,
+    "swe": 795,
+    "reasoning": 5361,
+    "science": 2736,
+    "math": 2082,
+}
+BOOKED_MARGIN = 1.2
+# A request that has generated for longer than its booked answer tokens take at the fastest
+# decode step may have outrun its booking: from then on it books its whole budget.
+REBOOK_STEP_S = 0.046
 # prompt and answer together; the draw passes over prompts that leave less than MAX_TOKENS
 MAX_MODEL_LEN = 36864
 MAX_BYTES_PER_TOKEN = 8
 SAMPLING = {"temperature": 1.0, "top_p": 0.95, "top_k": 20}
-# Every Nth sample the teacher reads its own answer again: the noise floor batching adds.
-RERUN_EVERY = 10
 # Samples in flight. Each server's share is bounded by its cache (_hold) and --max-num-seqs.
 WORKERS = 800
-# Samples of the next eval the teacher answers while the current one drains (run.Prefetch): once
-# every sample is admitted, the teacher's servers empty out over the last long answers. The
+# The next eval's samples are answered ahead (run.Prefetch) on a teacher server only while
+# nothing of the running eval generates there, so a prefetch never slows the eval down. The
 # answers' state files wait in /dev/shm.
-PREFETCH_SAMPLES = 100
 # A sample that fails is left out and the eval goes on. More than this many is a broken eval, or
 # a model failing on purpose to shed hard prompts, and ends the eval.
 MAX_FAILED_SAMPLES = 10

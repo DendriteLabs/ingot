@@ -27,10 +27,18 @@ from eval_service import config, servers
 
 class Teacher(Protocol):
     def complete(
-        self, prompt: list[int], max_tokens: int, seed: int, force: list[int] | None = None
+        self,
+        prompt: list[int],
+        max_tokens: int,
+        seed: int,
+        force: list[int] | None = None,
+        book: int | None = None,
+        prefetch: bool = False,
     ) -> tuple[list[int], str]: ...
 
     def preemptions(self) -> float: ...
+
+    def promote(self) -> None: ...
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -48,12 +56,21 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self) -> None:
+        if self.path == "/promote":
+            self.teacher.promote()
+            self._json({"ok": True})
+            return
         if self.path != "/complete":
             self.send_error(404)
             return
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         tokens, path = self.teacher.complete(
-            body["prompt"], body["max_tokens"], body["seed"], body.get("force")
+            body["prompt"],
+            body["max_tokens"],
+            body["seed"],
+            body.get("force"),
+            body.get("book"),
+            bool(body.get("prefetch")),
         )
         keep_answer_rows(Path(path), len(body["prompt"]) - 1)
         self._json({"token_ids": tokens, "states": str(Path(path).relative_to(self.states_dir))})

@@ -146,7 +146,7 @@ CREATE TABLE IF NOT EXISTS evals (
     dist_challenger DOUBLE PRECISION,    -- hidden-state distance of older evals; NULL now that KL alone decides
     dist_king DOUBLE PRECISION,
     dist_margin DOUBLE PRECISION,
-    noise_kl DOUBLE PRECISION,           -- the teacher against its own rerun
+    noise_kl DOUBLE PRECISION,           -- the teacher against its own rerun; older evals only
     noise_dist DOUBLE PRECISION,
     won BOOLEAN,
     challenger_s REAL,

@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import json
 import zlib
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
+from concurrent.futures import Future
 from pathlib import Path
 
 import pytest
@@ -87,7 +88,6 @@ def duel(challenger: float, king: float) -> Scorer:
         return Duel(
             Score(challenger),
             Score(king),
-            Score(0.0),
             samples=[{"sample_id": sample.id} for sample in samples],
         )
 
@@ -221,7 +221,7 @@ def test_challenger_beats_king_and_gets_paid(conn, s, spec):
         4,
     )
     assert (ev["teacher"], ev["dataset_hash"]) == ("org/teacher@main", "d1")
-    assert (ev["dist_challenger"], ev["dist_king"], ev["noise_kl"]) == (None, None, 0.0)
+    assert (ev["dist_challenger"], ev["dist_king"], ev["noise_kl"]) == (None, None, None)
     assert (s.eval_work_dir / "results" / f"{ev['id']}.jsonl").exists()
     assert guard.is_used(conn, "hk-1"), "an evaluated hotkey is spent, win or lose"
 
@@ -362,7 +362,7 @@ def test_the_next_eval_faces_the_new_king(conn, s, spec):
             return Score(0.1 if "hk-1" in str(model) else 0.5)
 
         records = [{"sample_id": sample.id} for sample in samples]
-        return Duel(of(challenger), of(king), Score(0.0), samples=records)
+        return Duel(of(challenger), of(king), samples=records)
 
     assert evaluate(conn, s, score) and state(conn, first) == states.WON
     assert not evaluate(conn, s, score), "the queue waits while the winner is crowned"
@@ -393,7 +393,12 @@ def test_the_next_eval_is_claimed_and_answered_ahead(conn, s, spec):
             self.drawn = drawn
 
         def result(self) -> dict:
-            return {i: ([1, 2], "f") for i in range(len(self.drawn))}
+            out = {}
+            for i in range(len(self.drawn)):
+                future: Future = Future()
+                future.set_result(([1, 2], "f"))
+                out[i] = future
+            return out
 
     def claimed_ahead() -> None:
         thread = eval_service._claiming
@@ -407,12 +412,10 @@ def test_the_next_eval_is_claimed_and_answered_ahead(conn, s, spec):
         samples: Sequence[Sample],
         *,
         prefetched: dict,
-        on_teacher_drained: Callable[[], None],
         **_: object,
     ) -> Duel:
         seen.append(dict(prefetched))
-        on_teacher_drained()
-        # a real duel runs on for minutes after draining; here the claim must land before the
+        # a real duel runs for minutes; here the claim taken at its start must land before the
         # verdict, which would close the queue for the coronation
         claimed_ahead()
 
@@ -420,11 +423,11 @@ def test_the_next_eval_is_claimed_and_answered_ahead(conn, s, spec):
             return Score(0.1 if "hk-1" in str(model) else 0.5)
 
         records = [{"sample_id": sample.id} for sample in samples]
-        return Duel(of(challenger), of(king), Score(0.0), samples=records)
+        return Duel(of(challenger), of(king), samples=records)
 
     assert evaluate(conn, s, score, prefetcher=FakePrefetch) and state(conn, first) == states.WON
     claimed_ahead()
-    assert state(conn, second) == states.EVALUATING, "claimed while the first duel drained"
+    assert state(conn, second) == states.EVALUATING, "claimed while the first duel ran"
     assert db.one(conn, "SELECT count(*) AS n FROM evals")["n"] == 1, "its eval starts later"
     assert promoter.run_once(
         conn, worker=WORKER, s=s, spec=spec, fetch=fetch, publish=lambda *_: "url"

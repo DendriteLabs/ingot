@@ -25,7 +25,7 @@ const shown = (doc) => (picked ? groupSamples(scored(doc.samples)).groups.get(pi
 // the three roles a sample record can hold, as the chart draws them
 const SERIES = [["challenger", "challenger"], ["king", "king"], ["teacher_rerun", "teacher reread"]];
 const WHAT = {
-  "summary.json": "the eval's row: both scores, the margins, the noise floor, seed and timings",
+  "summary.json": "the eval's row: both scores, the margins, seed and timings (older evals also hold the noise floor)",
   "samples.jsonl": "one record per sample: KL and top-1 agreement for each model (older evals also hold the distance by layer)",
 };
 // records from before the evaluator wrote each sample's domain group by source dataset instead,
@@ -115,7 +115,8 @@ function renderDuel(doc) {
       el("tbody", {}, rows))),
     el("p", { class: "note info-src" },
       (diverged(doc) ? `${diverged(doc)} of ${doc.samples.length} samples gave a model no finite score (it diverged); a diverged challenger loses. ` : "")
-      + `Lower is closer to the teacher. Noise floor, the teacher reading its own answers again: KL ${num(e.noise_kl)}${e.noise_dist == null ? "" : `, distance ${num(e.noise_dist, 4)}`}. `
+      + "Lower is closer to the teacher. "
+      + (e.noise_kl == null ? "" : `Noise floor, the teacher reading its own answers again: KL ${num(e.noise_kl)}${e.noise_dist == null ? "" : `, distance ${num(e.noise_dist, 4)}`}. `)
       + `Run time: challenger ${secs(e.challenger_s)}, king ${secs(e.king_s)}. Seed ${e.seed}, dataset ${e.dataset_hash}.`));
 }
 
