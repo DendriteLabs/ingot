@@ -52,11 +52,11 @@ class Settings(BaseSettings):
     teacher_port: int = 9300
     # GPUs behind INGOT_TEACHER_URL, when this box serves the teacher on INGOT_TEACHER_GPUS too
     remote_teacher_gpus: int = 8
-    # one vLLM server per listed GPU; the teacher's are the teacher server's on its own box, or the
-    # eval box's when it has no INGOT_TEACHER_URL
-    teacher_gpus: str = ""
-    king_gpus: str = "0,1,2,3"
-    challenger_gpus: str = "4,5,6,7"
+    # one vLLM server per listed GPU; the teacher's are this box's, or with INGOT_TEACHER_URL the
+    # teacher server's on its own box
+    teacher_gpus: str = "0,1,2,3"
+    king_gpus: str = "4,5"
+    challenger_gpus: str = "6,7"
     # overrides of eval_service.config's LLAMA_BATCH and LLAMA_PER_GPU, for tuning a box
     llama_batch: int | None = None
     llama_per_gpu: int | None = None

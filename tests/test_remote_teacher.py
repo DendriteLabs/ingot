@@ -50,7 +50,7 @@ class FakeTeacher:
     def __init__(self, states_dir: Path) -> None:
         self.states_dir, self.n = states_dir, 0
 
-    def complete(self, prompt, max_tokens, seed, force=None):
+    def complete(self, prompt, max_tokens, seed, force=None, book=None, prefetch=False):
         self.n += 1
         path = self.states_dir / "gpu0" / f"req{self.n}.safetensors"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -124,6 +124,7 @@ def test_only_state_files_inside_the_states_dir_are_served(remote):
 def test_a_teacher_url_takes_the_teacher_off_this_box(remote, tmp_path, monkeypatch):
     url, _, _ = remote
     monkeypatch.setenv("INGOT_TEACHER_URL", url)
+    monkeypatch.setenv("INGOT_TEACHER_GPUS", "")
     settings.cache_clear()
     try:
         groups = servers.serve({"teacher": tmp_path})
@@ -145,14 +146,14 @@ def test_gpus_come_from_env(monkeypatch):
     )
 
 
-def test_gpus_default_to_four_per_king_and_challenger(monkeypatch):
+def test_gpus_default_to_four_two_two_on_one_box(monkeypatch):
     for name in ("INGOT_TEACHER_GPUS", "INGOT_KING_GPUS", "INGOT_CHALLENGER_GPUS"):
         monkeypatch.delenv(name, raising=False)
     s = Settings(_env_file=None)
     assert (s.gpus("teacher"), s.gpus("king"), s.gpus("challenger")) == (
-        (),
         (0, 1, 2, 3),
-        (4, 5, 6, 7),
+        (4, 5),
+        (6, 7),
     )
 
 

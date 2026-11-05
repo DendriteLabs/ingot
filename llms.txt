@@ -143,20 +143,25 @@ scored. For each model, per answer token: KL(teacher ‖ model) between the next
 distributions, averaged over the sample's tokens; the eval's score is the mean over the samples, so
 a short answer and a long agent step weigh the same.
 
-Lower is better. The teacher rereading its own answer gives the noise floor, recorded with
-every eval: batching alone makes two runs of the same model differ by about that much.
+Lower is better. Batching alone makes two runs of the same model differ by a KL of about
+0.00015 (the teacher rereading its own answers, measured over earlier evals), far below the
+margin.
 
-Every eval runs on two machines, each with eight NVIDIA RTX PRO 6000 Blackwell Server Edition
-GPUs (96 GB each, driver 595.91, CUDA 13.2), 1 TB of RAM and Ubuntu 24.04. The eval box (two AMD
-EPYC 9575F, 128 cores) serves the teacher in vLLM on two GPUs, reads the king on three and the
-challenger on three. The teacher box (two Xeon 6767P, 128 cores) serves the teacher in vLLM on
-all eight GPUs; the eval box splits the teacher's work between its own two GPUs and the teacher
-box. The fork is built on both boxes (`scripts/build_llama.sh`)
-with CUDA 13.0 and GCC 13.3, its kernels for `sm_120a` only: a q2 model is read with the fork's
-PQ2_0 CUDA kernels as they compile for Blackwell.
+Every eval runs on one machine with eight NVIDIA RTX PRO 6000 Blackwell Server Edition GPUs
+(96 GB each, driver 595.91, CUDA 13.2), two AMD EPYC 9575F (128 cores), 1 TB of RAM and Ubuntu
+24.04: the teacher in vLLM on four GPUs (one server each), the king read on two and the
+challenger on two. The teacher answers the samples longest answer budget first (science and
+reasoning, then math, then swe and terminal) and longest prompt first within a budget; each
+request books its prompt plus the domain's mean answer × 1.2 in its server's KV cache, and the
+whole budget once it has generated for longer than that booking could take, so a cache never
+fills and vLLM never preempts a request (a preempted request would be recomputed in one
+prefill pass, and the eval ends instead). An eval of 800 samples takes about 45 minutes. The
+fork is built on the box (`scripts/build_llama.sh`) with CUDA 13.0 and GCC 13.3, its kernels for
+`sm_120a` only: a q2 model is read with the fork's PQ2_0 CUDA kernels as they compile for
+Blackwell.
 
 **q2 (GGUF)** models read the answer in `llama-states` (`src/eval_service/llama_states/`), a
-small program on the pinned fork's own library, `LLAMA_PER_GPU` (4) processes on the model's
+small program on the pinned fork's own library, `LLAMA_PER_GPU` (6) processes on the model's
 GPU, each one request at a time, flash attention, a 16-bit KV cache, passes of 2048 tokens, the
 last block's hidden state taken by the fork's own layer capture. The evaluator rebuilds
 the next-token distribution from your last hidden state with your own `output_norm` and
