@@ -205,6 +205,7 @@ main { display: flex; flex-direction: column; gap: 64px; padding-top: 56px; padd
 /* weight holders and registration price share a row on a full-width page */
 .pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; }
 .pair > .section { display: flex; flex-direction: column; }
+.section[hidden], .pair[hidden] { display: none; }
 .pair > .section > :last-child { flex: 1; }
 /* the table panel stretches to the chart's height so the row ends level; rows stay at the top */
 #reign-wrap { display: flex; flex-direction: column; }

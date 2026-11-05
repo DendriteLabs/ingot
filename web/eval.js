@@ -241,6 +241,9 @@ function renderLayers(doc) {
     if (section) section.hidden = !recorded;
     if (recorded) renderLayerChart(doc, name, field, what, noun);
   }
+  // the two panels share a row: the row goes with them
+  const pair = $("layers-chart")?.closest(".pair");
+  if (pair) pair.hidden = !recorded;
 }
 
 function renderLayerChart(doc, name, field, what, noun) {
