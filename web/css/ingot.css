@@ -631,6 +631,30 @@ button.zip:disabled { opacity: 0.6; cursor: wait; }
 .size-line { position: absolute; top: 0; bottom: 0; border-left: 1px dashed var(--muted); }
 .size-line span { position: absolute; top: 0; left: 6px; white-space: nowrap; font-family: var(--mono); font-style: normal; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
 
+/* the distance line: the teacher at the left end, each model a point at its KL */
+.distance-line { position: relative; height: 130px; margin: 8px 36px 0; }
+.dl-track { position: absolute; left: 0; right: 0; top: 50%; height: 2px; transform: translateY(-50%);
+  background: linear-gradient(90deg, var(--accent), var(--line-strong) 75%); }
+.dl-mark { position: absolute; top: 50%; }
+.dl-mark i { position: absolute; left: 0; top: 0; width: 11px; height: 11px; transform: translate(-50%, -50%); border-radius: 50%;
+  background: var(--page); border: 2px solid var(--text-2); }
+.dl-mark.king i { width: 15px; height: 15px; background: var(--brass); border-color: var(--brass); }
+.dl-label { position: absolute; left: 0; bottom: 14px; transform: translateX(-50%); display: grid; text-align: center; white-space: nowrap;
+  font-family: var(--mono); font-size: 13px; color: var(--text); }
+.dl-mark.below .dl-label { bottom: auto; top: 14px; }
+.dl-mark.start .dl-label { transform: translateX(-8px); text-align: left; }
+.dl-mark.end .dl-label { transform: translateX(calc(-100% + 8px)); text-align: right; }
+.dl-label a { color: inherit; text-decoration: none; }
+.dl-label a:hover { color: var(--accent-ink); }
+.dl-label small { font-size: 11px; color: var(--muted); }
+.dl-mark.king .dl-label { color: var(--accent-ink); font-weight: 600; }
+@media (max-width: 600px) {
+  .distance-line { margin: 8px 18px 0; }
+  .dl-label { font-size: 10px; }
+  .dl-label small { font-size: 10px; }
+  .dl-mark:not(.king) .dl-label small { display: none; }
+}
+
 /* the newest kings as cards */
 .king-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
 .king-card { position: relative; display: grid; gap: 6px; border: 1px solid var(--line); background: var(--panel); padding: 20px 20px 18px; text-decoration: none; color: inherit; }

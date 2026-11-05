@@ -18,6 +18,8 @@ const signed = (v) => `${v < 0 ? "−" : "+"}${Math.abs(v).toFixed(1)}`;
 let state = null;
 let runs = null;
 let noise = {};
+// KL to the teacher of common quants and measured kings, all on the same held-out steps
+let ladder = null;
 // all-time Hugging Face downloads per repo of the org's Ingot models, refreshed every ten minutes
 let downloads = null;
 
@@ -93,6 +95,7 @@ function render() {
   $("s-ahead").textContent = ahead != null ? `${ahead} of ${BENCHMARKS.length}` : "—";
 
   renderSizes(king);
+  renderDistance(king);
   renderKings(king);
   if (!runs) return;
   const models = [
@@ -110,6 +113,41 @@ function render() {
   renderBars($("index-chart"), aaRows, (m) => m.aa, (m) => (m.estimate === "ours" ? `≈${Math.round(m.aa)}` : `${m.aa}`), 40,
     (m) => (m.estimate === "ours" ? `our estimate: ${(100 * m.est.share).toFixed(0)}% of the teacher's scores kept on four shared benchmarks${aaPendingNote(m.est)}`
       : m.estimate ? "Artificial Analysis's own estimate" : `Artificial Analysis Intelligence Index ${AA.version}`), teacher);
+}
+
+// Every model as a point on one line out from the teacher. A king not measured yet shows the closest measured
+// king's KL, marked as an estimate.
+function renderDistance(king) {
+  $("distance").hidden = !ladder;
+  if (!ladder) return;
+  const measured = Object.entries(ladder.kings).sort((a, b) => a[1] - b[1])[0];
+  const estimated = ladder.kings[king.name] == null;
+  const kl = ladder.kings[king.name] ?? measured?.[1];
+  const numeral = king.name.split("-")[1];
+  const marks = [...ladder.models.map((m) => ({ ...m, repo: m.repo ?? state.teacher })),
+    ...(kl != null ? [{ label: `King ${numeral}`, repo: king.hf_repo, gb: SIZES_GB[ROUND], kl, king: true }] : [])]
+    .sort((a, b) => a.kl - b.kl);
+  const top = 1.06 * marks.at(-1).kl;
+  marks.forEach((m) => { m.pos = (100 * m.kl) / top; });
+  // the king's label below the line, and any label that would touch the last one above
+  const width = $("distance-wrap").clientWidth || 1000;
+  const reach = width < 500 ? 55 : 110;
+  let lastAbove = null;
+  marks.forEach((m) => {
+    m.below = Boolean(m.king || (lastAbove && ((m.pos - lastAbove.pos) / 100) * width < reach));
+    if (!m.below) lastAbove = m;
+  });
+  mount($("distance-wrap"),
+    el("i", { class: "dl-track" }),
+    ...marks.map((m) => el("div", { class: `dl-mark${m.king ? " king" : ""}${m.below ? " below" : ""}${m.pos > 90 ? " end" : m.pos < 4 ? " start" : ""}`, style: `left: ${m.pos}%` },
+      el("i"),
+      el("span", { class: "dl-label" }, link(hubUrl(m.repo), m.label),
+        el("small", {}, `${m.king && estimated ? "≈" : ""}${m.kl === 0 ? "0" : m.kl.toFixed(3)} · ${+m.gb.toPrecision(3)} GB`)))));
+  const genesis = ladder.models.find((m) => m.label === GENESIS.label)?.kl;
+  $("distance-meta").textContent = kl != null && genesis
+    ? `King ${numeral}: ${estimated ? "≈" : ""}${Math.round((100 * (genesis - kl)) / genesis)}% closer to the teacher than ${GENESIS.label}` : "";
+  $("distance-note").textContent = "KL divergence from the teacher per token, lower is closer. Every model reads the same teacher answers: "
+    + `${ladder.measured_on}.`;
 }
 
 // horizontal bars of file size, ours last, with the line a 16 GB MacBook draws
@@ -269,6 +307,8 @@ mountHeader();
 loadDownloads();
 setInterval(loadDownloads, 600000);
 new ResizeObserver(() => runs && render()).observe($("panel-figures"));
+fetch("/data/kl-ladder.json").then((r) => (r.ok ? r.json() : null)).then((d) => { ladder = d; render(); })
+  .catch((err) => console.warn("ladder fetch failed", err));
 load();
 setInterval(load, 30000);
 renderTokens();
