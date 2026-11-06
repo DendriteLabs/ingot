@@ -91,6 +91,7 @@ include = [
     "src/eval_service/dataset.py",
     "tests/test_dataset.py",
     "tests/test_answer_rows.py",
+    "miner/ternary/*.py",
 ]
 
 [tool.ty.overrides.rules]

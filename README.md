@@ -68,3 +68,5 @@ uv run ingot register
 uv run ingot check-model --path ./model.gguf
 uv run ingot submit-private --path ./model.gguf
 ```
+
+To work with a q2 model in PyTorch (load, train, pack, measure), see [`miner/ternary`](miner/ternary/README.md).

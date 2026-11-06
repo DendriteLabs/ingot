@@ -115,6 +115,57 @@ any model, the margin over the current king. The same deterministic recipe run o
 gives the same model: if someone submitted it first, yours is the duplicate. Re-uploading a king
 with a little noise does not pay: it passes this check and loses its duel.
 
+## The file format
+
+Every tensor genesis stores as PQ2_0 is ternary codes times one fp16 scale per 128 inputs of an
+output row. `miner/ternary` works with the file in PyTorch: codes, scales and the unquantized
+tensors alike. What it relies on, each verifiable with `python -m miner.ternary.basis_check`
+against the teacher's own weights:
+
+- **The weights are stored in a rotated basis.** For a stored row z, the row transformers would
+  hold is w = s * (H z): H the normalized Sylvester-Walsh-Hadamard transform in blocks of 1024
+  along the input dimension, s the +-1 sign vector of the tensor's input width
+  (`prism.hadamard.*` in the metadata). The kernels compute y = z . (H (s * x)); the embedding
+  table is stored latent and restored as s * (H z) on lookup.
+- **The 48 gated-deltanet layers keep their value-side rows in the fork's head order**
+  (head = rep * n_k + k): the z gate (`attn_gate`), the v rows of `attn_qkv` (after 2 * key_dim
+  rows), the conv channels, `ssm_beta`, `ssm_alpha`, `ssm_a`, `ssm_dt.bias`; transformers uses
+  head = k * rep + rep_i, and `ssm_out`'s columns are in that order already. Norms are stored as
+  1 + w, the gated SSM norm as is; `ssm_a` is -exp(A_log); the q projection outputs [q | gate] per
+  head.
+- **The unquantized tensors are trained values too.** Genesis's norms and its deltanet alpha,
+  beta and conv weights are not the teacher's; they belong in the training with the codes.
+- **The kernels read q8_1-quantised activations** against the packed codes. A bf16 PyTorch model
+  of the file reproduces the fork's log-probs to a few thousandths of a nat per token;
+  `python -m miner.ternary.numerics_check` measures it on your box.
+
+The kit gives the pieces; what to change and how is yours.
+
+- `miner.ternary.model.load_model(gguf, teacher_dir, trainable=True, train_only={...})` builds the
+  file as a `Qwen3_5ForCausalLM` whose folded linears keep a float latent per code, in units of
+  its group's scale (it starts at the code; the code flips once the latent has moved 0.5), and a
+  float scale per group, rounded straight-through in the forward pass. `trainable=False` gives the
+  exact model.
+- `miner.ternary.pack.delta_from_model(model)` and `pack(base, delta, out, model.config)` write the
+  trained codes, scales and small tensors into a byte copy of the base file, which keeps
+  everything the validator pins, and read them back. A delta file is safetensors with
+  `<gguf tensor>:codes` (int8 [out, in], transformers' row order), `<gguf tensor>:scales` (fp16
+  [out, in/128]) and `small:<parameter>` (float); `python -m miner.ternary.pack` packs one.
+- `miner.ternary.teacher_data` has the teacher answer draws from the eval's corpus (`--draw SEED`,
+  one eval's samples each, cut as the eval cuts them) or a JSONL of samples, as token ids;
+  `--write-draw` writes a draw without the teacher, for a held-out set.
+- `miner.ternary.weak_spots` reads the per-sample records the site publishes for every duel the
+  current king played (`api/state.json`, `api/evals/<id>.json`) and reports its KL per domain,
+  source and stratum with each part's share of its score; `--out` rebuilds the worst samples from
+  the corpus with each eval's seed, exactly as the evals cut them, for `teacher_data --data`.
+- `miner.ternary.train` is a complete loop to start from: FSDP2 over the node's GPUs, a frozen BF16
+  teacher, KL(teacher || student) over the answer tokens with the head applied in chunks, held-out
+  KL and the count of moved codes in its log, an export for `pack`. As it stands it does not
+  improve a king (on 1,400 teacher answers and 16 sequences a step the training KL does not fall
+  and the held-out KL rises once codes flip). A crown needs the
+  margin over the king on a fresh draw. `ingot check-model` checks a packed file;
+  `scripts/eval_smoke.py` duels it against the king with the eval's scorer.
+
 ## How a submission is judged
 
 The evaluation dataset is the Hugging Face Parquet dataset and split named in `chain.toml`
