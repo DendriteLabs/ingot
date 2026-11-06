@@ -10,9 +10,9 @@
 <link rel="apple-touch-icon" href="favicon-512.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@300;400;500;600;700&family=Barlow+Semi+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/ingot.css">
-<script>try { if (localStorage.getItem("ingot-theme") === "light") document.documentElement.dataset.theme = "light"; } catch {}</script>
+<script>try { const t = localStorage.getItem("ingot-theme"); if (t === "light" || (!t && matchMedia("(prefers-color-scheme: light)").matches)) document.documentElement.dataset.theme = "light"; } catch {}</script>
 </head>
 <body>
 

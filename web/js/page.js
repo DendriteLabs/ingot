@@ -23,7 +23,9 @@ export function placeTip(tip, svg, width, at, top) {
 
 // a uid or hotkey links to that hotkey's miner page on taomarketcap
 export const minerLink = (netuid, hotkey, text) =>
-  link(`https://taomarketcap.com/subnets/${netuid}/miners?query=${encodeURIComponent(hotkey)}`, text, { title: `${hotkey} on taomarketcap` });
+  link(`https://taomarketcap.com/subnets/${netuid}/miners?query=${encodeURIComponent(hotkey)}`, text, {
+    title: `${hotkey} on taomarketcap`,
+  });
 
 const HEADER = `
 <div class="row">
@@ -51,8 +53,13 @@ const HEADER = `
       <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
     </a>
     <button type="button" class="icon" id="theme-btn" aria-label="Switch to light theme" title="Switch to light theme">
-      <svg width="14" height="14" viewBox="0 0 14 14" shape-rendering="crispEdges" aria-hidden="true">
-        <rect x="1.5" y="1.5" width="11" height="11" fill="none" stroke="currentColor"/><rect x="2" y="2" width="5" height="10" fill="currentColor"/>
+      <svg class="theme-sun" width="14" height="14" viewBox="0 0 14 14" fill="currentColor" shape-rendering="crispEdges" aria-hidden="true">
+        <rect x="5" y="5" width="4" height="4"/><rect x="6" y="1" width="2" height="2"/><rect x="6" y="11" width="2" height="2"/>
+        <rect x="1" y="6" width="2" height="2"/><rect x="11" y="6" width="2" height="2"/><rect x="2" y="2" width="2" height="2"/>
+        <rect x="10" y="2" width="2" height="2"/><rect x="2" y="10" width="2" height="2"/><rect x="10" y="10" width="2" height="2"/>
+      </svg>
+      <svg class="theme-moon" width="14" height="14" viewBox="0 0 14 14" fill="currentColor" shape-rendering="crispEdges" aria-hidden="true">
+        <path d="M5 1h4v1H7v1H6v2H5v4h1v2h1v1h2v1H5v-1H3v-1H2V9H1V5h1V3h1V2h2z"/>
       </svg>
     </button>
   </nav>
@@ -95,21 +102,39 @@ function watchVersion() {
   if (!VERSION) return;
   let stale = false;
   const reload = () => {
-    try { sessionStorage.setItem("ingot-reloaded", stale); } catch { /* private mode: no loop guard needed */ }
+    try {
+      sessionStorage.setItem("ingot-reloaded", stale);
+    } catch {
+      /* private mode: no loop guard needed */
+    }
     location.reload();
   };
-  document.addEventListener("visibilitychange", () => { if (stale && document.hidden) reload(); });
+  document.addEventListener("visibilitychange", () => {
+    if (stale && document.hidden) reload();
+  });
   setInterval(async () => {
     try {
       const { version } = await (await fetch("/version.json", { cache: "no-store" })).json();
       if (!version || version === VERSION || stale) return;
       stale = version;
       let done = null;
-      try { done = sessionStorage.getItem("ingot-reloaded"); } catch { /* as above */ }
+      try {
+        done = sessionStorage.getItem("ingot-reloaded");
+      } catch {
+        /* as above */
+      }
       if (document.hidden && done !== version) reload();
-      else document.body.append(Object.assign(document.createElement("button"),
-        { className: "update-note", textContent: "This page was updated · reload", onclick: reload }));
-    } catch { /* offline or no version yet: try again next minute */ }
+      else
+        document.body.append(
+          Object.assign(document.createElement("button"), {
+            className: "update-note",
+            textContent: "This page was updated · reload",
+            onclick: reload,
+          }),
+        );
+    } catch {
+      /* offline or no version yet: try again next minute */
+    }
   }, 60000);
 }
 
@@ -126,18 +151,24 @@ function mountInfo() {
     info.className = "info";
     const button = Object.assign(document.createElement("button"), { className: "info-btn", type: "button" });
     const icon = svgEl("svg", { viewBox: "0 0 16 16", "aria-hidden": "true" });
-    icon.append(svgEl("circle", { cx: 8, cy: 8, r: 7.2 }), svgEl("circle", { class: "dot", cx: 8, cy: 4.9, r: 1 }),
-      svgEl("path", { d: "M8 7.4v4.4" }));
+    icon.append(
+      svgEl("circle", { cx: 8, cy: 8, r: 7.2 }),
+      svgEl("circle", { class: "dot", cx: 8, cy: 4.9, r: 1 }),
+      svgEl("path", { d: "M8 7.4v4.4" }),
+    );
     button.append(icon);
     button.setAttribute("aria-label", "About this section");
     const pop = Object.assign(document.createElement("div"), { className: "info-pop" });
     pop.setAttribute("role", "tooltip");
-    const fill = () => pop.replaceChildren(...[...section.querySelectorAll(".info-src")].map((n) => {
-      const copy = n.cloneNode(true);
-      copy.classList.remove("info-src");
-      copy.removeAttribute("id");
-      return copy;
-    }));
+    const fill = () =>
+      pop.replaceChildren(
+        ...[...section.querySelectorAll(".info-src")].map((n) => {
+          const copy = n.cloneNode(true);
+          copy.classList.remove("info-src");
+          copy.removeAttribute("id");
+          return copy;
+        }),
+      );
     info.addEventListener("mouseenter", fill);
     button.addEventListener("focus", fill);
     button.addEventListener("click", (ev) => {
@@ -154,16 +185,17 @@ function mountInfo() {
   });
 }
 
-// the header into <header id="top">; dark is the default theme, a choice of light is remembered
-// per browser and applied before paint by each page's head
+// the header into <header id="top">; the theme follows the system until a visitor picks one, which is
+// remembered per browser and applied before paint by each page's head
 export function mountHeader() {
   $("top").innerHTML = HEADER;
   mountInfo();
   watchVersion();
   if ($("foot")) $("foot").innerHTML = FOOTER;
   // the GitHub links follow the state's, which the pages set on the header's
-  new MutationObserver(() => { if ($("foot-github")) $("foot-github").href = $("link-github").href; })
-    .observe($("link-github"), { attributes: true, attributeFilter: ["href"] });
+  new MutationObserver(() => {
+    if ($("foot-github")) $("foot-github").href = $("link-github").href;
+  }).observe($("link-github"), { attributes: true, attributeFilter: ["href"] });
   // the current page's link is underlined; an eval page belongs to the dashboard
   const page = (location.pathname.split("/").pop() || "index.html").replace(".html", "");
   for (const a of document.querySelectorAll(".page-link")) {
@@ -173,12 +205,30 @@ export function mountHeader() {
     const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
     $("theme-btn").title = $("theme-btn").ariaLabel = `Switch to ${next} theme`;
   };
-  $("theme-btn").addEventListener("click", () => {
-    const light = document.documentElement.dataset.theme !== "light";
+  const setTheme = (light) => {
     if (light) document.documentElement.dataset.theme = "light";
     else delete document.documentElement.dataset.theme;
-    try { localStorage.setItem("ingot-theme", light ? "light" : "dark"); } catch { /* private mode: the choice lasts this page view */ }
     showTheme();
+  };
+  // with no choice saved, a system switch between light and dark switches the page too
+  const system = matchMedia("(prefers-color-scheme: light)");
+  system.addEventListener("change", () => {
+    let saved = null;
+    try {
+      saved = localStorage.getItem("ingot-theme");
+    } catch {
+      /* private mode: nothing saved */
+    }
+    if (!saved) setTheme(system.matches);
+  });
+  $("theme-btn").addEventListener("click", () => {
+    const light = document.documentElement.dataset.theme !== "light";
+    setTheme(light);
+    try {
+      localStorage.setItem("ingot-theme", light ? "light" : "dark");
+    } catch {
+      /* private mode: the choice lasts this page view */
+    }
   });
   showTheme();
   $("hero-llms-btn").addEventListener("click", async () => {
@@ -189,7 +239,10 @@ export function mountHeader() {
       await navigator.clipboard.writeText(await (await fetch("llms.txt", { cache: "no-store" })).text());
       button.classList.add("copied");
       label.textContent = "copied";
-      setTimeout(() => { button.classList.remove("copied"); label.textContent = "llms.txt"; }, 1600);
+      setTimeout(() => {
+        button.classList.remove("copied");
+        label.textContent = "llms.txt";
+      }, 1600);
     } catch {
       window.open("llms.txt", "_blank", "noopener");
     } finally {

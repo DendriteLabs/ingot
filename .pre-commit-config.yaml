@@ -9,3 +9,13 @@ repos:
     rev: v0.0.87
     hooks:
       - id: ty
+  - repo: local
+    hooks:
+      - id: prettier
+        name: prettier
+        entry: prettier --write
+        language: node
+        additional_dependencies: ["prettier@3.9.10"]
+        language_version: "20.20.1"
+        files: ^web/.*\.(js|css|json)$
+        exclude: ^web/(data|brand)/

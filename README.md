@@ -12,7 +12,7 @@ copy that stays closest to it. Kings are published; the newest kings share the e
 
 ```bash
 git submodule update --init   # llama-prism: the Dendrite llama.cpp fork (PrismML's plus our changes) that runs q2 models
-uv run pre-commit install     # ruff + ty on every commit
+uv run pre-commit install     # ruff and ty on the python, prettier on web/, every commit
 ```
 
 ## Database

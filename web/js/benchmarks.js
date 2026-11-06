@@ -8,15 +8,33 @@ import { el } from "./dom.js";
 // 8-bit run only where the 2-bit round has none (AutomationBench). MMMU is no longer in the suite.
 export const ROUND_BENCH = {
   q2: {
-    protocol: "t1-minp05-32k-150", teacher: "Qwen3.8-27B-BF16-t1minp05-32k", genesis: "Ingot-genesis-27B-Q2-t1minp05-32k",
+    protocol: "t1-minp05-32k-150",
+    teacher: "Qwen3.8-27B-BF16-t1minp05-32k",
+    genesis: "Ingot-genesis-27B-Q2-t1minp05-32k",
     topK: 20,
-    benchmarks: [["Terminal-Bench 2.1", "terminal"], ["SWE-bench Multilingual", "coding"], ["GPQA Diamond", "science"],
-      ["τ³-bench Banking", "tool use"], ["MATH-500", "math"], ["BBEH Mini", "reasoning"]],
+    benchmarks: [
+      ["Terminal-Bench 2.1", "terminal"],
+      ["SWE-bench Multilingual", "coding"],
+      ["GPQA Diamond", "science"],
+      ["τ³-bench Banking", "tool use"],
+      ["MATH-500", "math"],
+      ["BBEH Mini", "reasoning"],
+    ],
   },
   fp8: {
-    protocol: "sampled-16k-150", ids: ["sampled-16k-150-v1"], teacher: "Qwen3.8-27B-BF16", genesis: "Ingot-genesis-27B-FP8", teacherFrom: "q2",
-    benchmarks: [["Terminal-Bench 2.1", "terminal"], ["SWE-bench Multilingual", "coding"], ["GPQA Diamond", "science"],
-      ["τ³-bench Banking", "tool use"], ["MATH-500", "math"], ["AutomationBench", "automation"]],
+    protocol: "sampled-16k-150",
+    ids: ["sampled-16k-150-v1"],
+    teacher: "Qwen3.8-27B-BF16",
+    genesis: "Ingot-genesis-27B-FP8",
+    teacherFrom: "q2",
+    benchmarks: [
+      ["Terminal-Bench 2.1", "terminal"],
+      ["SWE-bench Multilingual", "coding"],
+      ["GPQA Diamond", "science"],
+      ["τ³-bench Banking", "tool use"],
+      ["MATH-500", "math"],
+      ["AutomationBench", "automation"],
+    ],
   },
 };
 export const complete = (r) => r.status === "complete" && typeof r.score === "number" && Number.isFinite(r.score);
@@ -29,7 +47,8 @@ export function roundRuns(results, round) {
   const ours = (id) => (ids ? ids.includes(id) : id?.startsWith(`${protocol}-`));
   const runs = results.filter((r) => ours(r.protocol?.id) && r.status !== "stopped");
   if (!teacherFrom) return runs;
-  const borrowed = roundRuns(results, teacherFrom).filter((r) => r.model === ROUND_BENCH[teacherFrom].teacher)
+  const borrowed = roundRuns(results, teacherFrom)
+    .filter((r) => r.model === ROUND_BENCH[teacherFrom].teacher)
     .map((r) => ({ ...r, model: teacher, borrowed: true }));
   const covered = new Set(borrowed.map((r) => r.benchmark));
   return [...runs.filter((r) => !(r.model === teacher && covered.has(r.benchmark))), ...borrowed];
@@ -50,16 +69,31 @@ export function benchColumns(cols, genesis) {
   const floor = Math.max(0, Math.floor(lo - Math.max(25, hi - lo)));
   const y = (score) => (100 * (score - floor)) / (hi - floor);
   const signed = (v) => `${v < 0 ? "−" : "+"}${Math.abs(v).toFixed(1)}`;
-  return el("div", { class: "bench-cols" }, ...cols.map((c) => el(c.href ? "a" : "div", {
-    class: `bench-col ${c.tone}${c.score == null ? " missing" : ""}`, title: c.title,
-    href: c.href, target: c.href ? "_blank" : null, rel: c.href ? "noopener" : null,
-  },
-  el("span", { class: "bench-value" }, c.score == null ? c.pending : `${c.score.toFixed(1)}%`),
-  el("span", { class: `bench-delta${c.delta > 0 ? " up" : ""}` }, c.delta == null ? " " : signed(c.delta)),
-  el("span", { class: "bench-track" },
-    genesis == null ? null : el("i", { class: "bench-ref", style: `bottom: ${y(genesis)}%` }),
-    c.score == null ? null : el("i", { class: "bench-bar", style: `height: ${Math.max(1, y(c.score))}%` })),
-  el("span", { class: "bench-label" }, c.label))));
+  return el(
+    "div",
+    { class: "bench-cols" },
+    ...cols.map((c) =>
+      el(
+        c.href ? "a" : "div",
+        {
+          class: `bench-col ${c.tone}${c.score == null ? " missing" : ""}`,
+          title: c.title,
+          href: c.href,
+          target: c.href ? "_blank" : null,
+          rel: c.href ? "noopener" : null,
+        },
+        el("span", { class: "bench-value" }, c.score == null ? c.pending : `${c.score.toFixed(1)}%`),
+        el("span", { class: `bench-delta${c.delta > 0 ? " up" : ""}` }, c.delta == null ? " " : signed(c.delta)),
+        el(
+          "span",
+          { class: "bench-track" },
+          genesis == null ? null : el("i", { class: "bench-ref", style: `bottom: ${y(genesis)}%` }),
+          c.score == null ? null : el("i", { class: "bench-bar", style: `height: ${Math.max(1, y(c.score))}%` }),
+        ),
+        el("span", { class: "bench-label" }, c.label),
+      ),
+    ),
+  );
 }
 
 // the protocol under a round's benchmark cards, from the runs' own protocol records
@@ -72,14 +106,27 @@ export function protocolNote(all, round) {
   const p = records.find((r) => r.harbor_agent_timeout_multiplier) ?? records[0];
   const names = benchmarks.map(([name]) => name).filter((name) => runs.some((r) => r.benchmark === name && r.protocol?.agent_network));
   const sealed = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0];
-  const sampling = [`temperature ${p.temperature.toFixed(1)}`, `top-p ${p.top_p}`, p.min_p != null ? `min-p ${p.min_p}` : null,
-    topK ? `top-k ${topK}` : null].filter(Boolean).join(", ");
-  return el("p", { class: "run-note quiet wide protocol-note info-src" },
+  const sampling = [
+    `temperature ${p.temperature.toFixed(1)}`,
+    `top-p ${p.top_p}`,
+    p.min_p != null ? `min-p ${p.min_p}` : null,
+    topK ? `top-k ${topK}` : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  return el(
+    "p",
+    { class: "run-note quiet wide protocol-note info-src" },
     `${all.some((r) => r.borrowed) ? "The kings and genesis above ran" : "Every model above ran"} with the same settings: ${sampling}; replies up to `,
     `${p.max_tokens.toLocaleString("en-US")} tokens; agents get ${p.step_limit} steps; Harbor's time limits ×${p.harbor_timeout_multiplier}`,
-    p.harbor_agent_timeout_multiplier ? `, Terminal-Bench's agent clock ×${p.harbor_agent_timeout_multiplier}, so a task ends at the step limit, not on the clock` : "",
+    p.harbor_agent_timeout_multiplier
+      ? `, Terminal-Bench's agent clock ×${p.harbor_agent_timeout_multiplier}, so a task ends at the step limit, not on the clock`
+      : "",
     sealed ? `; on ${sealed} the agent has no internet, only the model (and τ³'s own runtime).` : ".",
-    all.some((r) => r.borrowed) ? ` The teacher's scores are its ${ROUND_LABEL[teacherFrom]} round runs, the same as that round shows.` : "");
+    all.some((r) => r.borrowed)
+      ? ` The teacher's scores are its ${ROUND_LABEL[teacherFrom]} round runs, the same as that round shows.`
+      : "",
+  );
 }
 const ROUND_LABEL = { q2: "1.75-bit", fp8: "8-bit" };
 
@@ -102,8 +149,14 @@ export function noiseLine(noise, name, run) {
   const binomial = p == null ? null : 100 * Math.sqrt((p * (1 - p)) / run.samples);
   const errors = [noise[name], binomial].filter((v) => v != null);
   if (!errors.length) return null;
-  return el("div", { class: "benchmark-noise", title: `larger of run-to-run noise (${noise[name]?.toFixed(2) ?? "—"}%) and sampling error at genesis's score (${binomial?.toFixed(2) ?? "—"}%)` },
-    `±${Math.max(...errors).toFixed(2)}%`);
+  return el(
+    "div",
+    {
+      class: "benchmark-noise",
+      title: `larger of run-to-run noise (${noise[name]?.toFixed(2) ?? "—"}%) and sampling error at genesis's score (${binomial?.toFixed(2) ?? "—"}%)`,
+    },
+    `±${Math.max(...errors).toFixed(2)}%`,
+  );
 }
 
 export const scoreOf = (runs, model, benchmark) => {
@@ -120,7 +173,12 @@ export const AA = {
   teacher: 34, // Qwen3.8 27B, reasoning (xhigh)
   // published scores; `estimate` marks the ones AA itself flags as estimates
   published: [
-    { label: "Gemma 4 12B", aa: 14, estimate: true, href: "https://artificialanalysis.ai/models/releases/comparisons/gemma-4-12b-vs-qwen3-5-9b" },
+    {
+      label: "Gemma 4 12B",
+      aa: 14,
+      estimate: true,
+      href: "https://artificialanalysis.ai/models/releases/comparisons/gemma-4-12b-vs-qwen3-5-9b",
+    },
     { label: "Qwen3.5 9B", aa: 11, href: "https://artificialanalysis.ai/models/qwen3-5-9b" },
     { label: "gpt-oss-20b", aa: 9, href: "https://artificialanalysis.ai/models/comparisons/qwen3-5-9b-vs-gpt-oss-20b" },
   ],
@@ -149,7 +207,8 @@ export function aaEstimate(runs, model, teacher) {
   return { aa: AA.teacher * share ** AA.exponent, share, pending };
 }
 // the estimate's note when a teacher run was left out
-export const aaPendingNote = (est) => (est?.pending?.length ? ` (${est.pending.join(" and ")} left out until the teacher's run finishes)` : "");
+export const aaPendingNote = (est) =>
+  est?.pending?.length ? ` (${est.pending.join(" and ")} left out until the teacher's run finishes)` : "";
 
 // the files people download, in decimal GB
 export const SIZES_GB = { q2: 5.95, fp8: 28.6, teacher: 54.4 };
@@ -162,13 +221,16 @@ export const SIZES_GB = { q2: 5.95, fp8: 28.6, teacher: 54.4 };
 // ranks after every finished one, most done first.
 export function rankKings(runs, benchmarks, kings, genesisRun) {
   const full = (row) => row.done === benchmarks.length;
-  return kings.map((king, order) => {
-    const pairs = benchmarks.map(([name]) => [scoreOf(runs, king.name, name), scoreOf(runs, genesisRun, name)]);
-    return {
-      king, order,
-      done: pairs.filter(([mine]) => mine != null).length,
-      ahead: pairs.filter(([mine, base]) => mine != null && base != null && mine >= base).length,
-      sum: pairs.reduce((total, [mine, base]) => total + (mine != null && base != null ? mine - base : 0), 0),
-    };
-  }).sort((a, b) => (full(b) - full(a)) || (full(a) ? b.sum - a.sum : b.done - a.done || b.order - a.order));
+  return kings
+    .map((king, order) => {
+      const pairs = benchmarks.map(([name]) => [scoreOf(runs, king.name, name), scoreOf(runs, genesisRun, name)]);
+      return {
+        king,
+        order,
+        done: pairs.filter(([mine]) => mine != null).length,
+        ahead: pairs.filter(([mine, base]) => mine != null && base != null && mine >= base).length,
+        sum: pairs.reduce((total, [mine, base]) => total + (mine != null && base != null ? mine - base : 0), 0),
+      };
+    })
+    .sort((a, b) => full(b) - full(a) || (full(a) ? b.sum - a.sum : b.done - a.done || b.order - a.order));
 }

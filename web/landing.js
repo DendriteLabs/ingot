@@ -5,7 +5,20 @@ import { el, mount, link } from "./js/dom.js";
 import { fmtRelative } from "./js/format.js";
 import { $, mountHeader, svgEl } from "./js/page.js";
 import { renderTokens } from "./js/tokens.js";
-import { AA, ROUND_BENCH, SIZES_GB, aaEstimate, aaPendingNote, benchColumns, loadNoise, noiseLine, protocolNote, rankKings, roundRuns, scoreOf } from "./js/benchmarks.js";
+import {
+  AA,
+  ROUND_BENCH,
+  SIZES_GB,
+  aaEstimate,
+  aaPendingNote,
+  benchColumns,
+  loadNoise,
+  noiseLine,
+  protocolNote,
+  rankKings,
+  roundRuns,
+  scoreOf,
+} from "./js/benchmarks.js";
 
 const ROUND = "q2";
 const { benchmarks: BENCHMARKS, teacher: TEACHER_RUN } = ROUND_BENCH[ROUND];
@@ -25,7 +38,9 @@ let downloads = null;
 
 async function loadDownloads() {
   try {
-    const res = await fetch("https://huggingface.co/api/models?author=dendriteholdings&search=Ingot&limit=200&expand%5B%5D=downloadsAllTime");
+    const res = await fetch(
+      "https://huggingface.co/api/models?author=dendriteholdings&search=Ingot&limit=200&expand%5B%5D=downloadsAllTime",
+    );
     if (res.ok) downloads = Object.fromEntries((await res.json()).map((m) => [m.id, m.downloadsAllTime ?? 0]));
     render();
   } catch (err) {
@@ -45,7 +60,11 @@ const MACBOOK_GB = 16;
 
 async function load() {
   try {
-    const [s, b, n] = await Promise.all([fetch("/api/state.json", { cache: "no-store" }), fetch("/api/benchmarks.json", { cache: "no-store" }), loadNoise()]);
+    const [s, b, n] = await Promise.all([
+      fetch("/api/state.json", { cache: "no-store" }),
+      fetch("/api/benchmarks.json", { cache: "no-store" }),
+      loadNoise(),
+    ]);
     noise = n;
     if (s.ok) state = await s.json();
     if (b.ok) runs = roundRuns((await b.json()).results ?? [], ROUND);
@@ -88,8 +107,15 @@ function render() {
   $("m-label").textContent = benchmarked ? "Best model" : "Reigning king";
   mount($("m-name"), link(hubUrl(king.hf_repo), king.name));
   mount($("m-repo"), link(hubUrl(king.hf_repo), king.hf_repo));
-  mount($("m-line"), ...(ahead != null ? [el("b", {}, `${ahead} of ${BENCHMARKS.length}`), "benchmarks at or above ", link(hubUrl(GENESIS.repo), GENESIS.label)] : []));
-  $("run-cmd").textContent = $("run-cmd").textContent.replaceAll(/dendriteholdings\/[A-Za-z0-9-]+/g, king.hf_repo).replaceAll(/Ingot-[A-Z]+-27B-PTQ1_0/g, `${king.name.replace(/-Q2$/, "")}-PTQ1_0`);
+  mount(
+    $("m-line"),
+    ...(ahead != null
+      ? [el("b", {}, `${ahead} of ${BENCHMARKS.length}`), "benchmarks at or above ", link(hubUrl(GENESIS.repo), GENESIS.label)]
+      : []),
+  );
+  $("run-cmd").textContent = $("run-cmd")
+    .textContent.replaceAll(/dendriteholdings\/[A-Za-z0-9-]+/g, king.hf_repo)
+    .replaceAll(/Ingot-[A-Z]+-27B-PTQ1_0/g, `${king.name.replace(/-Q2$/, "")}-PTQ1_0`);
 
   $("s-index").textContent = aa ? `≈${Math.round(aa.aa)}` : "—";
   $("s-ahead").textContent = ahead != null ? `${ahead} of ${BENCHMARKS.length}` : "—";
@@ -107,12 +133,30 @@ function render() {
   // the AA index: the teacher's published score as the line on top, the king and Bonsai 2 estimated
   // (dashed, ≈), the Mac-class models as AA publishes them
   const teacher = { ...models[0], label: "Qwen3.8 27B", aa: AA.teacher, href: "https://artificialanalysis.ai/models/qwen3-8-27b" };
-  const estimated = models.slice(1).map((m) => ({ ...m, est: aaEstimate(runs, m.name, TEACHER_RUN) })).filter((m) => m.est)
+  const estimated = models
+    .slice(1)
+    .map((m) => ({ ...m, est: aaEstimate(runs, m.name, TEACHER_RUN) }))
+    .filter((m) => m.est)
     .map((m) => ({ ...m, aa: m.est.aa, estimate: "ours" }));
-  const aaRows = [teacher, ...estimated.reverse(), ...AA.published.map((m) => ({ ...m, tone: "other", name: m.label, estimate: m.estimate ? "AA" : null }))];
-  renderBars($("index-chart"), aaRows, (m) => m.aa, (m) => (m.estimate === "ours" ? `≈${Math.round(m.aa)}` : `${m.aa}`), 40,
-    (m) => (m.estimate === "ours" ? `our estimate: ${(100 * m.est.share).toFixed(0)}% of the teacher's scores kept on four shared benchmarks${aaPendingNote(m.est)}`
-      : m.estimate ? "Artificial Analysis's own estimate" : `Artificial Analysis Intelligence Index ${AA.version}`), teacher);
+  const aaRows = [
+    teacher,
+    ...estimated.reverse(),
+    ...AA.published.map((m) => ({ ...m, tone: "other", name: m.label, estimate: m.estimate ? "AA" : null })),
+  ];
+  renderBars(
+    $("index-chart"),
+    aaRows,
+    (m) => m.aa,
+    (m) => (m.estimate === "ours" ? `≈${Math.round(m.aa)}` : `${m.aa}`),
+    40,
+    (m) =>
+      m.estimate === "ours"
+        ? `our estimate: ${(100 * m.est.share).toFixed(0)}% of the teacher's scores kept on four shared benchmarks${aaPendingNote(m.est)}`
+        : m.estimate
+          ? "Artificial Analysis's own estimate"
+          : `Artificial Analysis Intelligence Index ${AA.version}`,
+    teacher,
+  );
 }
 
 // Every model as a point on one line out from the teacher. A king not measured yet shows the closest measured
@@ -124,11 +168,14 @@ function renderDistance(king) {
   const estimated = ladder.kings[king.name] == null;
   const kl = ladder.kings[king.name] ?? measured?.[1];
   const numeral = king.name.split("-")[1];
-  const marks = [...ladder.models.map((m) => ({ ...m, repo: m.repo ?? state.teacher })),
-    ...(kl != null ? [{ label: `King ${numeral}`, repo: king.hf_repo, gb: SIZES_GB[ROUND], kl, king: true }] : [])]
-    .sort((a, b) => a.kl - b.kl);
+  const marks = [
+    ...ladder.models.map((m) => ({ ...m, repo: m.repo ?? state.teacher })),
+    ...(kl != null ? [{ label: `King ${numeral}`, repo: king.hf_repo, gb: SIZES_GB[ROUND], kl, king: true }] : []),
+  ].sort((a, b) => a.kl - b.kl);
   const top = 1.06 * marks.at(-1).kl;
-  marks.forEach((m) => { m.pos = (100 * m.kl) / top; });
+  marks.forEach((m) => {
+    m.pos = (100 * m.kl) / top;
+  });
   // the king's label below the line, and any label that would touch the last one above
   const width = $("distance-wrap").clientWidth || 1000;
   const reach = width < 500 ? 55 : 110;
@@ -137,98 +184,192 @@ function renderDistance(king) {
     m.below = Boolean(m.king || (lastAbove && ((m.pos - lastAbove.pos) / 100) * width < reach));
     if (!m.below) lastAbove = m;
   });
-  mount($("distance-wrap"),
+  mount(
+    $("distance-wrap"),
     el("i", { class: "dl-track" }),
-    ...marks.map((m) => el("div", { class: `dl-mark${m.king ? " king" : ""}${m.below ? " below" : ""}${m.pos > 90 ? " end" : m.pos < 4 ? " start" : ""}`, style: `left: ${m.pos}%` },
-      el("i"),
-      el("span", { class: "dl-label" }, link(hubUrl(m.repo), m.label),
-        el("small", {}, `${m.king && estimated ? "≈" : ""}${m.kl === 0 ? "0" : m.kl.toFixed(3)} · ${+m.gb.toPrecision(3)} GB`)))));
+    ...marks.map((m) =>
+      el(
+        "div",
+        {
+          class: `dl-mark${m.king ? " king" : ""}${m.below ? " below" : ""}${m.pos > 90 ? " end" : m.pos < 4 ? " start" : ""}`,
+          style: `left: ${m.pos}%`,
+        },
+        el("i"),
+        el(
+          "span",
+          { class: "dl-label" },
+          link(hubUrl(m.repo), m.label),
+          el("small", {}, `${m.king && estimated ? "≈" : ""}${m.kl === 0 ? "0" : m.kl.toFixed(3)} · ${+m.gb.toPrecision(3)} GB`),
+        ),
+      ),
+    ),
+  );
   const genesis = ladder.models.find((m) => m.label === GENESIS.label)?.kl;
-  $("distance-meta").textContent = kl != null && genesis
-    ? `King ${numeral}: ${estimated ? "≈" : ""}${Math.round((100 * (genesis - kl)) / genesis)}% closer to the teacher than ${GENESIS.label}` : "";
+  $("distance-meta").textContent =
+    kl != null && genesis
+      ? `King ${numeral}: ${estimated ? "≈" : ""}${Math.round((100 * (genesis - kl)) / genesis)}% closer to the teacher than ${GENESIS.label}`
+      : "";
   $("distance-note").textContent = `Measured on ${ladder.measured_on}.`;
 }
 
 // horizontal bars of file size, ours last, with the line a 16 GB MacBook draws
 function renderSizes(king) {
-  const rows = [...SIZES.map((r) => ({ ...r, repo: r.repo ?? state.teacher, tone: "other" })),
+  const rows = [
+    ...SIZES.map((r) => ({ ...r, repo: r.repo ?? state.teacher, tone: "other" })),
     { label: GENESIS.label, gb: SIZES_GB[ROUND], note: "Prism, 1.75-bit", repo: GENESIS.repo, tone: "other" },
-    { label: king.name.replace(/-Q2$/, ""), gb: SIZES_GB[ROUND], note: "1.75 bits per weight", repo: king.hf_repo, tone: "king" }];
+    { label: king.name.replace(/-Q2$/, ""), gb: SIZES_GB[ROUND], note: "1.75 bits per weight", repo: king.hf_repo, tone: "king" },
+  ];
   const top = rows[0].gb;
   const at = (gb) => `${(100 * gb) / top}%`;
-  mount($("size-chart"),
+  mount(
+    $("size-chart"),
     // an overlay on the same columns as the rows, so the line lands on the tracks' scale
-    el("div", { class: "size-overlay" }, el("span"), el("span", { class: "size-line-wrap" },
-      el("i", { class: "size-zone", style: `left: ${at(MACBOOK_GB)}` }),
-      el("i", { class: "size-line", style: `left: ${at(MACBOOK_GB)}` }, el("span", {}, "16 GB MacBook"))), el("span")),
-    ...rows.map((r) => el("div", { class: `size-row ${r.tone}${r.gb > MACBOOK_GB ? " over" : ""}` },
-      el("span", { class: "size-label" }, link(hubUrl(r.repo), r.label), el("small", {}, r.note)),
-      el("span", { class: "size-track" }, el("i", { style: `width: ${at(r.gb)}` })),
-      el("span", { class: "size-value" }, `${r.gb.toFixed(r.gb < 10 ? 2 : 1)} GB`))));
+    el(
+      "div",
+      { class: "size-overlay" },
+      el("span"),
+      el(
+        "span",
+        { class: "size-line-wrap" },
+        el("i", { class: "size-zone", style: `left: ${at(MACBOOK_GB)}` }),
+        el("i", { class: "size-line", style: `left: ${at(MACBOOK_GB)}` }, el("span", {}, "16 GB MacBook")),
+      ),
+      el("span"),
+    ),
+    ...rows.map((r) =>
+      el(
+        "div",
+        { class: `size-row ${r.tone}${r.gb > MACBOOK_GB ? " over" : ""}` },
+        el("span", { class: "size-label" }, link(hubUrl(r.repo), r.label), el("small", {}, r.note)),
+        el("span", { class: "size-track" }, el("i", { style: `width: ${at(r.gb)}` })),
+        el("span", { class: "size-value" }, `${r.gb.toFixed(r.gb < 10 ? 2 : 1)} GB`),
+      ),
+    ),
+  );
 }
 
 // the newest kings as cards, the subnet's counts in the head
 function renderKings(best) {
   const kings = (state.kings ?? []).filter((k) => k.quant === ROUND && k.submission_id);
   const total = downloads ? Object.values(downloads).reduce((a, b) => a + b, 0) : null;
-  mount($("kings-meta"), `${kings.length} crowned · ${state.stats?.evaluated ?? state.history.length} assayed`,
-    total ? ` · ${total.toLocaleString("en-US")} downloads · ` : " · ", link("dashboard.html", "dashboard →", { target: null, rel: null }));
+  mount(
+    $("kings-meta"),
+    `${kings.length} crowned · ${state.stats?.evaluated ?? state.history.length} assayed`,
+    total ? ` · ${total.toLocaleString("en-US")} downloads · ` : " · ",
+    link("dashboard.html", "dashboard →", { target: null, rel: null }),
+  );
   // the hero's king first, badged, then the best by the site's own rule, the summed points over
   // Bonsai 2 across a full suite; without the feed, the newest
   const scored = runs ? rankKings(runs, BENCHMARKS, kings, GENESIS.run).filter((row) => row.done === BENCHMARKS.length) : [];
   const shown = scored.length ? [best, ...scored.map((row) => row.king).filter((k) => k !== best)].slice(0, 4) : kings.slice(-4).reverse();
-  mount($("king-cards"), ...shown.map((k) => {
-    const aa = runs ? aaEstimate(runs, k.name, TEACHER_RUN) : null;
-    const full = aa && scored.some((row) => row.king === k);
-    const pending = aa ? "benchmarking" : "queued";
-    return el("a", { class: `king-card${k === best && scored.length ? " best" : ""}`, href: hubUrl(k.hf_repo), target: "_blank", rel: "noopener" },
-      el("span", { class: "kc-numeral" }, k.name.split("-")[1]),
-      el("span", { class: "kc-name" }, k.name),
-      el("span", { class: "kc-meta" }, `crowned ${fmtRelative(k.crowned_at)}`),
-      el("span", { class: "kc-stats" },
-        el("span", {}, el("b", {}, full ? `≈${Math.round(aa.aa)}` : "—"), full ? "AA index, est." : pending),
-        el("span", {}, el("b", {}, downloads?.[k.hf_repo] != null ? downloads[k.hf_repo].toLocaleString("en-US") : "—"), "downloads")),
-      k === best && scored.length ? el("span", { class: "kc-badge" }, "best") : null);
-  }));
+  mount(
+    $("king-cards"),
+    ...shown.map((k) => {
+      const aa = runs ? aaEstimate(runs, k.name, TEACHER_RUN) : null;
+      const full = aa && scored.some((row) => row.king === k);
+      const pending = aa ? "benchmarking" : "queued";
+      return el(
+        "a",
+        { class: `king-card${k === best && scored.length ? " best" : ""}`, href: hubUrl(k.hf_repo), target: "_blank", rel: "noopener" },
+        el("span", { class: "kc-numeral" }, k.name.split("-")[1]),
+        el("span", { class: "kc-name" }, k.name),
+        el("span", { class: "kc-meta" }, `crowned ${fmtRelative(k.crowned_at)}`),
+        el(
+          "span",
+          { class: "kc-stats" },
+          el("span", {}, el("b", {}, full ? `≈${Math.round(aa.aa)}` : "—"), full ? "AA index, est." : pending),
+          el("span", {}, el("b", {}, downloads?.[k.hf_repo] != null ? downloads[k.hf_repo].toLocaleString("en-US") : "—"), "downloads"),
+        ),
+        k === best && scored.length ? el("span", { class: "kc-badge" }, "best") : null,
+      );
+    }),
+  );
 }
 
 // one card per benchmark, in the suite's order: the teacher, genesis and the king as bars from a shared floor
 function renderScores(models) {
-  mount($("benchmark-charts"), ...BENCHMARKS.map(([name, kind]) => {
-    const rows = models.map((m) => ({ ...m, score: scoreOf(runs, m.name, name) }));
-    const scores = rows.map((r) => r.score).filter((v) => v != null);
-    const hi = Math.max(...scores, 1);
-    const lo = Math.min(...scores, hi);
-    const floor = Math.max(0, Math.floor(lo - Math.max(2, hi - lo)));
-    const x = (score) => (100 * (score - floor)) / (hi - floor);
-    const base = rows.find((r) => r.tone === "genesis")?.score;
-    const bar = (r) => {
-      const d = r.score != null && base != null && r.tone !== "genesis" ? r.score - base : null;
-      return el("a", { class: `bench-row ${r.tone}${r.score == null ? " missing" : ""}`, href: hubUrl(r.repo), target: "_blank", rel: "noopener",
-        title: r.score != null ? `${r.name}: ${pct(r.score)}${d == null ? "" : ` · ${signed(d)} points from ${GENESIS.label}`}` : "not run yet" },
-      el("span", { class: "bench-label" }, r.label),
-      el("span", { class: "bench-track" },
-        base == null ? null : el("i", { class: "bench-ref", style: `left: ${x(base)}%` }),
-        r.score == null ? null : el("i", { class: "bench-bar", style: `width: ${Math.max(0.5, x(r.score))}%` })),
-      el("span", { class: "bench-value" },
-        d == null ? null : el("span", { class: `bench-delta${d > 0 ? " up" : ""}` }, signed(d)),
-        r.score == null ? "—" : pct(r.score)));
-    };
-    const title = (r) => (r.score != null ? `${r.name}: ${pct(r.score)}${r.tone === "genesis" || base == null ? "" : ` · ${signed(r.score - base)} points from ${GENESIS.label}`}` : "not run yet");
-    const columns = () => benchColumns(rows.map((r) => ({
-      tone: r.tone, label: r.label, href: hubUrl(r.repo), title: title(r), score: r.score, pending: "—",
-      delta: r.score != null && base != null && r.tone !== "genesis" ? r.score - base : null,
-    })), base);
-    const noisy = noiseLine(noise, name, runs.find((r) => r.benchmark === name && r.model === GENESIS.run));
-    if (BENCHMARKS.length >= 5) {
-      return el("article", { class: "benchmark-card" },
-        el("div", { class: "benchmark-chart-head" }, el("h3", {}, name), el("div", { class: "benchmark-sub" }, el("span", { class: "benchmark-kind" }, kind), noisy)),
-        el("div", { class: "bench-rows" }, columns()));
-    }
-    return el("article", { class: "benchmark-card" },
-      el("div", { class: "benchmark-chart-head" }, el("h3", {}, name), el("span", { class: "benchmark-kind" }, kind)),
-      el("div", { class: "bench-rows" }, noisy, ...rows.map(bar)));
-  }));
+  mount(
+    $("benchmark-charts"),
+    ...BENCHMARKS.map(([name, kind]) => {
+      const rows = models.map((m) => ({ ...m, score: scoreOf(runs, m.name, name) }));
+      const scores = rows.map((r) => r.score).filter((v) => v != null);
+      const hi = Math.max(...scores, 1);
+      const lo = Math.min(...scores, hi);
+      const floor = Math.max(0, Math.floor(lo - Math.max(2, hi - lo)));
+      const x = (score) => (100 * (score - floor)) / (hi - floor);
+      const base = rows.find((r) => r.tone === "genesis")?.score;
+      const bar = (r) => {
+        const d = r.score != null && base != null && r.tone !== "genesis" ? r.score - base : null;
+        return el(
+          "a",
+          {
+            class: `bench-row ${r.tone}${r.score == null ? " missing" : ""}`,
+            href: hubUrl(r.repo),
+            target: "_blank",
+            rel: "noopener",
+            title:
+              r.score != null
+                ? `${r.name}: ${pct(r.score)}${d == null ? "" : ` · ${signed(d)} points from ${GENESIS.label}`}`
+                : "not run yet",
+          },
+          el("span", { class: "bench-label" }, r.label),
+          el(
+            "span",
+            { class: "bench-track" },
+            base == null ? null : el("i", { class: "bench-ref", style: `left: ${x(base)}%` }),
+            r.score == null ? null : el("i", { class: "bench-bar", style: `width: ${Math.max(0.5, x(r.score))}%` }),
+          ),
+          el(
+            "span",
+            { class: "bench-value" },
+            d == null ? null : el("span", { class: `bench-delta${d > 0 ? " up" : ""}` }, signed(d)),
+            r.score == null ? "—" : pct(r.score),
+          ),
+        );
+      };
+      const title = (r) =>
+        r.score != null
+          ? `${r.name}: ${pct(r.score)}${r.tone === "genesis" || base == null ? "" : ` · ${signed(r.score - base)} points from ${GENESIS.label}`}`
+          : "not run yet";
+      const columns = () =>
+        benchColumns(
+          rows.map((r) => ({
+            tone: r.tone,
+            label: r.label,
+            href: hubUrl(r.repo),
+            title: title(r),
+            score: r.score,
+            pending: "—",
+            delta: r.score != null && base != null && r.tone !== "genesis" ? r.score - base : null,
+          })),
+          base,
+        );
+      const noisy = noiseLine(
+        noise,
+        name,
+        runs.find((r) => r.benchmark === name && r.model === GENESIS.run),
+      );
+      if (BENCHMARKS.length >= 5) {
+        return el(
+          "article",
+          { class: "benchmark-card" },
+          el(
+            "div",
+            { class: "benchmark-chart-head" },
+            el("h3", {}, name),
+            el("div", { class: "benchmark-sub" }, el("span", { class: "benchmark-kind" }, kind), noisy),
+          ),
+          el("div", { class: "bench-rows" }, columns()),
+        );
+      }
+      return el(
+        "article",
+        { class: "benchmark-card" },
+        el("div", { class: "benchmark-chart-head" }, el("h3", {}, name), el("span", { class: "benchmark-kind" }, kind)),
+        el("div", { class: "bench-rows" }, noisy, ...rows.map(bar)),
+      );
+    }),
+  );
   $("benchmark-charts").classList.toggle("cols", BENCHMARKS.length >= 5);
   $("benchmark-charts").style.setProperty("--cols", BENCHMARKS.length);
   mount($("scores-protocol"), protocolNote(runs, ROUND));
@@ -252,23 +393,40 @@ function renderBars(box, items, value, label, max, note, ceiling) {
   const bar = Math.round(Math.min(96, slot * 0.5));
   const svg = svgEl("svg", { width, height: HEIGHT, viewBox: `0 0 ${width} ${HEIGHT}`, role: "img", class: "vbars-svg" });
   const defs = svgEl("defs");
-  for (const [id, tone] of [["vbar-gold", "fill-gold"], ["vbar-grey", "fill-grey"]]) {
+  for (const [id, tone] of [
+    ["vbar-gold", "fill-gold"],
+    ["vbar-grey", "fill-grey"],
+  ]) {
     const g = svgEl("linearGradient", { id, x1: 0, y1: 0, x2: 0, y2: 1 });
     g.append(svgEl("stop", { offset: 0, class: `${tone} top` }), svgEl("stop", { offset: 1, class: `${tone} bottom` }));
     defs.append(g);
   }
   svg.append(defs);
   // faint grid lines at round steps; the ceiling, when there is one, a dashed line at its value
-  const step = max ? max / 4 : [1, 2, 5].map((m) => m * 10 ** Math.floor(Math.log10(top / 4))).reduce((best, c) => (Math.abs(c - top / 4) < Math.abs(best - top / 4) ? c : best));
+  const step = max
+    ? max / 4
+    : [1, 2, 5]
+        .map((m) => m * 10 ** Math.floor(Math.log10(top / 4)))
+        .reduce((best, c) => (Math.abs(c - top / 4) < Math.abs(best - top / 4) ? c : best));
   for (let v = step; v <= top + 1e-9; v += step) {
     svg.append(svgEl("line", { x1: PAD.left, y1: y(v) + 0.5, x2: width - PAD.right, y2: y(v) + 0.5, class: "grid" }));
-    svg.append(svgEl("text", { x: PAD.left - 8, y: y(v), class: "tick", "text-anchor": "end", "dominant-baseline": "middle" }, max || step >= 1 ? String(Math.round(v)) : v.toFixed(step >= 0.1 ? 1 : 2)));
+    svg.append(
+      svgEl(
+        "text",
+        { x: PAD.left - 8, y: y(v), class: "tick", "text-anchor": "end", "dominant-baseline": "middle" },
+        max || step >= 1 ? String(Math.round(v)) : v.toFixed(step >= 0.1 ? 1 : 2),
+      ),
+    );
   }
-  svg.append(svgEl("line", { x1: PAD.left, y1: HEIGHT - PAD.bottom + 0.5, x2: width - PAD.right, y2: HEIGHT - PAD.bottom + 0.5, class: "axis" }));
+  svg.append(
+    svgEl("line", { x1: PAD.left, y1: HEIGHT - PAD.bottom + 0.5, x2: width - PAD.right, y2: HEIGHT - PAD.bottom + 0.5, class: "axis" }),
+  );
   if (ceiling) {
     const yc = y(value(ceiling));
     svg.append(svgEl("line", { x1: PAD.left, y1: yc + 0.5, x2: width - PAD.right, y2: yc + 0.5, class: "ceiling" }));
-    svg.append(svgEl("text", { x: width - PAD.right, y: yc - 8, class: "vname", "text-anchor": "end" }, `${ceiling.label} · ${label(ceiling)}`));
+    svg.append(
+      svgEl("text", { x: width - PAD.right, y: yc - 8, class: "vname", "text-anchor": "end" }, `${ceiling.label} · ${label(ceiling)}`),
+    );
   }
   bars.forEach((m, i) => {
     const cx = Math.round(PAD.left + slot * (i + 0.5));
@@ -280,7 +438,16 @@ function renderBars(box, items, value, label, max, note, ceiling) {
     if (tone === "teacher") {
       group.append(svgEl("rect", { x: x0, y: yTop, width: bar, height: Math.max(HEIGHT - PAD.bottom - yTop, 1), class: "vbar teacher" }));
     } else {
-      group.append(svgEl("rect", { x: x0, y: yTop, width: bar, height: Math.max(HEIGHT - PAD.bottom - yTop, 1), class: `vbar ${tone}${m.estimate === "ours" ? " est" : ""}`, fill: `url(#vbar-${tone === "king" ? "gold" : "grey"})` }));
+      group.append(
+        svgEl("rect", {
+          x: x0,
+          y: yTop,
+          width: bar,
+          height: Math.max(HEIGHT - PAD.bottom - yTop, 1),
+          class: `vbar ${tone}${m.estimate === "ours" ? " est" : ""}`,
+          fill: `url(#vbar-${tone === "king" ? "gold" : "grey"})`,
+        }),
+      );
       group.append(svgEl("rect", { x: x0, y: yTop, width: bar, height: 3, class: `vcap ${tone}` }));
     }
     group.append(svgEl("text", { x: cx, y: yTop - 9, class: `vval ${tone}`, "text-anchor": "middle" }, label(m)));
@@ -289,7 +456,10 @@ function renderBars(box, items, value, label, max, note, ceiling) {
     const cut = space > 0 ? space : m.label.lastIndexOf("-");
     if (wrap && cut > 0) {
       const name = svgEl("text", { x: cx, y: HEIGHT - 24, class: "vname tight", "text-anchor": "middle" });
-      name.append(svgEl("tspan", { x: cx }, m.label.slice(0, space > 0 ? cut : cut + 1)), svgEl("tspan", { x: cx, dy: 13 }, m.label.slice(cut + 1)));
+      name.append(
+        svgEl("tspan", { x: cx }, m.label.slice(0, space > 0 ? cut : cut + 1)),
+        svgEl("tspan", { x: cx, dy: 13 }, m.label.slice(cut + 1)),
+      );
       group.append(name);
     } else if (wrap) {
       // one word with nowhere to break: the wrapped names' face, on their first line
@@ -306,7 +476,12 @@ mountHeader();
 loadDownloads();
 setInterval(loadDownloads, 600000);
 new ResizeObserver(() => runs && render()).observe($("panel-figures"));
-fetch("/data/kl-ladder.json").then((r) => (r.ok ? r.json() : null)).then((d) => { ladder = d; render(); })
+fetch("/data/kl-ladder.json")
+  .then((r) => (r.ok ? r.json() : null))
+  .then((d) => {
+    ladder = d;
+    render();
+  })
   .catch((err) => console.warn("ladder fetch failed", err));
 load();
 setInterval(load, 30000);

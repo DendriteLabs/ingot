@@ -4,6 +4,7 @@
 
 Pushes web/ to the bucket root and the repo's llms.txt beside it. Only uploads: other objects in
 the bucket are never touched. api/state.json is not part of this push; the backend writes it.
+A dotfile under web/ is tooling rather than site: left out of the upload and of the version.
 
 A push shows up on a browser's next load, plain reload included. The HTML is never stored, and
 every script and stylesheet it loads, and every module those import, is referenced as
@@ -56,7 +57,9 @@ def cache_control(key: str) -> str:
 
 def site() -> dict[str, bytes]:
     files = {
-        p.relative_to(WEB).as_posix(): p.read_bytes() for p in sorted(WEB.rglob("*")) if p.is_file()
+        p.relative_to(WEB).as_posix(): p.read_bytes()
+        for p in sorted(WEB.rglob("*"))
+        if p.is_file() and not any(part.startswith(".") for part in p.relative_to(WEB).parts)
     }
     files["llms.txt"] = (REPO_ROOT / "llms.txt").read_bytes()
     return files
