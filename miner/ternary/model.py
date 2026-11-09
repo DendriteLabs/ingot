@@ -48,6 +48,10 @@ class PrismLinear(nn.Module):
     """y = W' (H (s * x)), W' ternary codes times group scales; exact (codes, scales buffers) or
     trainable (latent float weight and float scales, straight-through rounding)."""
 
+    signs: torch.Tensor
+    codes: torch.Tensor
+    scales: torch.Tensor
+
     def __init__(
         self,
         codes: torch.Tensor,
@@ -114,7 +118,7 @@ class PrismLinear(nn.Module):
     def flipped(self) -> int:
         return int((self.current_codes() != self.codes0).sum()) if self.trainable else 0
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # ty: ignore[invalid-mutable-override]
         xr = fwht(x.float() * self.signs.float(), self.block).to(
             self.compute_dtype
         )  # the transform in fp32
