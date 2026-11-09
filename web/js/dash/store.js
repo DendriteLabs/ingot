@@ -36,10 +36,20 @@ export const suite = () => ROUND_BENCH[store.round];
 // a backend from before the 2-bit round sends no quant: everything it knows is 8-bit
 export const inRound = (row) => (row.quant ?? "fp8") === store.round;
 
+// a duel's [challenger, king] KL: under the current scoring rule when the dashboard has scored
+// its records again (every eval's samples are public), else as the duel stored them
+export const duelScores = (e) => {
+  if (e.rescored_king != null) return [Number(e.rescored_challenger), Number(e.rescored_king)];
+  const chal = e.duel_challenger ?? e.score_challenger;
+  const king = e.duel_king ?? e.score_king;
+  return [chal == null ? null : Number(chal), king == null ? null : Number(king)];
+};
+
 // a loser's KL against the king it faced, as a share of the king's: "4.7% above" or "0.3% below"
 export const vsKing = (e) => {
   if (e.score_challenger == null) return "diverged, no finite score";
-  const lead = 100 * (1 - Number(e.score_challenger) / Number(e.score_king));
+  const [chal, king] = duelScores(e);
+  const lead = 100 * (1 - chal / king);
   return `${Math.abs(lead).toFixed(1)}% ${lead < 0 ? "above" : "below"} ${e.king}`;
 };
 export const hubUrl = (repo) => `https://huggingface.co/${repo}`;
@@ -50,12 +60,13 @@ export const hotkeyCell = (hotkey, cls = "hotkey") =>
 
 // each eval scores its own samples, so divergences from different evals do not compare. A king's
 // divergence relative to genesis is chained instead: the king it beat times the challenger / king
-// ratio measured in its coronation eval. Returns the selected round's kings with `rel` (1 =
-// genesis) and `gain` (%).
+// ratio measured in its coronation eval, under the current scoring rule where the dashboard has
+// rescored that eval. Returns the selected round's kings with `rel` (1 = genesis) and `gain` (%).
 export function kingGains() {
   let rel = 1;
   return store.state.kings.filter(inRound).map((k) => {
-    if (k.duel_challenger != null) rel *= Number(k.duel_challenger) / Number(k.duel_king);
+    const [chal, king] = duelScores(k);
+    if (chal != null) rel *= chal / king;
     return { ...k, rel, gain: 100 * (1 - rel) };
   });
 }
@@ -67,7 +78,7 @@ export function kingSteps() {
   crowned.forEach((k, j) =>
     Object.assign(k, {
       beat: crowned[j - 1],
-      step: k.duel_king != null ? 100 * (1 - Number(k.duel_challenger) / Number(k.duel_king)) : null,
+      step: k.duel_king != null ? 100 * (1 - duelScores(k)[0] / duelScores(k)[1]) : null,
     }),
   );
   return crowned;

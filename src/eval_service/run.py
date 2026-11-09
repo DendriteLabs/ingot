@@ -30,7 +30,8 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class Score:
     """How far a model is from the teacher: the mean KL(teacher ‖ model) of the next-token
-    distributions per answer token, averaged over the samples."""
+    distributions over the answer tokens of each domain, the domains weighed by their shares of
+    the samples (by_domain)."""
 
     kl: float
 
@@ -201,11 +202,13 @@ class _Evaluation:
         return results
 
     def score(self, results: list[Result], role: str) -> Score:
-        """Means over the samples the role read; DIVERGED for a role that left the teacher's
+        """The role's score over the samples it read; DIVERGED for a role that left the teacher's
         answer on any sample."""
         if role in self.diverged:
             return DIVERGED
-        return per_sample([by_role[role] for by_role, _ in results if role in by_role])
+        return by_domain(
+            [(record["domain"], by_role[role]) for by_role, record in results if role in by_role]
+        )
 
     def _teacher_room(self, prompt: list[int], sample: Sample) -> int:
         """Booked before the teacher answers: its answer rows at the full budget, and the readers'
@@ -333,10 +336,19 @@ class _Evaluation:
         return sum(group.preemptions() for group in self.groups.values())
 
 
-def per_sample(sums: Sequence[Any]) -> Score:
-    """Each sample's per-token mean, averaged over the samples: one agent step or one answer
-    weighs the same whatever its length."""
-    return Score(kl=sum(s.kl / max(s.predictions, 1) for s in sums) / len(sums))
+def by_domain(sums: Sequence[tuple[str, Any]]) -> Score:
+    """Within a domain every answer token weighs the same: the domain's KL is its total KL over
+    its total answer tokens, so a long answer counts for its length and its well-predicted tail
+    does not dilute the tokens that are hard. The domains then weigh by their shares of the
+    samples."""
+    totals: dict[str, list[float]] = {}
+    for domain, s in sums:
+        t = totals.setdefault(domain, [0.0, 0.0, 0.0])
+        t[0] += s.kl
+        t[1] += s.predictions
+        t[2] += 1
+    n = sum(t[2] for t in totals.values())
+    return Score(kl=sum(t[2] / n * t[0] / max(t[1], 1) for t in totals.values()))
 
 
 def answer_budget(sample: Sample) -> int:

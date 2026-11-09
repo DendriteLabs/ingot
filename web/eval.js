@@ -99,9 +99,17 @@ function renderDuel(doc) {
   // lower is closer to the teacher, so the challenger's lead is king − challenger, shown as a share
   // of the king's score; `need` is the absolute lead this eval required, the result says by how many
   // percentage points it cleared that, or fell short
+  // an eval from before the current scoring rule also shows its records scored under it, the
+  // value the kings chart chains
+  const rescored = doc.rescored;
+  const underCurrentRule =
+    rescored && e.score_king != null && Math.abs(rescored.king - e.score_king) > 1e-3 * e.score_king
+      ? [["KL, every token weighing the same", rescored.challenger, rescored.king, null]]
+      : [];
   const rows = [
     ["KL at the output", e.score_challenger, e.score_king, e.margin],
     ...(e.dist_king == null ? [] : [["hidden-state distance", e.dist_challenger, e.dist_king, e.dist_margin]]),
+    ...underCurrentRule,
   ].map(([name, chal, king, need]) => {
     const lead = chal == null || king == null ? null : king - chal;
     const share = (v) => (100 * v) / king;
@@ -196,15 +204,34 @@ function groupSamples(samples) {
   return { byDomain, groups };
 }
 
-// token-weighted sums as the evaluator forms its scores: KL over every answer token, the distance
-// over every answer token but the last
-function totals(samples) {
+// A sample's weight in the eval's score: within a domain every answer token weighs the same, and
+// the domains weigh by their shares of the samples; records without domains weigh by tokens.
+function sampleWeights(samples) {
+  const perDomain = new Map();
+  for (const s of samples) {
+    const d = perDomain.get(s.domain) ?? { count: 0, tokens: 0 };
+    d.count += 1;
+    d.tokens += s.answer_tokens;
+    perDomain.set(s.domain, d);
+  }
+  const weights = new Map();
+  for (const s of samples) {
+    const d = perDomain.get(s.domain);
+    weights.set(s, s.domain ? (s.answer_tokens * d.count) / (samples.length * d.tokens) : s.answer_tokens);
+  }
+  return weights;
+}
+
+// weighted sums as the evaluator forms its scores: KL over every answer token, the distance over
+// every answer token but the last
+function totals(samples, weights) {
   const t = { tokens: 0, klChal: 0, klKing: 0, states: 0, distChal: 0, distKing: 0 };
   for (const s of samples) {
     const n = s.answer_tokens;
-    t.tokens += n;
-    t.klChal += s.runs.challenger.kl * n;
-    t.klKing += s.runs.king.kl * n;
+    const w = weights.get(s);
+    t.tokens += w;
+    t.klChal += s.runs.challenger.kl * w;
+    t.klKing += s.runs.king.kl * w;
     t.states += n - 1;
     t.distChal += (s.runs.challenger.dist ?? 0) * (n - 1);
     t.distKing += (s.runs.king.dist ?? 0) * (n - 1);
@@ -226,13 +253,14 @@ function renderDomains(doc) {
     return;
   }
   const { byDomain, groups } = groupSamples(samples);
-  const all = totals(samples);
+  const weights = sampleWeights(samples);
+  const all = totals(samples, weights);
   const withDist = hasDist(samples);
   // what a group adds to the challenger's KL lead, in points of the king's KL: the rows add up to
   // the duel's KL "vs king", so a row below zero is ground the challenger lost there
   const rows = [...groups]
     .map(([name, members]) => {
-      const t = totals(members);
+      const t = totals(members, weights);
       return { name, count: members.length, t, adds: (100 * (t.klKing - t.klChal)) / all.klKing };
     })
     .sort((a, b) => b.t.tokens - a.t.tokens);
@@ -310,7 +338,11 @@ function renderDomains(doc) {
             el("th", { class: "r c-count" }, "samples"),
             el(
               "th",
-              { class: "r c-share", title: "its answer tokens as a share of all of them: the scores weigh every answer token the same" },
+              {
+                class: "r c-share",
+                title:
+                  "its weight in the score: within a domain every answer token weighs the same, and the domains weigh by their shares of the samples",
+              },
               "weight",
             ),
             el(

@@ -4,6 +4,8 @@ same rule the weight setter applies, so the page cannot disagree with the chain.
 from __future__ import annotations
 
 import json
+import math
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -26,9 +28,20 @@ ACTIVE = [
 ]
 
 
-def build(conn: db.Conn, *, s: Settings, spec: ChainSpec, now: datetime | None = None) -> dict:
+# a duel's (king, challenger) KL under the current scoring rule, from its per-sample records
+Rescore = Callable[[str, int], tuple[float, float] | None]
+
+
+def build(
+    conn: db.Conn,
+    *,
+    s: Settings,
+    spec: ChainSpec,
+    now: datetime | None = None,
+    rescore: Rescore | None = None,
+) -> dict:
     now = now or datetime.now(UTC)
-    kings = _kings(conn, spec)
+    kings = _kings(conn, spec, rescore)
     names = {k["id"]: k["name"] for k in kings}
     return {
         "updated_at": now,
@@ -52,17 +65,17 @@ def build(conn: db.Conn, *, s: Settings, spec: ChainSpec, now: datetime | None =
         "reign": _reign(conn, kings, now),
         "queue": _queue(conn, now),
         "history": _history(conn, names),
-        "losers": _losers(conn, names),
+        "losers": _losers(conn, names, rescore),
         "fails": _fails(conn),
         "registration": _registration(conn, now),
     }
 
 
-def _kings(conn: db.Conn, spec: ChainSpec) -> list[dict[str, Any]]:
+def _kings(conn: db.Conn, spec: ChainSpec, rescore: Rescore | None = None) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
         SELECT k.id, k.submission_id, k.hotkey, k.uid, k.hf_repo, k.crowned_at,
-               k.family, k.quant,
+               k.family, k.quant, s.hotkey AS eval_hotkey,
                CASE WHEN k.submission_id IS NOT NULL
                     THEN row_number() OVER (
                         PARTITION BY k.family, k.quant, k.submission_id IS NULL ORDER BY k.id
@@ -84,15 +97,64 @@ def _kings(conn: db.Conn, spec: ChainSpec) -> list[dict[str, Any]]:
         """
     ).fetchall()
     return [
-        {
-            **row,
-            "name": reign.name(
-                row["ordinal"],
-                spec.king_name(row["family"], row["quant"]) if row["ordinal"] else "",
-            ),
-        }
+        _rescored(
+            {
+                **{k: v for k, v in row.items() if k != "eval_hotkey"},
+                "name": reign.name(
+                    row["ordinal"],
+                    spec.king_name(row["family"], row["quant"]) if row["ordinal"] else "",
+                ),
+            },
+            rescore,
+            row["eval_hotkey"],
+            row["eval_id"],
+        )
         for row in rows
     ]
+
+
+def _rescored(
+    row: dict[str, Any], rescore: Rescore | None, hotkey: str | None, eval_id: int | None
+) -> dict[str, Any]:
+    """The duel's scores under the current rule beside the stored ones, when they are known."""
+    if rescore is None or hotkey is None or eval_id is None:
+        return row
+    scored = rescore(hotkey, eval_id)
+    if scored is None:
+        return row
+    return {**row, "rescored_king": scored[0], "rescored_challenger": scored[1]}
+
+
+def token_weighted(samples: list[dict[str, Any]]) -> tuple[float, float] | None:
+    """(king, challenger) KL over the records both roles scored, as eval_service.run.by_domain
+    forms a score: within a domain every answer token weighs the same, the domains weigh by their
+    shares of the samples; records without a domain form one stratum. None without a scored
+    record."""
+    totals: dict[str, list[float]] = {}
+    for r in samples:
+        runs = r.get("runs") or {}
+        king, challenger = _kl(runs.get("king")), _kl(runs.get("challenger"))
+        n = r.get("answer_tokens") or 0
+        if king is None or challenger is None or n <= 0:
+            continue
+        t = totals.setdefault(r.get("domain") or "", [0.0, 0.0, 0.0, 0.0])
+        t[0] += king * n
+        t[1] += challenger * n
+        t[2] += n
+        t[3] += 1
+    if not totals:
+        return None
+    count = sum(t[3] for t in totals.values())
+    return (
+        sum(t[3] / count * t[0] / t[2] for t in totals.values()),
+        sum(t[3] / count * t[1] / t[2] for t in totals.values()),
+    )
+
+
+def _kl(run: Any) -> float | None:
+    """A role's per-token KL mean from its record, None when it did not score."""
+    value = (run or {}).get("kl")
+    return float(value) if isinstance(value, int | float) and math.isfinite(value) else None
 
 
 # the files eval_service uploads for every eval, under evals/<hotkey>/<eval id>/, and their types
@@ -114,6 +176,12 @@ def eval_detail(conn: db.Conn, eval_id: int, *, s: Settings, spec: ChainSpec) ->
     crowned = next((k["name"] for k in kings if k["submission_id"] == row["submission_id"]), None)
     folder = artifact_dir(s, row["hotkey"], eval_id)
     samples = folder / "samples.jsonl"
+    records = (
+        [json.loads(line) for line in samples.read_text().splitlines() if line]
+        if samples.exists()
+        else []
+    )
+    scored = token_weighted(records)
     return {
         "eval": {k: v for k, v in row.items() if k not in ("hotkey", "uid")},
         "hotkey": row["hotkey"],
@@ -123,9 +191,9 @@ def eval_detail(conn: db.Conn, eval_id: int, *, s: Settings, spec: ChainSpec) ->
         "teacher": spec.teacher_repo,
         "netuid": s.netuid,
         "links": {"github": config.GITHUB_URL},
-        "samples": [json.loads(line) for line in samples.read_text().splitlines() if line]
-        if samples.exists()
-        else [],
+        "samples": records,
+        # the duel under the current scoring rule, what the kings chart chains
+        "rescored": {"king": scored[0], "challenger": scored[1]} if scored else None,
         "artifacts": [name for name in ARTIFACTS if (folder / name).exists()],
     }
 
@@ -238,12 +306,15 @@ def _history(conn: db.Conn, names: dict[int, str]) -> list[dict[str, Any]]:
     return [{**row, "king": names.get(row["king_id"], "?")} for row in rows]
 
 
-def _losers(conn: db.Conn, names: dict[int, str]) -> list[dict[str, Any]]:
+def _losers(
+    conn: db.Conn, names: dict[int, str], rescore: Rescore | None = None
+) -> list[dict[str, Any]]:
     """Every scored duel the challenger lost, oldest first, for the kings chart."""
     rows = conn.execute(
         """
         SELECT * FROM (
-            SELECT e.id, e.finished_at, e.king_id, e.score_challenger, e.score_king, s.uid
+            SELECT e.id, e.finished_at, e.king_id, e.score_challenger, e.score_king, s.uid,
+                   s.hotkey
             FROM evals e JOIN submissions s ON s.id = e.submission_id
             WHERE e.won = FALSE AND e.score_challenger IS NOT NULL AND e.score_king IS NOT NULL
             ORDER BY e.id DESC LIMIT %s
@@ -251,7 +322,12 @@ def _losers(conn: db.Conn, names: dict[int, str]) -> list[dict[str, Any]]:
         """,
         (config.LOSERS_LIMIT,),
     ).fetchall()
-    return [{**row, "king": names.get(row["king_id"], "?")} for row in rows]
+    return [
+        _rescored(
+            {**row, "king": names.get(row["king_id"], "?")}, rescore, row["hotkey"], row["id"]
+        )
+        for row in rows
+    ]
 
 
 def _registration(conn: db.Conn, now: datetime) -> list[tuple[float, int, float]]:

@@ -265,3 +265,40 @@ def test_fails_show_tries_left_and_the_ban(conn, s, spec):
         left = validation_config.MAX_INVALID - i - 1
         assert {(f["invalid_left"], f["barred"]) for f in fails} == {(left, left == 0)}
     assert fails[0]["barred_by"] == "invalid"
+
+
+def test_the_chart_chains_duels_scored_under_the_current_rule(conn, s, spec, tmp_path):
+    from dashboard.rescore import Rescorer
+
+    crown_genesis(conn)
+    genesis = db.one(conn, "SELECT id FROM kings")["id"]
+    sid = submit(conn, hotkey="hk-w", uid=4)
+    won = _eval(conn, sid, genesis, won=True)
+    conn.execute(
+        "INSERT INTO kings (submission_id, hotkey, uid, model_uri, hf_repo, family, quant)"
+        " VALUES (%s, 'hk-w', 4, 'u', 'org/k', 'qwen38_27b', 'fp8')",
+        (sid,),
+    )
+    _eval(conn, submit(conn, hotkey="hk-l", uid=5), genesis, won=False)
+    s = s.model_copy(update={"artifacts_dir": tmp_path})
+    folder = state.artifact_dir(s, "hk-w", won)
+    folder.mkdir(parents=True)
+
+    def record(n, king, chal):
+        runs = {"king": {"kl": king}, "challenger": {"kl": chal}}
+        return json.dumps({"domain": "swe", "answer_tokens": n, "runs": runs}) + "\n"
+
+    (folder / "samples.jsonl").write_text(record(4000, 0.2, 0.1) + record(1000, 0.1, 0.1))
+
+    doc = state.build(conn, s=s, spec=spec, rescore=Rescorer(s).score)
+    king = doc["kings"][-1]
+    assert king["eval_id"] == won and king["duel_king"] == 0.5
+    assert (king["rescored_king"], king["rescored_challenger"]) == pytest.approx((0.18, 0.1)), (
+        "every token weighs the same: (0.2 * 4000 + 0.1 * 1000) / 5000 against 0.1"
+    )
+    assert "rescored_king" not in doc["losers"][0], "no records, nothing to rescore"
+    # scored once: the cache answers after the records are gone
+    (folder / "samples.jsonl").unlink()
+    assert Rescorer(s).score("hk-w", won) == pytest.approx((0.18, 0.1))
+    cached = json.loads((tmp_path / "rescored.json").read_text())
+    assert cached == {str(won): pytest.approx([0.18, 0.1])}

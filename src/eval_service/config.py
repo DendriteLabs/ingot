@@ -19,14 +19,14 @@ MAX_ATTEMPTS = 3
 IDLE_S = 5.0
 
 SAMPLES_PER_DOMAIN = 40
-DOMAIN_SAMPLES = {"terminal": 300, "swe": 250, "reasoning": 100, "science": 100, "math": 50}
+DOMAIN_SAMPLES = {"terminal": 330, "swe": 250, "reasoning": 100, "science": 100, "math": 20}
 # trajectories of these sources are cut later in the run (dataset._cut)
-LATE_CUT_SOURCES = frozenset({"swe_traces", "term_rollouts"})
+LATE_CUT_SOURCES = frozenset({"swe_traces", "term_rollouts", "term_long", "term_science"})
 # Threads a draw renders its long candidates with, and the corpus is read with at startup.
 DRAW_THREADS = 32
 # A win needs the challenger closer to the teacher on KL by this share of the king's own KL in
 # that eval.
-KL_MARGIN = 0.03
+KL_MARGIN = 0.02
 
 # One vLLM server per GPU. The comparison math runs on the king's and the challenger's GPUs, whose
 # servers leave room for it (an lm_head copy and a few GiB of work space). The teacher's share

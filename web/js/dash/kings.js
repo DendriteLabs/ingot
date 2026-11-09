@@ -3,7 +3,7 @@
 import { el, mount, link } from "../dom.js";
 import { fmtRelative } from "../format.js";
 import { $, placeTip, svgEl } from "../page.js";
-import { ROUNDS, gradient, hubUrl, kingSteps, numeralOf, store, vsKing } from "./store.js";
+import { ROUNDS, duelScores, gradient, hubUrl, kingSteps, numeralOf, store, vsKing } from "./store.js";
 
 export function renderLineage() {
   const { state } = store;
@@ -81,7 +81,7 @@ export function renderKingsChart() {
       crowned: false,
       evalId: e.id,
       t: new Date(e.finished_at).getTime(),
-      v: e.score_challenger == null ? -Infinity : 100 * (1 - byId.get(e.king_id).rel * (Number(e.score_challenger) / Number(e.score_king))),
+      v: e.score_challenger == null ? -Infinity : 100 * (1 - byId.get(e.king_id).rel * (duelScores(e)[0] / duelScores(e)[1])),
     }));
   const points = [...crowned, ...lost].sort((a, b) => a.t - b.t).map((p, i) => Object.assign(p, { i }));
   const PAD = { top: 18, right: 24, bottom: 28, left: 48 };

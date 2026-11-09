@@ -26,5 +26,5 @@ def test_win_rule(challenger: Score, expected: bool):
     assert won(challenger, KING) is expected
 
 
-def test_the_margin_is_three_percent():
-    assert config.KL_MARGIN == 0.03
+def test_the_margin_is_two_percent():
+    assert config.KL_MARGIN == 0.02

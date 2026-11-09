@@ -46,15 +46,28 @@ def duels(site: str, king_name: str | None) -> tuple[str, list[tuple[dict, str]]
     return king["name"], docs
 
 
+def weights(samples: list[dict]) -> list[float]:
+    """Each record's weight in its eval's score: within a domain every answer token weighs the
+    same, the domains weigh by their shares of the samples. The weighted KLs sum to the score."""
+    count: dict[str, int] = defaultdict(int)
+    tokens: dict[str, int] = defaultdict(int)
+    for r in samples:
+        count[r["domain"]] += 1
+        tokens[r["domain"]] += r["answer_tokens"]
+    n = len(samples)
+    return [count[r["domain"]] / n * r["answer_tokens"] / tokens[r["domain"]] for r in samples]
+
+
 def table(title: str, groups: dict, total: float, min_n: int, limit: int) -> None:
     rows = [(k, v) for k, v in groups.items() if len(v) >= min_n]
-    rows.sort(key=lambda kv: -sum(kv[1]))
+    rows.sort(key=lambda kv: -sum(k * w for k, w in kv[1]))
     print(f"\n{title}")
     print(f"  {'':44} {'samples':>8} {'mean KL':>8} {'share of score':>15}")
     for key, vs in rows[:limit]:
         name = " / ".join(key) if isinstance(key, tuple) else key
-        share = 100 * sum(vs) / total
-        print(f"  {name[:44]:44} {len(vs):8} {statistics.fmean(vs):8.4f} {share:14.1f}%")
+        share = 100 * sum(k * w for k, w in vs) / total
+        mean = statistics.fmean(k for k, _ in vs)
+        print(f"  {name[:44]:44} {len(vs):8} {mean:8.4f} {share:14.1f}%")
 
 
 def main() -> None:
@@ -71,15 +84,16 @@ def main() -> None:
     seen: dict[str, list[tuple[float, str]]] = defaultdict(list)  # entry -> [(KL, eval seed)]
     by_domain, by_source = defaultdict(list), defaultdict(list)
     for doc, role in docs:
-        for r in doc["samples"]:
+        scored = [r for r in doc["samples"] if r["runs"][role].get("kl") is not None]
+        for r, w in zip(scored, weights(scored), strict=True):
             kl = r["runs"][role]["kl"]
             sid = r["sample_id"]
             seen[sid].append((kl, doc["eval"]["seed"]))
-            by_domain[r["domain"]].append(kl)
-            by_source[(r["domain"], sid.split("/")[0], sid.rsplit("/", 1)[-1])].append(kl)
-    total = sum(sum(v) for v in by_domain.values())
+            by_domain[r["domain"]].append((kl, w))
+            by_source[(r["domain"], sid.split("/")[0], sid.rsplit("/", 1)[-1])].append((kl, w))
+    total = sum(k * w for v in by_domain.values() for k, w in v)
     n = sum(len(v) for v in by_domain.values())
-    print(f"{name}: {len(docs)} duels, {n} samples, mean KL {total / n:.4f}")
+    print(f"{name}: {len(docs)} duels, {n} samples, mean score {total / len(docs):.4f}")
     table("by domain", by_domain, total, 1, 20)
     table("by domain / source / stratum (at least 10 samples)", by_source, total, 10, 25)
 

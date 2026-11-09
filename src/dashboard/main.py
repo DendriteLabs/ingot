@@ -23,6 +23,7 @@ from common.config import REPO_ROOT, ChainSpec, Settings, chain_spec, r2_setting
 from common.loop import forever
 from common.models import bucket_keys, r2_client
 from dashboard import config, state
+from dashboard.rescore import Rescorer
 
 WEB_DIR = REPO_ROOT / "web"
 
@@ -38,6 +39,7 @@ class StateCache:
         self.lock = threading.Lock()
         self.link = db.Link()
         self.body, self.built = b"", 0.0
+        self.rescorer = Rescorer(settings())
 
     def query(self, fn: Any) -> Any:
         with self.lock:
@@ -45,7 +47,11 @@ class StateCache:
 
     def get(self) -> bytes:
         if time.monotonic() - self.built > config.CACHE_S:
-            doc = self.query(lambda conn: state.build(conn, s=settings(), spec=chain_spec()))
+            doc = self.query(
+                lambda conn: state.build(
+                    conn, s=settings(), spec=chain_spec(), rescore=self.rescorer.score
+                )
+            )
             self.body = _dumps(doc)
             self.built = time.monotonic()
         return self.body
@@ -128,6 +134,7 @@ class Publisher:
         self.link, self.s3, self.s, self.spec = link, s3, s, spec
         self.conn = link.conn()
         self.site, self.artifacts = site, artifacts
+        self.rescorer = Rescorer(s, s3, artifacts)
         self.state_digest: str | None = None
         self.published = {
             int(m[1]) for k in bucket_keys(site, "api/evals/", s3) if (m := EVAL_ID.fullmatch(k))
@@ -148,6 +155,7 @@ class Publisher:
 
     def run_once(self) -> bool:
         self.conn = self.link.conn()
+        self.rescorer.fill(self._duels(), config.RESCORE_PER_ROUND)
         busy = self._state()
         for row in self.conn.execute(
             """
@@ -163,8 +171,23 @@ class Publisher:
             busy = self._eval(row) or busy
         return busy
 
+    def _duels(self) -> list[tuple[str, int]]:
+        """(hotkey, eval id) of every published duel with both scores, the coronations first and
+        the newest first within each, for the rescorer."""
+        if not self.published:
+            return []
+        rows = self.conn.execute(
+            """
+            SELECT e.id, s.hotkey FROM evals e JOIN submissions s ON s.id = e.submission_id
+            WHERE e.id = ANY(%s) AND e.score_challenger IS NOT NULL AND e.score_king IS NOT NULL
+            ORDER BY e.won DESC NULLS LAST, e.id DESC
+            """,
+            (list(self.published),),
+        ).fetchall()
+        return [(r["hotkey"], r["id"]) for r in rows]
+
     def _state(self) -> bool:
-        doc = state.build(self.conn, s=self.s, spec=self.spec)
+        doc = state.build(self.conn, s=self.s, spec=self.spec, rescore=self.rescorer.score)
         # updated_at changes every build; only a change in what the page shows is worth a write
         digest = hashlib.sha256(_dumps({**doc, "updated_at": None})).hexdigest()
         if digest == self.state_digest:

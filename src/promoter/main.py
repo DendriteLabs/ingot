@@ -489,7 +489,8 @@ def _scores(steps: list[Step]) -> str:
     return (
         "\n## How close it is to the teacher\n\n"
         "Per answer token, against the BF16 teacher reading the same answer: KL(teacher ‖ model) "
-        "of the next-token distributions, averaged over the samples. Lower is closer.\n\n"
+        "of the next-token distributions over each domain's answer tokens, the domains weighed by "
+        "their shares of the samples. Lower is closer.\n\n"
         "| | KL |\n| --- | --- |\n"
         f"| this model, in its winning eval | {last.kl:.5f} |\n"
         f"| the king it beat, same eval | {last.kl_king:.5f} |\n"

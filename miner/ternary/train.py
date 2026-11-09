@@ -300,14 +300,14 @@ def main() -> None:
                 h_t = teacher.model(input_ids=ids, use_cache=False).last_hidden_state[0, first:last]
                 h_s = student.model(input_ids=ids, use_cache=False).last_hidden_state[0, first:last]
                 kl, _ = chunked_kl(student.lm_head, teacher.lm_head, h_s, h_t, r["answer"], a.chunk)
-                tot += torch.stack((kl / len(r["answer"]), torch.ones((), device=device)))
+                tot += torch.stack((kl, torch.tensor(float(len(r["answer"])), device=device)))
                 if a.tight_memory:
                     torch.cuda.empty_cache()
         dist.all_reduce(tot)
         log(
             rank,
             f"step {step}: held-out KL {tot[0].item() / tot[1].item():.5f} "
-            f"(mean over {int(tot[1].item())} sequences)",
+            f"(every token weighing the same, {int(tot[1].item())} tokens)",
         )
 
     held_out(0)
