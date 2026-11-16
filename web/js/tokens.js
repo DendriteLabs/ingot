@@ -4,6 +4,7 @@
 import { el, mount } from "./dom.js";
 
 const MODELS = {
+  xxxviii: { label: "King XXXVIII", note: "5.95 GB", tone: "king" },
   xxvii: { label: "King XXVII", note: "5.95 GB", tone: "king" },
   genesis: { label: "Bonsai 2", note: "5.95 GB", tone: "other" },
 };
@@ -36,11 +37,12 @@ export async function renderTokens() {
 
 // per domain each model's mean KL per token over the steps, both read on the same answers
 function renderSummary() {
-  const king = kingOf(data.models);
+  const models = data.summary_models ?? data.models;
+  const king = kingOf(models);
   mount(
     document.getElementById("tokens-figures"),
     ...data.summary.map((row) => {
-      const top = Math.max(...data.models.map((m) => row.kl[m]));
+      const top = Math.max(...models.map((m) => row.kl[m]));
       const best = row.kl[king];
       return el(
         "figure",
@@ -49,7 +51,7 @@ function renderSummary() {
         el(
           "div",
           { class: "kl-rows" },
-          ...data.models.map((m) =>
+          ...models.map((m) =>
             el(
               "div",
               { class: `size-row ${MODELS[m].tone}` },

@@ -74,7 +74,7 @@ async function load() {
   }
 }
 
-const FEATURED_KING = "Ingot-XXVII-27B-Q2";
+const FEATURED_KING = "Ingot-XXXVIII-27B-Q2";
 
 // the featured king; else the round's best model by the external benchmarks (a full suite only), else
 // the reigning king
