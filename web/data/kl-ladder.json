@@ -7,5 +7,5 @@
     { "label": "IQ2_S", "repo": "unsloth/Qwen3.8-27B-GGUF", "gb": 8.4, "kl": 0.0864 },
     { "label": "Bonsai 2", "repo": "prism-ml/Ternary-Bonsai-2-27B-gguf", "gb": 5.95, "kl": 0.1101 }
   ],
-  "kings": { "Ingot-XXVII-27B-Q2": 0.0828 }
+  "kings": { "Ingot-XXVII-27B-Q2": 0.0828, "Ingot-XXXVIII-27B-Q2": 0.0749 }
 }

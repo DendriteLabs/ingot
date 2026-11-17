@@ -1828,6 +1828,9 @@ button.zip:disabled {
   border-top: 1px solid var(--line-strong);
   margin-bottom: -48px;
 }
+.stat[hidden] {
+  display: none;
+}
 .stats.four {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
