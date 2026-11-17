@@ -9,7 +9,7 @@ import heapq
 import json
 import random
 from collections import defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -141,7 +141,7 @@ def _extra(spec: ChainSpec) -> tuple[Path, str]:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    from common.agent_traces import COLUMNS, terminal_bench_science
+    from common.agent_traces import COLUMNS, FORMAT, terminal_bench_science
     from common.config import settings
 
     root = models.snapshot(
@@ -154,7 +154,7 @@ def _extra(spec: ChainSpec) -> tuple[Path, str]:
         settings().eval_work_dir
         / "corpus-extra"
         / root.name
-        / f"{spec.dataset_split}-extra.parquet"
+        / f"{spec.dataset_split}-extra-f{FORMAT}.parquet"
     )
     if not out.exists():
         rows = list(terminal_bench_science(root, spec.dataset_extra_models))
@@ -165,7 +165,7 @@ def _extra(spec: ChainSpec) -> tuple[Path, str]:
             pa.Table.from_pylist(rows, schema), partial, compression="zstd", row_group_size=500
         )
         partial.replace(out)  # a crash mid-write must not leave a file that passes the exists check
-    return out, f"{spec.dataset_extra_repo}@{root.name}"
+    return out, f"{spec.dataset_extra_repo}@{root.name}#f{FORMAT}"
 
 
 def draw(
@@ -294,7 +294,7 @@ def _choose(
                 language: len(fitting[language]) if tried[language] == len(items) else len(items)
                 for language, items in ordered.items()
             }
-            counts = _equal_shares(sizes, quota, f"{seed}/{domain}")
+            counts = _shares(sizes, quota, f"{seed}/{domain}", config.STRATUM_WEIGHTS.get(domain))
             while batches := {
                 language: ordered[language][tried[language] : tried[language] + missing]
                 for language, count in counts.items()
@@ -339,6 +339,37 @@ def _cut(sample: Sample, seed: str, fits: Fits | None) -> Sample | None:
             return cut
         turns = turns[: turns.index(turn)]
     return None
+
+
+def _shares(
+    sizes: dict[str, int], n: int, seed: str, weights: Mapping[str, float] | None
+) -> dict[str, int]:
+    """Split n over the strata by weight; a stratum that runs out gives its share to the others."""
+    if not weights:
+        return _equal_shares(sizes, n, seed)
+    mean = sum(weights.values()) / len(weights)
+    weight = {name: float(weights.get(name, mean)) for name in sizes}
+    counts = dict.fromkeys(sizes, 0)
+    left = min(n, sum(sizes.values()))
+    while left:
+        open_ = [name for name in sizes if counts[name] < sizes[name] and weight[name] > 0]
+        if not open_:
+            break
+        total = sum(weight[name] for name in open_)
+        ideal = {name: left * weight[name] / total for name in open_}
+        given = 0
+        for name in open_:
+            take = min(int(ideal[name]), sizes[name] - counts[name])
+            counts[name] += take
+            given += take
+        # under one whole sample each: the largest fractions get the rest
+        if not given:
+            order = sorted(open_, key=lambda name: (-ideal[name], _rank(seed, name)))
+            for name in order[:left]:
+                counts[name] += 1
+                given += 1
+        left -= given
+    return counts
 
 
 def _equal_shares(sizes: dict[str, int], n: int, seed: str) -> dict[str, int]:

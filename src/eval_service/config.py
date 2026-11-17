@@ -20,8 +20,33 @@ IDLE_S = 5.0
 
 SAMPLES_PER_DOMAIN = 40
 DOMAIN_SAMPLES = {"terminal": 330, "swe": 250, "reasoning": 100, "science": 100, "math": 20}
+# shares of a domain's draw per stratum; a domain not listed splits evenly
+STRATUM_WEIGHTS = {
+    "terminal": {"rollout": 30, "long": 20, "science": 20, "fix": 20, "help": 10},
+    # c_cpp has few runs, so it is drawn less to keep it from being fitted
+    "swe": {
+        "c_cpp": 7,
+        "go": 19,
+        "java": 19,
+        "js": 19,
+        "php": 19,
+        "python": 19,
+        "rust": 19,
+        "ts": 19,
+    },
+}
 # trajectories of these sources are cut later in the run (dataset._cut)
-LATE_CUT_SOURCES = frozenset({"swe_traces", "term_rollouts", "term_long", "term_science"})
+LATE_CUT_SOURCES = frozenset(
+    {
+        "swe_traces",
+        "term_rollouts",
+        "term_rollouts_b",
+        "term_long",
+        "term_science",
+        "term_help",
+        "term_fix",
+    }
+)
 # Threads a draw renders its long candidates with, and the corpus is read with at startup.
 DRAW_THREADS = 32
 # A win needs the challenger closer to the teacher on KL by this share of the king's own KL in

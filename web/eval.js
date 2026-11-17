@@ -278,6 +278,8 @@ function renderDomains(doc) {
       el("td", { class: "domain" }, r.name),
       el("td", { class: "r c-count" }, String(r.count)),
       el("td", { class: "r c-share" }, pct(r.t.tokens / all.tokens)),
+      el("td", { class: "r c-kl" }, num(r.t.klChal / r.t.tokens, 6)),
+      el("td", { class: "r c-kl" }, num(r.t.klKing / r.t.tokens, 6)),
       el(
         "td",
         {
@@ -344,6 +346,19 @@ function renderDomains(doc) {
                   "its weight in the score: within a domain every answer token weighs the same, and the domains weigh by their shares of the samples",
               },
               "weight",
+            ),
+            el(
+              "th",
+              {
+                class: "r c-kl",
+                title: "the challenger's KL to the teacher on these samples, weighted as the score weighs them; lower is closer",
+              },
+              "challenger KL",
+            ),
+            el(
+              "th",
+              { class: "r c-kl", title: "the king's KL to the teacher on these samples, weighted as the score weighs them" },
+              "king KL",
             ),
             el(
               "th",

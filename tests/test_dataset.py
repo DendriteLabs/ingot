@@ -228,3 +228,19 @@ def test_on_policy_sources_are_cut_later(monkeypatch):
     }
     assert mean["late"] > mean["uniform"] + 5
     assert all(depth(late, seed) <= 41 for seed in seeds)
+
+
+def test_weighted_shares_follow_the_weights_and_give_back_what_a_stratum_lacks():
+    from eval_service.dataset import _shares
+
+    sizes = {"rollout": 628, "long": 574, "science": 981, "help": 4661}
+    weights = {"rollout": 35, "long": 25, "science": 25, "help": 15}
+    counts = _shares(sizes, 330, "seed", weights)
+    assert sum(counts.values()) == 330
+    assert abs(counts["rollout"] - 115.5) <= 1 and abs(counts["help"] - 49.5) <= 1
+    assert abs(counts["long"] - 82.5) <= 1 and abs(counts["science"] - 82.5) <= 1
+    short = _shares({"rollout": 10, "long": 574, "help": 4661}, 330, "seed", weights)
+    assert short["rollout"] == 10 and sum(short.values()) == 330
+    assert short["long"] > short["help"]
+    assert _shares({"a": 5, "b": 5}, 4, "seed", None) == {"a": 2, "b": 2}
+    assert sum(_shares({"x": 3, "y": 2}, 330, "seed", {"x": 1, "y": 1}).values()) == 5

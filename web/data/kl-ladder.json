@@ -3,8 +3,11 @@
   "models": [
     { "label": "BF16", "repo": null, "gb": 54.66, "kl": 0 },
     { "label": "Q4_K_M", "repo": "unsloth/Qwen3.8-27B-GGUF", "gb": 16.46, "kl": 0.0063 },
+    { "label": "IQ3_S", "repo": "unsloth/Qwen3.8-27B-GGUF", "gb": 12.04, "kl": 0.0243 },
     { "label": "IQ3_XXS", "repo": "unsloth/Qwen3.8-27B-GGUF", "gb": 10.9, "kl": 0.033 },
+    { "label": "Q2_K_XL", "repo": "unsloth/Qwen3.8-27B-GGUF", "gb": 9.95, "kl": 0.0385 },
     { "label": "IQ2_S", "repo": "unsloth/Qwen3.8-27B-GGUF", "gb": 8.4, "kl": 0.0864 },
+    { "label": "IQ2_XXS", "repo": "unsloth/Qwen3.8-27B-GGUF", "gb": 7.21, "kl": 0.089 },
     { "label": "Bonsai 2", "repo": "prism-ml/Ternary-Bonsai-2-27B-gguf", "gb": 5.95, "kl": 0.1101 }
   ],
   "kings": { "Ingot-XXVII-27B-Q2": 0.0828, "Ingot-XXXVIII-27B-Q2": 0.0749 }

@@ -8,6 +8,7 @@ from __future__ import annotations
 import glob
 import gzip
 import json
+import re
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
@@ -36,9 +37,108 @@ BASH_TOOL = [
     }
 ]
 COLUMNS = ("dataset", "split", "entry_name", "domain", "language", "user_prompt", "conversation")
+# the eval caches the rows it rewrites under this: bump it when the rewriting changes
+FORMAT = 2
+# the corpus's floor for terminal runs, applied to the rows joined at draw time too
+TERMINAL_MIN_TURNS = 10
 # Terminus-2 keystrokes that are tmux keys, not shell text
 _TMUX_KEYS = ("C-", "M-", "Escape", "Enter", "Tab", "Up", "Down", "Left", "Right")
 _SHELL_TOOLS = {"Bash", "bash", "run_terminal_command", "execute_command", "shell", "terminal"}
+_CONTEXT_BLOCKS = re.compile(
+    r"<(user_info|rules|environment_context|system-reminder|system_reminder)>.*?</\1>", re.S
+)
+_SCREEN_HEAD = re.compile(
+    r"^(Previous response had (warnings|parsing errors):.*?"
+    r"(?=New Terminal Output:|Current Terminal Screen:|$))?"
+    r"(New Terminal Output:|Current Terminal Screen:)?\n*",
+    re.S,
+)
+_WAIT = re.compile(r"^\s*sleep\s+[\d.]+\s*$")
+_NOT_SHELL = re.compile(r"^# (?!mark_task_complete)\w+ [\[{\"]")
+SUBMIT = "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
+
+
+def task_text(text: str) -> str:
+    """The task alone, without any harness's template, context blocks or canary comments."""
+    text = text.removeprefix(TASK_PREFIX).removesuffix(TASK_SUFFIX)
+    # Terminus-2 puts the task inside its own instructions
+    if "Task Description:\n" in text and "keystrokes" in text:
+        text = text.split("Task Description:\n", 1)[1].split("\n\nCurrent terminal state:", 1)[0]
+    query = re.search(r"<user_query>(.*?)</user_query>", text, re.S)
+    text = query.group(1) if query else _CONTEXT_BLOCKS.sub("", text)
+    return re.sub(r"<!--.*?-->", "", text, flags=re.S).strip()
+
+
+def normalize(messages: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    """Another harness's run in bash calls as this harness records it; None under two steps."""
+    task = task_text(next(m["content"] for m in messages if m["role"] == "user"))
+    if not task:
+        return None
+    out: list[dict[str, Any]] = [SYSTEM, task_message(task)]
+    i = next(k for k, m in enumerate(messages) if m["role"] == "user") + 1
+    while i < len(messages):
+        m = messages[i]
+        i += 1
+        if m["role"] != "assistant":
+            continue
+        results = []
+        while i < len(messages) and messages[i]["role"] == "tool":
+            results.append(messages[i])
+            i += 1
+        calls, kept_results, waited = [], [], []
+        for k, call in enumerate(m.get("tool_calls") or []):
+            command = str(call["function"]["arguments"].get("command", ""))
+            command = "\n".join(
+                line
+                for line in command.split("\n")
+                if not line.strip().startswith(_TMUX_KEYS) and line.strip() != "clear"
+            ).strip("\n")
+            output = _result_output(results[k]) if k < len(results) else None
+            if command.startswith("# mark_task_complete"):
+                command = SUBMIT
+            if _NOT_SHELL.match(command):
+                continue
+            if not command or _WAIT.match(command):
+                if output:
+                    waited.append(output)
+                continue
+            calls.append(bash_call(command))
+            if output is not None:
+                kept_results.append(tool_result(output, _result_code(results[k])))
+        if not calls:
+            if waited and out[-1]["role"] == "tool":
+                out[-1] = tool_result(
+                    "\n".join([_result_output(out[-1]), *waited]), _result_code(out[-1])
+                )
+            continue
+        if waited and kept_results:
+            kept_results[-1] = tool_result(
+                "\n".join([_result_output(kept_results[-1]), *waited]),
+                _result_code(kept_results[-1]),
+            )
+        out.append({"role": "assistant", "content": m.get("content") or "", "tool_calls": calls})
+        out += kept_results
+    return out if sum(m["role"] == "assistant" for m in out) >= 2 else None
+
+
+def _turns(messages: list[dict[str, Any]]) -> int:
+    return sum(m["role"] == "assistant" for m in messages)
+
+
+def _result_output(message: dict[str, Any]) -> str:
+    try:
+        parsed = json.loads(message["content"])
+        text = str(parsed.get("output", parsed.get("output_head", "")))
+    except (ValueError, AttributeError):
+        text = str(message["content"])
+    return _SCREEN_HEAD.sub("", text, count=1)
+
+
+def _result_code(message: dict[str, Any]) -> int:
+    try:
+        return int(json.loads(message["content"]).get("returncode", 0))
+    except (ValueError, AttributeError, TypeError):
+        return 0
 
 
 def strip_thinking(content: str) -> str:
@@ -137,9 +237,14 @@ def from_atif(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """A Harbor ATIF trajectory (claude-code, Terminus-2 or another tool-calling agent) as
     mini-swe-agent: the first user step is the task, each agent step's tool calls become bash
     calls (file tools as the bash a person would have typed), its observation their result."""
-    task = next(s["message"] for s in steps if s.get("source") == "user")
-    # a run of this harness already carries the rendered task and tool results
-    user = {"role": "user", "content": task} if task.startswith(TASK_PREFIX) else task_message(task)
+    first = str(next(s["message"] for s in steps if s.get("source") == "user"))
+    # a run of this harness has the rendered task; others open with context blocks, so the task
+    # is the first user message that has one
+    if first.startswith(TASK_PREFIX):
+        user = {"role": "user", "content": first}
+    else:
+        texts = (task_text(str(s["message"])) for s in steps if s.get("source") == "user")
+        user = task_message(next(t for t in texts if t))
     out: list[dict[str, Any]] = [SYSTEM, user]
     for s in steps:
         if s.get("source") != "agent":
@@ -180,10 +285,28 @@ def _atif_command(call: dict[str, Any]) -> str:
     if name == "bash_command":  # Terminus-2 in ATIF: keystrokes, a bare wait as a sleep
         keys = str(args.get("keystrokes") or "").rstrip("\n")
         return keys or f"sleep {max(1, round(float(args.get('duration') or 1)))}"
-    path = args.get("path") or args.get("file_path") or args.get("filename") or ""
+    path = (
+        args.get("path")
+        or args.get("file_path")
+        or args.get("filename")
+        or args.get("target_file")
+        or args.get("target_directory")
+        or ""
+    )
+    # waiting on a background job has no shell form; a short sleep stands in for it
+    if name in (
+        "TaskOutput",
+        "wait",
+        "get_command_or_subagent_output",
+    ):
+        return "sleep 30"
     if name in ("read_file", "Read", "view_file"):
         return f"cat {path}"
-    if name in ("Write", "write_file", "create_file"):
+    if name == "list_dir":
+        return f"ls -la {path}"
+    if name in ("grep", "Grep"):
+        return f"grep -rnE {json.dumps(str(args.get('pattern') or ''))} {path or '.'}"
+    if name in ("Write", "write", "write_file", "create_file"):
         return f"cat > {path} <<'EOF'\n{args.get('content') or args.get('contents') or ''}\nEOF"
     if name in ("search_replace", "Edit", "edit_file", "str_replace_editor"):
         old = args.get("old_string") or args.get("old_str") or ""
@@ -258,8 +381,10 @@ def terminal_bench_science(root: Path, models: Iterable[str]) -> Iterator[dict[s
                 r = json.loads(line)
                 steps = (r.get("trajectory") or {}).get("steps") or []
                 try:
-                    messages = from_atif(steps)
+                    messages = normalize(from_atif(steps))
                 except (StopIteration, KeyError, TypeError, ValueError):
+                    continue
+                if messages is None or _turns(messages) < TERMINAL_MIN_TURNS:
                     continue
                 key = f"{model}/{r.get('trial_id')}"
                 row = corpus_row("terminal", "term_science", key, "science", messages, BASH_TOOL)

@@ -1712,7 +1712,8 @@ button.zip:disabled {
   .samples-table .c-prompt,
   .samples-table .c-king,
   .domains-table .c-bar,
-  .domains-table .c-count {
+  .domains-table .c-count,
+  .domains-table .c-kl {
     display: none;
   }
 }

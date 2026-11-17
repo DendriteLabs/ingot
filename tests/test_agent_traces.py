@@ -191,3 +191,62 @@ def test_a_tool_result_with_a_harness_notice_appended_stays_whole() -> None:
         },
     ]
     assert [m["content"] for m in from_atif(steps) if m["role"] == "tool"][0] == result
+
+
+def test_normalize_gives_another_harness_run_this_harness_layout():
+    from common.agent_traces import SUBMIT, SYSTEM, bash_call, normalize, task_message, tool_result
+
+    wrapped = (
+        "<user_info>\nOS Version: linux\n</user_info>\n<rules>be careful</rules>\n"
+        "<user_query>\n<!-- canary GUID 1 -->\nFix the parser.\n</user_query>"
+    )
+    run = [
+        SYSTEM,
+        task_message(wrapped),
+        {"role": "assistant", "content": "look", "tool_calls": [bash_call("C-c\nclear\nls -la\n")]},
+        tool_result("New Terminal Output:\n\nfile.py"),
+        {"role": "assistant", "content": "wait", "tool_calls": [bash_call("sleep 30")]},
+        tool_result("Current Terminal Screen:\nbuild done"),
+        {
+            "role": "assistant",
+            "content": "note",
+            "tool_calls": [bash_call('# TaskCreate {"a": 1}')],
+        },
+        tool_result("task created"),
+        {
+            "role": "assistant",
+            "content": "done",
+            "tool_calls": [bash_call("# mark_task_complete {}")],
+        },
+    ]
+    out = normalize(run)
+    assert out is not None
+    assert out[1] == task_message("Fix the parser.")
+    assert [m["role"] for m in out] == ["system", "user", "assistant", "tool", "assistant"]
+    assert out[2]["tool_calls"] == [bash_call("ls -la")]
+    assert json.loads(out[3]["content"])["output"] == "file.py\nbuild done"
+    assert out[4]["tool_calls"] == [bash_call(SUBMIT)]
+    assert normalize([SYSTEM, task_message("<environment_context>x</environment_context>")]) is None
+
+
+def test_from_atif_takes_the_task_from_the_first_user_message_that_has_one():
+    from common.agent_traces import from_atif, task_message
+
+    steps = [
+        {
+            "source": "user",
+            "message": "<environment_context><cwd>/root</cwd></environment_context>",
+        },
+        {"source": "user", "message": "Recover the spectrum."},
+        {
+            "source": "agent",
+            "message": "",
+            "tool_calls": [
+                {"function_name": "list_dir", "arguments": {"target_directory": "/root"}}
+            ],
+            "observation": "a",
+        },
+    ]
+    out = from_atif(steps)
+    assert out[1] == task_message("Recover the spectrum.")
+    assert out[2]["tool_calls"][0]["function"]["arguments"]["command"] == "ls -la /root"
