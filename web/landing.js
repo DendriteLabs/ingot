@@ -33,6 +33,8 @@ let runs = null;
 let noise = {};
 // KL to the teacher of common quants and measured kings, all on the same held-out steps
 let ladder = null;
+// what the featured king's miner changed, file against file
+let changes = null;
 // all-time Hugging Face downloads per repo of the org's Ingot models, refreshed every ten minutes
 let downloads = null;
 
@@ -100,28 +102,22 @@ function render() {
   $("m-teacher-short").textContent = state.teacher.split("/").pop();
   const best = bestKing();
   if (!best) return;
-  const { king, ahead, benchmarked } = best;
+  const { king, benchmarked } = best;
   const aa = runs ? aaEstimate(runs, king.name, TEACHER_RUN) : null;
 
   $("m-download").href = hubUrl(king.hf_repo);
   $("m-label").textContent = benchmarked ? "Best model" : "Reigning king";
   mount($("m-name"), link(hubUrl(king.hf_repo), king.name));
   mount($("m-repo"), link(hubUrl(king.hf_repo), king.hf_repo));
-  mount(
-    $("m-line"),
-    ...(ahead != null
-      ? [el("b", {}, `${ahead} of ${BENCHMARKS.length}`), "benchmarks at or above ", link(hubUrl(GENESIS.repo), GENESIS.label)]
-      : []),
-  );
   $("run-cmd").textContent = $("run-cmd")
     .textContent.replaceAll(/dendriteholdings\/[A-Za-z0-9-]+/g, king.hf_repo)
     .replaceAll(/Ingot-[A-Z]+-27B-PTQ1_0/g, `${king.name.replace(/-Q2$/, "")}-PTQ1_0`);
 
   $("s-index").textContent = aa ? `≈${Math.round(aa.aa)}` : "—";
-  $("s-ahead").textContent = ahead != null ? `${ahead} of ${BENCHMARKS.length}` : "—";
 
   renderSizes(king);
   renderDistance(king);
+  renderChanges(king);
   renderKings(king);
   if (!runs) return;
   const models = [
@@ -205,11 +201,23 @@ function renderDistance(king) {
     ),
   );
   const genesis = ladder.models.find((m) => m.label === GENESIS.label)?.kl;
-  $("distance-meta").textContent =
-    kl != null && genesis
-      ? `King ${numeral}: ${estimated ? "≈" : ""}${Math.round((100 * (genesis - kl)) / genesis)}% closer to the teacher than ${GENESIS.label}`
-      : "";
+  const closer = kl != null && genesis ? `${estimated ? "≈" : ""}${Math.round((100 * (genesis - kl)) / genesis)}%` : null;
+  $("distance-meta").textContent = closer ? `King ${numeral}: ${closer} closer to the teacher than ${GENESIS.label}` : "";
+  $("s-closer").textContent = closer ?? "—";
   $("distance-note").textContent = `Measured on ${ladder.measured_on}.`;
+}
+
+// The fourth headline figure: the weights the featured king's miner gave a new value, from /data/king-changes.json
+// (a weight is its code times its block's scale; the miner re-tunes the scales). Hidden for a king not measured.
+function renderChanges(king) {
+  const c = changes?.kings?.[king.name];
+  $("stat-weights").hidden = !c;
+  $("stats").classList.toggle("four", Boolean(c));
+  if (!c) return;
+  const [moved, nonzero] = c.weights;
+  $("s-weights").textContent = `${(moved / 1e9).toFixed(0)} billion`;
+  $("s-weights-note").textContent =
+    `weights re-tuned by miners, ${((100 * moved) / nonzero).toFixed(2)}% of ${GENESIS.label}'s non-zero weights`;
 }
 
 // horizontal bars of file size, ours last, with the line a 16 GB MacBook draws
@@ -476,6 +484,13 @@ mountHeader();
 loadDownloads();
 setInterval(loadDownloads, 600000);
 new ResizeObserver(() => runs && render()).observe($("panel-figures"));
+fetch("/data/king-changes.json")
+  .then((r) => (r.ok ? r.json() : null))
+  .then((d) => {
+    changes = d;
+    render();
+  })
+  .catch((err) => console.warn("changes fetch failed", err));
 fetch("/data/kl-ladder.json")
   .then((r) => (r.ok ? r.json() : null))
   .then((d) => {
