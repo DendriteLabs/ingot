@@ -139,8 +139,14 @@ def heads(
 
 @functools.lru_cache(maxsize=16)
 def _final_head(model_dir: Path, device: str) -> FinalHead:
-    """The teacher's head, the same for every eval: loaded once per device."""
+    """The teacher's head, the same on every device's roles: loaded once per device and eval."""
     return FinalHead(model_dir, device)
+
+
+def release() -> None:
+    """Drops the heads kept on the GPUs and the memory torch keeps for the next allocation."""
+    _final_head.cache_clear()
+    torch.cuda.empty_cache()
 
 
 def load_states(path: str, read: list[int], first: int) -> torch.Tensor:

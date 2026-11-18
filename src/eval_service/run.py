@@ -98,7 +98,10 @@ def duel(
     """`prefetched` answers (a Prefetch's) are taken instead of asking the teacher."""
     models = {"teacher": teacher_dir, "king": king_dir, "challenger": challenger_dir}
     evaluation = _Evaluation(models, len(samples), on_progress, prefetched)
-    results = evaluation.run(samples)
+    try:
+        results = evaluation.run(samples)
+    finally:
+        evaluation.release()
     log.info(
         "eval timing, {} samples scored in {:.0f}s: {}",
         len(results),
@@ -154,6 +157,14 @@ class _Evaluation:
         self.on_progress = on_progress
         self.prefetched = prefetched if prefetched is not None else {}
         self.diverged: set[str] = set()
+
+    def release(self) -> None:
+        """Frees the comparison GPUs: between evals the box's GPUs hold nothing of this process
+        but its CUDA contexts."""
+        from eval_service import metrics
+
+        self.heads = {}
+        metrics.release()
 
     def run(self, samples: Sequence[Sample]) -> list[Result]:
         """The results of the samples that went through. A sample that fails is logged and left

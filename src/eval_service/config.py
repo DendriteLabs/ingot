@@ -65,6 +65,10 @@ KV_USAGE_ADMIT = 0.85
 KV_USAGE_POLL_S = 3.0
 BASE_PORT = 9100
 SERVER_START_S = 3600
+# Between evals the box's GPUs may be lent out (benchmarks). Before a role's servers start, whatever
+# else holds memory on its GPUs is killed, until they stay clear this long after the last kill: a
+# guest's supervisor may start it again.
+GPUS_CLEAR_S = 60
 # The hidden states the servers write per token: the last block's, which gives the next-token
 # log-probs.
 LAYERS = (64,)

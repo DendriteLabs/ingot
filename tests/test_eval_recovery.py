@@ -1,9 +1,13 @@
 """A failed sample is left out and the eval goes on, within the cap; the draw sizes prompts without
-rendering short ones; orphaned state files are swept."""
+rendering short ones; orphaned state files are swept; GPUs lent out between evals are taken back
+from strangers only."""
 
 from __future__ import annotations
 
 import os
+import signal
+import subprocess
+import sys
 import time
 from collections.abc import Sequence
 from pathlib import Path
@@ -87,3 +91,40 @@ def test_sweep_removes_abandoned_state_files_only(tmp_path: Path, monkeypatch):
     assert fresh.exists() and Path(f"{fresh}.lock").exists(), "a live request's file stays"
     assert not old.exists() and not Path(f"{old}.lock").exists() and not lone_lock.exists()
     assert servers.sweep() == 1 and not fresh.exists(), "at a start nothing is live"
+
+
+def _running(pid: int) -> bool:
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"
+    except OSError:
+        return False
+
+
+def _orphan(*argv: str) -> int:
+    """A process this test is no ancestor of, as a guest on the box is none of the eval's."""
+    script = '"$@" >/dev/null 2>&1 & echo $!'
+    pid = int(subprocess.run(["sh", "-c", script, "sh", *argv], capture_output=True).stdout)
+    # until it is the program asked for, /proc still shows the shell that forked it
+    while Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")[0] != argv[0].encode():
+        time.sleep(0.01)
+    return pid
+
+
+def test_gpus_are_cleared_of_strangers_only(tmp_path, monkeypatch):
+    """What holds a GPU before its servers start is killed, unless this service or another Ingot
+    service (the dedup shares a GPU with the challenger) started it."""
+    service = tmp_path / "ingot-model-dedup"
+    service.write_text("import time; time.sleep(60)")
+    own = subprocess.Popen(["sleep", "60"])
+    guest, dedup = _orphan("sleep", "60"), _orphan(sys.executable, str(service))
+    pids = (own.pid, guest, dedup)
+    monkeypatch.setattr(servers, "_gpu_pids", lambda gpus: {p for p in pids if _running(p)})
+    monkeypatch.setattr(config, "GPUS_CLEAR_S", 0)
+    try:
+        servers.clear([0])
+        assert [_running(p) for p in pids] == [True, False, True]
+    finally:
+        for pid in pids:
+            if _running(pid):
+                os.kill(pid, signal.SIGKILL)
+        own.wait()

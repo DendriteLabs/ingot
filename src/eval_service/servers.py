@@ -1,6 +1,7 @@
 """The eval's vLLM servers: one per GPU, each extracting hidden states and accepting forced tokens.
 The teacher keeps its servers until it is handed another model; the king's and challenger's are
-released after each eval."""
+released after each eval. The GPUs are the eval's only while it runs: between evals a guest may
+take them, the teacher's too, and serve() takes them back."""
 
 from __future__ import annotations
 
@@ -769,6 +770,7 @@ def serve(models: dict[str, Path]) -> dict[str, Groups]:
             group.stop()
         if role == "teacher" and remote_teacher and settings().gpus("teacher"):
             gpus = settings().gpus("teacher")
+            clear(gpus)
             log.info("teacher split: GPUs {} here and {}: {}", gpus, remote_teacher, model_dir)
             local = Group(model_dir, gpus, config.MEMORY_SHARE[role], role)
             _groups[role] = SplitTeacher(
@@ -785,6 +787,7 @@ def serve(models: dict[str, Path]) -> dict[str, Groups]:
                 f"no GPUs for the {role}: set INGOT_{role.upper()}_GPUS"
                 + (" or INGOT_TEACHER_URL" if role == "teacher" else "")
             )
+        clear(gpus)
         log.info("starting the {} on GPUs {}: {}", role, gpus, model_dir)
         if any(model_dir.glob("*.gguf")) and not GGUF_VLLM:
             _groups[role] = LlamaGroup(model_dir, gpus, role)
@@ -796,6 +799,55 @@ def serve(models: dict[str, Path]) -> dict[str, Groups]:
         _groups[role].wait_ready(deadline)
         log.info("the {} is ready, {:.0f}s into serve", role, time.monotonic() - started)
     return {role: _groups[role] for role in models}
+
+
+def clear(gpus: Sequence[int]) -> None:
+    """Kills every process holding memory on `gpus` that no Ingot service started, until the GPUs
+    stay clear: a guest that took them between evals, or the servers a killed eval left behind."""
+    killed_at = None
+    while True:
+        strangers = [pid for pid in _gpu_pids(gpus) if not _ingot(pid)]
+        for pid in strangers:
+            log.warning("GPUs {}: killing pid {}, not an Ingot process", list(gpus), pid)
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+        if strangers:
+            killed_at = time.monotonic()
+        elif killed_at is None or time.monotonic() - killed_at >= config.GPUS_CLEAR_S:
+            return
+        time.sleep(1)
+
+
+def _gpu_pids(gpus: Sequence[int]) -> set[int]:
+    """The processes holding memory on `gpus`."""
+
+    def rows(query: str) -> list[list[str]]:
+        out = subprocess.run(
+            ["nvidia-smi", f"--query-{query}", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        return [[field.strip() for field in line.split(",")] for line in out.splitlines() if line]
+
+    uuids = {uuid for index, uuid in rows("gpu=index,uuid") if int(index) in gpus}
+    return {int(pid) for uuid, pid in rows("compute-apps=gpu_uuid,pid") if uuid in uuids}
+
+
+def _ingot(pid: int) -> bool:
+    """Whether `pid` is this service, another Ingot service (the dedup shares a GPU) or a process
+    one of them started. A process that is gone counts: there is nothing left to kill."""
+    while pid > 1:
+        try:
+            argv = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+            parent = int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
+        except OSError:
+            return True
+        service = len(argv) > 1 and Path(os.fsdecode(argv[1])).name.startswith("ingot-")
+        if service or pid == os.getpid():
+            return True
+        pid = parent
+    return False
 
 
 def release(*roles: str) -> None:

@@ -312,9 +312,8 @@ def main() -> None:
     data = dataset.fetch(spec, s.dataset_path)  # the whole corpus into memory, once
     log.info("dataset {} read in {:.0f}s", data.sha256[:12], time.monotonic() - started)
     fits = run.fits(run.load_tokenizer(teacher_dir))  # the draw sizes prompts with it
-    if not s.teacher_url or s.gpus("teacher"):
-        # a teacher on this box's GPUs loads now, not with the first eval; every eval keeps it
-        servers.serve({"teacher": teacher_dir})
+    # The teacher loads with the first eval, not now: the GPUs are this service's only while a
+    # submission is in the pipeline, and a restart must not take them from a guest for nothing.
     worker = db.register_worker(link.conn(), "eval_service")
     log.info(
         "eval service started — teacher {} dataset {} ({} samples); {} orphaned state files swept",
